@@ -8,8 +8,8 @@
 #   - Rutas de volumen absolutas: Portainer no ejecuta el compose desde una
 #     carpeta estable, así que las rutas relativas apuntan a cualquier sitio.
 #   - Los secretos se definen en las variables de entorno del stack en
-#     Portainer, NUNCA en este repositorio. El .env versionado sólo lleva la
-#     etiqueta de imagen, que es lo que mueve el CI.
+#     Portainer, NUNCA en este repositorio. Las referencias de imagen de abajo
+#     son el estado desplegado; el CI actualiza sus tags directamente aquí.
 #   - Todo el estado vive bajo ${DATA_ROOT}; con eso y la base de datos hay
 #     copia de seguridad completa.
 # =============================================================================
@@ -65,7 +65,7 @@ services:
       # Acelera la escritura de segmentos sin afectar a la durabilidad del WAL.
       POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
-      - ${DATA_ROOT:?falta DATA_ROOT}/pgdata:/var/lib/postgresql/data
+      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-moodleshield} -d ${DB_NAME:-moodleshield}"]
       interval: 10s
@@ -78,7 +78,7 @@ services:
 
   # ---------------------------------------------------------------------------
   app:
-    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/app:${IMAGE_TAG:?falta IMAGE_TAG}
+    image: ghcr.io/jamataran/moodleshield/app:latest
     restart: unless-stopped
     init: true
     depends_on:
@@ -86,8 +86,8 @@ services:
         condition: service_healthy
     environment: *app-env
     volumes:
-      - ${DATA_ROOT}/media:/data/media
-      - ${DATA_ROOT}/uploads:/data/uploads
+      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/data/media
+      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/uploads:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -102,7 +102,7 @@ services:
   # El transcodificador. Va aparte del `app` para que un pico de ffmpeg no
   # tumbe el servicio web y para poder limitarle CPU de forma independiente.
   worker:
-    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/worker:${IMAGE_TAG:?falta IMAGE_TAG}
+    image: ghcr.io/jamataran/moodleshield/worker:latest
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -111,8 +111,8 @@ services:
         condition: service_healthy
     environment: *app-env
     volumes:
-      - ${DATA_ROOT}/media:/data/media
-      - ${DATA_ROOT}/uploads:/data/uploads
+      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/data/media
+      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/uploads:/data/uploads
     # ffmpeg necesita margen. Ajusta WORKER_CPUS al número de núcleos que
     # quieras cederle; el resto del host sigue respondiendo gracias al `nice`.
     cpus: ${WORKER_CPUS:-2}
@@ -132,9 +132,9 @@ services:
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4g}
       NGINX_ENVSUBST_FILTER: "^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)$$"
     volumes:
-      - ${INFRA_ROOT:?falta INFRA_ROOT}/nginx/templates:/etc/nginx/templates:ro
-      - ${INFRA_ROOT}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
-      - ${DATA_ROOT}/media:/srv/media:ro
+      - ${INFRA_ROOT:-/docker-apps/moodleshield-pro/repo/infra}/nginx/templates:/etc/nginx/templates:ro
+      - ${INFRA_ROOT:-/docker-apps/moodleshield-pro/repo/infra}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
+      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/srv/media:ro
     ports:
       # Sólo en loopback: quien expone al mundo es el reverse proxy del host.
       - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-43127}:8080"

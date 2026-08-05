@@ -225,13 +225,13 @@ feature/* ── PR ──▶ CI ──▶ merge a main
                               ├─ cd-main.yml: lint, tests, migraciones,
                               │  validación Compose y build
                               ├─ publica app/worker:sha-<commit> en GHCR
-                              ├─ actualiza infra/test/.env
+                              ├─ actualiza las imágenes en infra/test/compose.yml
                               └─ Portainer detecta el commit y despliega TEST
 
 main ── tag vX.Y.Z ──▶ cd-promote.yml
                        ├─ comprueba que existe :sha-<commit> en GHCR
                        ├─ crea :vX.Y.Z y :latest con el mismo digest
-                       ├─ actualiza infra/prod/.env
+                       ├─ actualiza las imágenes en infra/prod/compose.yml
                        └─ Portainer detecta el commit y despliega PROD
 ```
 
@@ -265,13 +265,14 @@ emergencia.
 
 Cada push de código a `main` ejecuta `cd-main.yml`. El workflow vuelve a
 verificar el commit, construye una vez las imágenes `app` y `worker`, las
-publica en GHCR como `sha-<commit corto>` y cambia sólo `IMAGE_TAG` en
-`infra/test/.env`. Ese cambio automático se commitea como
+publica en GHCR como `sha-<commit corto>` y cambia sólo las referencias `image:`
+en `infra/test/compose.yml`. Ese cambio automático se commitea como
 `deploy(test): ... [skip ci]`.
 
 Portainer tiene el repositorio configurado con la rama `main` y el Compose del
 entorno correspondiente. Por eso Git es la fuente de verdad de la versión:
-Portainer lee el nuevo `IMAGE_TAG`, descarga las imágenes y recrea el stack.
+Portainer lee las referencias `image:` del Compose, descarga las imágenes y
+recrea el stack. No depende de que Portainer cargue un `.env` del repositorio.
 El webhook sólo acelera la detección; si no está configurado, funciona el
 polling de Portainer.
 
@@ -312,28 +313,28 @@ git push origin v0.1.0
 
 `cd-promote.yml` no ejecuta otro build. Busca `sha-<commit>` en GHCR, falla si
 ese commit nunca pasó por `main`, y crea las etiquetas de versión y `latest`
-para el mismo digest. Luego actualiza `infra/prod/.env`; Portainer despliega
-producción desde ese cambio. No crees el tag desde una rama de trabajo ni
+para el mismo digest. Luego actualiza las referencias `image:` en
+`infra/prod/compose.yml`; Portainer despliega producción desde ese cambio. No crees el tag desde una rama de trabajo ni
 reutilices una versión ya publicada.
 
 #### Rollback
 
-El historial de `infra/test/.env` e `infra/prod/.env` es también el historial
+El historial de `infra/test/compose.yml` e `infra/prod/compose.yml` es también el historial
 de despliegues. En producción, para volver a la versión anterior, revierte el
 commit automático de producción y sube el revert:
 
 ```bash
-git log --oneline -- infra/prod/.env
+git log --oneline -- infra/prod/compose.yml
 git revert <commit-deploy-prod>
 git push origin main
 ```
 
-Portainer volverá a leer el `IMAGE_TAG` anterior. No borres ni edites a mano
+Portainer volverá a leer la referencia de imagen anterior. No borres ni edites a mano
 los commits `deploy(test): ...` o `deploy(prod): ...`: son los cambios que
 activan GitOps. Para deshacer código en test, revierte el commit de código (o
 abre un PR de rollback); `cd-main` construirá una nueva imagen `sha-*` con ese
 estado y la desplegará. Los secretos nunca van en Git; se mantienen en las variables
-del stack de Portainer, y `infra/<env>/.env.example` sólo sirve como plantilla.
+del stack de Portainer, y `infra/<env>/.env.sample` sólo sirve como plantilla.
 
 ---
 

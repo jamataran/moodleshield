@@ -4,11 +4,6 @@ node_modules/
 *.log
 npm-debug.log*
 
-# Los .env de infra/ sí se versionan: sólo llevan la etiqueta de imagen y
-# rutas, que es lo que Portainer necesita leer del repositorio. Los secretos
-# se definen en el propio Portainer.
-!infra/*/.env
-
 # Datos locales de desarrollo (media, postgres, uploads)
 .data/
 infra/local/data/

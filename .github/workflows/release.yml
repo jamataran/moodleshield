@@ -41,9 +41,10 @@ jobs:
             exit 1
           }
 
-          sha_tag=$(sed -n 's/^IMAGE_TAG=//p' infra/test/.env)
+          app_image=$(awk '$1 == "image:" && $2 ~ /\/app:/ {print $2; exit}' infra/test/compose.yml)
+          sha_tag="${app_image##*:}"
           [[ "$sha_tag" =~ ^sha-[0-9a-f]{7,40}$ ]] || {
-            echo "::error::infra/test/.env no apunta a una imagen sha-* válida: $sha_tag"
+            echo "::error::infra/test/compose.yml no apunta a una imagen sha-* válida: $sha_tag"
             exit 1
           }
 
@@ -123,9 +124,9 @@ jobs:
           set -euo pipefail
           git fetch origin main
           git checkout -B main origin/main
-          sed -i -E "s|^IMAGE_TAG=.*|IMAGE_TAG=${VERSION}|" infra/prod/.env
-          sed -i -E "s|^IMAGE_REPO=.*|IMAGE_REPO=${REPO}|" infra/prod/.env
-          git add infra/prod/.env
+          sed -i -E "s|^    image: ghcr.io/.*/app:.*$|    image: ghcr.io/${REPO}/app:${VERSION}|"       infra/prod/compose.yml
+          sed -i -E "s|^    image: ghcr.io/.*/worker:.*$|    image: ghcr.io/${REPO}/worker:${VERSION}|" infra/prod/compose.yml
+          git add infra/prod/compose.yml
           git commit -m "deploy(prod): ${VERSION} [skip ci]"
           git push origin main
 
