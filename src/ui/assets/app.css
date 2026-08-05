@@ -112,6 +112,7 @@ input[type="text"], input[type="file"], textarea {
 .badge.processing,
 .badge.queued     { color: var(--warn); border-color: var(--warn); }
 .badge.failed     { color: var(--err);  border-color: var(--err); }
+.badge.cancelled  { color: var(--muted); border-color: var(--muted); }
 
 .notice { padding: .65rem .8rem; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 1rem; }
 .notice.error { border-color: var(--err); color: var(--err); }

@@ -265,6 +265,7 @@ src/
 ├── session.js         tokens de sesión (sin cookies: va en iframe)
 ├── lti/               handshake LTI 1.3 sobre `jose`
 ├── media/             marca A/B, playlists, transcodificación, firma de URLs
+├── queue/             leases, heartbeat y fencing de trabajos Postgres
 ├── routes/            HTTP: vídeos, HLS, salud
 ├── services/          acceso a datos
 └── ui/                player y catálogo
@@ -273,7 +274,7 @@ migrations/            SQL plano, aplicado solo al arrancar
 infra/{local,test,prod}/  un compose autosuficiente por entorno, con su README
 docker/                Dockerfile con dos destinos + bake
 tools/trace.mjs        trazado forense
-test/                  49 tests, sin dependencias externas
+test/                  58 tests unitarios + 7 de integración con Postgres
 ```
 
 ## Configuración
@@ -288,6 +289,8 @@ que más se tocan:
 | `SEGMENT_SECONDS` | `4` | Duración de segmento; también es la resolución del patrón |
 | `MEDIA_DELIVERY` | `app` | `signed` en producción (los segmentos los sirve nginx) |
 | `TRANSCODE_CONCURRENCY` | `1` | Súbelo sólo con aceleración hardware |
+| `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
+| `TRANSCODE_HEARTBEAT_MS` | `20000` | Renovación del lease y sondeo de cancelación |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas anteriores |
 
 ## Coste de CPU y de disco

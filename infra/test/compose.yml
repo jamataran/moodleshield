@@ -47,6 +47,8 @@ x-app-env: &app-env
   # Marca visible: en pruebas interesa verla.
   MARK_ALPHA: ${MARK_ALPHA:-0.5}
   TRANSCODE_CONCURRENCY: ${TRANSCODE_CONCURRENCY:-1}
+  TRANSCODE_LEASE_SECONDS: ${TRANSCODE_LEASE_SECONDS:-90}
+  TRANSCODE_HEARTBEAT_MS: ${TRANSCODE_HEARTBEAT_MS:-20000}
   FFMPEG_NICE: ${FFMPEG_NICE:-10}
 
 services:
@@ -96,6 +98,7 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/worker:${IMAGE_TAG:?falta IMAGE_TAG}
     restart: unless-stopped
     init: true
+    stop_grace_period: 45s
     depends_on:
       db:
         condition: service_healthy

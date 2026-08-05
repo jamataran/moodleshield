@@ -72,7 +72,10 @@ export function issueSession (context) {
       idn: context.identity ?? null,
       ctx: context.contextId,
       ins: context.isInstructor ? 1 : 0,
-      dl: context.deepLinkingSettings ? 1 : 0
+      dl: context.deepLinkingSettings ? 1 : 0,
+      mode: context.mode ?? 'launch',
+      rk: context.resource?.kind ?? null,
+      rid: context.resource?.id ?? null
     },
     { secret: config.secrets.session, ttlSeconds: config.session.ttlSeconds }
   )
@@ -89,14 +92,16 @@ export function verifySession (token) {
     contextId: payload.ctx,
     isInstructor: payload.ins === 1,
     canDeepLink: payload.dl === 1,
+    mode: payload.mode ?? 'launch',
+    resource: payload.rk && payload.rid ? { kind: payload.rk, id: payload.rid } : null,
     expiresAt: payload.exp
   }
 }
 
 /** Token de un solo propósito: descargar la clave AES de un vídeo concreto. */
-export function issueKeyToken ({ videoId, sub }) {
+export function issueKeyToken ({ videoId, sub, platformId }) {
   return issueToken(
-    { typ: 'key', v: videoId, sub },
+    { typ: 'key', v: videoId, sub, pid: platformId },
     { secret: config.secrets.mediaKey, ttlSeconds: config.media.linkTtlSeconds }
   )
 }

@@ -20,3 +20,14 @@ export function requireInstructor (req, res, next) {
     next()
   })
 }
+
+/** Una sesión de reproducción, aunque sea de profesor, no administra catálogo. */
+export function requireCatalogInstructor (req, res, next) {
+  requireInstructor(req, res, (err) => {
+    if (err) return next(err)
+    if (!['catalog', 'manage'].includes(req.session.mode)) {
+      return res.status(403).json({ error: 'Abre el catálogo desde «Seleccionar contenido»' })
+    }
+    next()
+  })
+}

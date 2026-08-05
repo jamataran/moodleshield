@@ -4,15 +4,7 @@ import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import config from '../config.js'
 import logger from '../logger.js'
-import {
-  videoDir,
-  variantDir,
-  variantPlaylistPath,
-  keyPath,
-  keyInfoPath,
-  posterPath,
-  writeMeta
-} from './storage.js'
+import { mediaFingerprint, videoDir } from './storage.js'
 import { parseVariantPlaylist, assertVariantsAligned } from './playlist.js'
 
 /**
@@ -40,8 +32,9 @@ export function markFilter (variant, alpha = config.transcode.markAlpha) {
   return `drawbox=x=${x}:y=${y}:w=iw*${BW}:h=ih*${BH}:color=white@${alpha}:t=fill`
 }
 
-function run (command, args, { cwd, onLine } = {}) {
+export function runProcess (command, args, { cwd, onLine, signal } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason ?? new Error('Proceso cancelado'))
     const useNice = config.transcode.niceness > 0 && process.platform !== 'win32'
     const bin = useNice ? 'nice' : command
     const argv = useNice ? ['-n', String(config.transcode.niceness), command, ...args] : args
@@ -49,6 +42,16 @@ function run (command, args, { cwd, onLine } = {}) {
     const child = spawn(bin, argv, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
+    let abortTimer = null
+    let aborted = false
+
+    const onAbort = () => {
+      aborted = true
+      child.kill('SIGTERM')
+      abortTimer = setTimeout(() => child.kill('SIGKILL'), config.transcode.childKillMs)
+      abortTimer.unref?.()
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
 
     child.stdout.on('data', (chunk) => {
       stdout += chunk
@@ -61,22 +64,29 @@ function run (command, args, { cwd, onLine } = {}) {
       onLine?.(text)
     })
 
-    child.on('error', reject)
+    child.on('error', (err) => {
+      signal?.removeEventListener('abort', onAbort)
+      if (abortTimer) clearTimeout(abortTimer)
+      reject(err)
+    })
     child.on('close', (code) => {
+      signal?.removeEventListener('abort', onAbort)
+      if (abortTimer) clearTimeout(abortTimer)
+      if (aborted) return reject(signal?.reason ?? new Error('Proceso cancelado'))
       if (code === 0) return resolve({ stdout, stderr })
       reject(new Error(`${command} terminó con código ${code}:\n${stderr.slice(-2000)}`))
     })
   })
 }
 
-export async function probe (input) {
-  const { stdout } = await run(config.transcode.ffprobePath, [
+export async function probe (input, { signal } = {}) {
+  const { stdout } = await runProcess(config.transcode.ffprobePath, [
     '-v', 'error',
     '-print_format', 'json',
     '-show_format',
     '-show_streams',
     input
-  ])
+  ], { signal })
   const data = JSON.parse(stdout)
   const video = data.streams?.find((s) => s.codec_type === 'video')
   if (!video) throw new Error('El fichero no contiene ninguna pista de vídeo')
@@ -135,14 +145,22 @@ function encodeArgs ({ input, variant, outDir, keyInfo, hasAudio }) {
  * @param {string} inputPath
  * @param {{onProgress?: (line:string)=>void}} [hooks]
  */
-export async function transcodeVideo (videoId, inputPath, { onProgress } = {}) {
-  const dir = videoDir(videoId)
+export async function transcodeVideo (videoId, inputPath, {
+  onProgress,
+  signal,
+  outputDir = videoDir(videoId)
+} = {}) {
+  const dir = outputDir
   const log = logger.child({ videoId })
+  const variantDir = (variant) => path.join(dir, variant)
+  const playlistPath = (variant) => path.join(variantDir(variant), 'index.m3u8')
+  const keyFile = path.join(dir, 'key.bin')
+  const keyInfoFile = path.join(dir, 'key.info')
 
-  await mkdir(variantDir(videoId, 'A'), { recursive: true })
-  await mkdir(variantDir(videoId, 'B'), { recursive: true })
+  await mkdir(variantDir('A'), { recursive: true })
+  await mkdir(variantDir('B'), { recursive: true })
 
-  const info = await probe(inputPath)
+  const info = await probe(inputPath, { signal })
   log.info(info, 'Vídeo analizado')
 
   // Una clave AES por vídeo, compartida por ambas variantes: es lo que permite
@@ -154,35 +172,35 @@ export async function transcodeVideo (videoId, inputPath, { onProgress } = {}) {
   // rompería la intercambiabilidad de las variantes sin previo aviso.
   const key = randomBytes(16)
   const iv = randomBytes(16).toString('hex')
-  await writeFile(keyPath(videoId), key)
-  await writeFile(keyInfoPath(videoId), `key\n${keyPath(videoId)}\n${iv}\n`)
+  await writeFile(keyFile, key)
+  await writeFile(keyInfoFile, `key\n${keyFile}\n${iv}\n`)
 
   for (const variant of ['A', 'B']) {
     const started = Date.now()
     log.info({ variant }, 'Transcodificando variante')
-    await run(
+    await runProcess(
       config.transcode.ffmpegPath,
       encodeArgs({
         input: inputPath,
         variant,
-        outDir: variantDir(videoId, variant),
-        keyInfo: keyInfoPath(videoId),
+        outDir: variantDir(variant),
+        keyInfo: keyInfoFile,
         hasAudio: info.hasAudio
       }),
-      { onLine: onProgress }
+      { onLine: onProgress, signal }
     )
     log.info({ variant, seconds: Math.round((Date.now() - started) / 1000) }, 'Variante lista')
   }
 
-  const playlistA = parseVariantPlaylist(await readFile(variantPlaylistPath(videoId, 'A'), 'utf8'))
-  const playlistB = parseVariantPlaylist(await readFile(variantPlaylistPath(videoId, 'B'), 'utf8'))
+  const playlistA = parseVariantPlaylist(await readFile(playlistPath('A'), 'utf8'))
+  const playlistB = parseVariantPlaylist(await readFile(playlistPath('B'), 'utf8'))
   assertVariantsAligned(playlistA, playlistB)
 
-  await generatePoster(inputPath, videoId, info.durationSeconds)
+  await generatePoster(inputPath, path.join(dir, 'poster.jpg'), info.durationSeconds, signal)
 
   // key.info contiene la ruta absoluta de la clave; ya no hace falta y es un
   // fichero menos que pueda acabar servido por error.
-  await rm(keyInfoPath(videoId), { force: true })
+  await rm(keyInfoFile, { force: true })
 
   const meta = {
     videoId,
@@ -198,25 +216,27 @@ export async function transcodeVideo (videoId, inputPath, { onProgress } = {}) {
     markGeometry: MARK_GEOMETRY,
     variants: ['A', 'B']
   }
-  await writeMeta(videoId, meta)
+  meta.artifactHash = (await mediaFingerprint(dir)).artifactHash
+  await writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2))
 
   log.info({ segments: meta.segmentCount, dir }, 'Transcodificación completada')
   return meta
 }
 
-async function generatePoster (input, videoId, durationSeconds) {
+async function generatePoster (input, outputPath, durationSeconds, signal) {
   const at = Math.min(5, Math.max(1, (durationSeconds ?? 10) / 10))
   try {
-    await run(config.transcode.ffmpegPath, [
+    await runProcess(config.transcode.ffmpegPath, [
       '-hide_banner', '-nostdin', '-y',
       '-ss', at.toFixed(2),
       '-i', input,
       '-frames:v', '1',
       '-vf', 'scale=640:-2',
       '-q:v', '4',
-      posterPath(videoId)
-    ])
+      outputPath
+    ], { signal })
   } catch (err) {
-    logger.warn({ videoId, err }, 'No se pudo generar la miniatura; se seguirá sin ella')
+    if (signal?.aborted) throw err
+    logger.warn({ err }, 'No se pudo generar la miniatura; se seguirá sin ella')
   }
 }

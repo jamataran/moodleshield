@@ -24,7 +24,8 @@ const STATUS_LABEL = {
   queued: 'en cola',
   processing: 'procesando',
   ready: 'listo',
-  failed: 'error'
+  failed: 'error',
+  cancelled: 'cancelado'
 }
 
 function notify (message, kind = 'ok') {
@@ -55,9 +56,20 @@ function card (video) {
   el.dataset.id = video.id
 
   const img = document.createElement('img')
-  img.src = `/videos/${video.id}/poster.jpg`
+  img.src = '/assets/poster-placeholder.svg'
   img.alt = ''
   img.loading = 'lazy'
+  api(`/videos/${video.id}/poster.jpg`)
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.blob()
+    })
+    .then((blob) => {
+      const url = URL.createObjectURL(blob)
+      img.src = url
+      img.addEventListener('load', () => URL.revokeObjectURL(url), { once: true })
+    })
+    .catch(() => {})
 
   const body = document.createElement('div')
   body.className = 'body'
@@ -103,7 +115,23 @@ function card (video) {
   del.addEventListener('click', async () => {
     if (!confirm(`¿Borrar "${video.title}" y todos sus segmentos?`)) return
     const res = await api(`/videos/${video.id}`, { method: 'DELETE' })
-    if (res.ok) { notify('Vídeo borrado'); load() } else { notify('No se pudo borrar', 'error') }
+    if (res.ok) {
+      notify('Vídeo borrado')
+      load()
+      return
+    }
+    if (res.status === 409 && video.status !== 'cancelled') {
+      if (!confirm('El vídeo está activo. ¿Cancelar el procesamiento?')) return
+      const cancel = await api(`/videos/${video.id}/cancel`, { method: 'POST' })
+      if (cancel.ok) {
+        notify('Cancelación solicitada')
+        load()
+        return
+      }
+    }
+    let message = `HTTP ${res.status}`
+    try { message = (await res.json()).error ?? message } catch { /* respuesta no JSON */ }
+    notify(`No se pudo borrar: ${message}`, 'error')
   })
   actions.append(del)
 

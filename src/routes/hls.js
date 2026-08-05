@@ -23,6 +23,9 @@ const NO_STORE = 'no-store, no-cache, must-revalidate, private'
 hlsRouter.get('/:id/index.m3u8', requireSession, async (req, res, next) => {
   try {
     const videoId = assertVideoId(req.params.id)
+    if (req.session.resource?.kind !== 'video' || req.session.resource.id !== videoId) {
+      return res.status(403).json({ error: 'La sesión no autoriza este vídeo' })
+    }
     // Ámbito por plataforma: un alumno de un Moodle no puede reproducir el
     // vídeo de otro aunque conozca su id.
     const video = await getVideoForPlatform(videoId, req.session.platformId)
@@ -31,7 +34,11 @@ hlsRouter.get('/:id/index.m3u8', requireSession, async (req, res, next) => {
       return res.status(409).json({ error: `El vídeo está en estado "${video.status}"` })
     }
 
-    const keyToken = issueKeyToken({ videoId, sub: req.session.sub })
+    const keyToken = issueKeyToken({
+      videoId,
+      sub: req.session.sub,
+      platformId: req.session.platformId
+    })
     const { body, pattern } = await buildUserPlaylist({
       videoId,
       userSub: req.session.sub,

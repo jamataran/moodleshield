@@ -1,32 +1,43 @@
 import { Router } from 'express'
-import Busboy from 'busboy'
-import { createWriteStream } from 'node:fs'
-import { pipeline } from 'node:stream/promises'
-import { rm, mkdir, stat } from 'node:fs/promises'
+import { rm, statfs } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import path from 'node:path'
-import config from '../config.js'
 import logger from '../logger.js'
-import { requireSession, requireInstructor } from './auth.js'
+import config from '../config.js'
+import { requireSession, requireCatalogInstructor } from './auth.js'
 import {
   listVideos,
   getVideoForPlatform,
-  createVideo,
-  enqueueTranscode,
-  deleteVideo,
+  getVideoForOwner,
+  createVideoAndJob,
+  deleteOwnedVideo,
+  requestVideoCancellation,
   listViewers
 } from '../services/videos.js'
-import { uploadPath, posterPath, removeVideoFiles, assertVideoId, exists } from '../media/storage.js'
+import { posterPath, removeVideoFiles, assertVideoId, exists } from '../media/storage.js'
+import { receiveVideoUpload } from '../media/upload.js'
 
 export const videosRouter = Router()
 
-const ALLOWED_EXTENSIONS = new Set(['.mp4', '.mov', '.mkv', '.m4v', '.webm', '.avi'])
+function publicVideo (video) {
+  return {
+    id: video.id,
+    title: video.title,
+    description: video.description,
+    status: video.status,
+    duration_seconds: video.duration_seconds,
+    segment_count: video.segment_count,
+    width: video.width,
+    height: video.height,
+    created_at: video.created_at,
+    updated_at: video.updated_at
+  }
+}
 
-videosRouter.get('/', requireSession, async (req, res, next) => {
+videosRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
   try {
     const videos = await listVideos({
       platformId: req.session.platformId,
-      onlyReady: !req.session.isInstructor
+      ownerSub: req.session.sub
     })
     res.json({ videos })
   } catch (err) {
@@ -36,9 +47,12 @@ videosRouter.get('/', requireSession, async (req, res, next) => {
 
 videosRouter.get('/:id', requireSession, async (req, res, next) => {
   try {
-    const video = await getVideoForPlatform(assertVideoId(req.params.id), req.session.platformId)
+    const id = assertVideoId(req.params.id)
+    const video = req.session.resource?.kind === 'video' && req.session.resource.id === id
+      ? await getVideoForPlatform(id, req.session.platformId)
+      : await getVideoForOwner(id, req.session.platformId, req.session.sub)
     if (!video) return res.status(404).json({ error: 'Vídeo no encontrado' })
-    res.json({ video })
+    res.json({ video: publicVideo(video) })
   } catch (err) {
     next(err)
   }
@@ -48,75 +62,36 @@ videosRouter.get('/:id', requireSession, async (req, res, next) => {
  * Subida en streaming directo a disco. Nada del MP4 pasa por memoria: es la
  * diferencia entre 40 MB de RSS y quedarse sin RAM con un vídeo de 3 GB.
  */
-videosRouter.post('/', requireInstructor, async (req, res, next) => {
+videosRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
   const videoId = randomUUID()
+  const startedAt = Date.now()
   let destination = null
-  let title = ''
-  let description = ''
-  let originalFilename = ''
-  let receivedFile = false
-  let rejected = null
 
   try {
-    await mkdir(path.dirname(uploadPath(videoId)), { recursive: true })
-
-    const busboy = Busboy({
-      headers: req.headers,
-      limits: { files: 1, fileSize: config.media.maxUploadBytes, fields: 20 }
-    })
-
-    await new Promise((resolve, reject) => {
-      busboy.on('field', (name, value) => {
-        if (name === 'title') title = value.slice(0, 300)
-        if (name === 'description') description = value.slice(0, 2000)
-      })
-
-      busboy.on('file', (_name, stream, info) => {
-        originalFilename = info.filename ?? ''
-        const ext = path.extname(originalFilename).toLowerCase()
-        if (!ALLOWED_EXTENSIONS.has(ext)) {
-          rejected = `Extensión no admitida: ${ext || '(ninguna)'}`
-          stream.resume()
-          return
-        }
-        receivedFile = true
-        destination = uploadPath(videoId, originalFilename)
-        stream.on('limit', () => {
-          rejected = `El fichero supera el límite de ${config.media.maxUploadBytes} bytes`
-        })
-        pipeline(stream, createWriteStream(destination)).catch(reject)
-      })
-
-      busboy.on('close', resolve)
-      busboy.on('error', reject)
-      req.pipe(busboy)
-    })
-
-    if (rejected) {
-      if (destination) await rm(destination, { force: true })
-      return res.status(400).json({ error: rejected })
-    }
-    if (!receivedFile || !destination) {
-      return res.status(400).json({ error: 'Falta el fichero de vídeo' })
-    }
-
-    const { size } = await stat(destination)
-    if (size === 0) {
-      await rm(destination, { force: true })
-      return res.status(400).json({ error: 'El fichero llegó vacío' })
-    }
-
-    await createVideo({
+    const filesystem = await statfs(config.media.uploadRoot).catch(() => null)
+    const freeBytes = filesystem ? Number(filesystem.bavail) * Number(filesystem.bsize) : null
+    const upload = await receiveVideoUpload(req, { videoId })
+    destination = upload.destination
+    const { jobId } = await createVideoAndJob({
       id: videoId,
-      title: title || path.basename(originalFilename, path.extname(originalFilename)) || 'Sin título',
-      description,
+      title: upload.title,
+      description: upload.description,
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
-      ownerName: req.session.name
+      ownerName: req.session.name,
+      sourcePath: upload.destination,
+      sizeBytes: upload.size,
+      originalFilename: upload.originalFilename
     })
-    await enqueueTranscode(videoId, destination, size, originalFilename)
 
-    logger.info({ videoId, size, owner: req.session.sub }, 'Vídeo subido y encolado')
+    logger.info({
+      videoId,
+      jobId,
+      bytes: upload.size,
+      freeBytes,
+      uploadMs: Date.now() - startedAt,
+      owner: req.session.sub
+    }, 'Vídeo subido y encolado')
     res.status(202).json({ id: videoId, status: 'queued' })
   } catch (err) {
     if (destination) await rm(destination, { force: true }).catch(() => {})
@@ -124,27 +99,59 @@ videosRouter.post('/', requireInstructor, async (req, res, next) => {
   }
 })
 
-videosRouter.delete('/:id', requireInstructor, async (req, res, next) => {
+videosRouter.delete('/:id', requireCatalogInstructor, async (req, res, next) => {
   try {
     const id = assertVideoId(req.params.id)
-    // Ámbito por plataforma: un profesor no puede borrar el vídeo de otro Moodle.
-    const video = await getVideoForPlatform(id, req.session.platformId)
-    if (!video) return res.status(404).json({ error: 'Vídeo no encontrado' })
-    await deleteVideo(id)
-    await removeVideoFiles(id)
+    const result = await deleteOwnedVideo({
+      videoId: id,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub
+    })
+    if (result.status === 'not_found') return res.status(404).json({ error: 'Vídeo no encontrado' })
+    if (result.status === 'active') {
+      return res.status(409).json({
+        error: 'El vídeo está en cola o procesándose. Cancélalo antes de borrarlo.',
+        code: 'video_active'
+      })
+    }
+    await removeVideoFiles(id).catch((err) => {
+      logger.warn({ err, videoId: id }, 'Vídeo borrado de DB; quedan ficheros para reconciliar')
+    })
+    await Promise.all(result.sourcePaths.map((sourcePath) =>
+      rm(sourcePath, { force: true }).catch((err) => {
+        logger.warn({ err, videoId: id }, 'Original pendiente de reconciliación')
+      })
+    ))
     res.sendStatus(204)
   } catch (err) {
     next(err)
   }
 })
 
+videosRouter.post('/:id/cancel', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const result = await requestVideoCancellation({
+      videoId: assertVideoId(req.params.id),
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub
+    })
+    if (result.status === 'not_found') return res.status(404).json({ error: 'Vídeo no encontrado' })
+    if (result.status === 'not_active') {
+      return res.status(409).json({ error: `El vídeo está en estado "${result.videoStatus}"` })
+    }
+    res.status(202).json(result)
+  } catch (err) {
+    next(err)
+  }
+})
+
 /** Lista de alumnos que han abierto el vídeo. Insumo del trazado forense. */
-videosRouter.get('/:id/viewers', requireInstructor, async (req, res, next) => {
+videosRouter.get('/:id/viewers', requireCatalogInstructor, async (req, res, next) => {
   try {
     // La lista de espectadores lleva nombres e identificadores de alumnos:
     // fuera del propio inquilino es una fuga de datos personales.
     const id = assertVideoId(req.params.id)
-    const video = await getVideoForPlatform(id, req.session.platformId)
+    const video = await getVideoForOwner(id, req.session.platformId, req.session.sub)
     if (!video) return res.status(404).json({ error: 'Vídeo no encontrado' })
     res.json({ viewers: await listViewers(id) })
   } catch (err) {
@@ -152,11 +159,17 @@ videosRouter.get('/:id/viewers', requireInstructor, async (req, res, next) => {
   }
 })
 
-videosRouter.get('/:id/poster.jpg', async (req, res, next) => {
+videosRouter.get('/:id/poster.jpg', requireSession, async (req, res, next) => {
   try {
-    const file = posterPath(assertVideoId(req.params.id))
+    const id = assertVideoId(req.params.id)
+    const scopedLaunch = req.session.resource?.kind === 'video' && req.session.resource.id === id
+    const video = scopedLaunch
+      ? await getVideoForPlatform(id, req.session.platformId)
+      : await getVideoForOwner(id, req.session.platformId, req.session.sub)
+    if (!video) return res.status(404).json({ error: 'Vídeo no encontrado' })
+    const file = posterPath(id)
     if (!(await exists(file))) return res.redirect(302, '/assets/poster-placeholder.svg')
-    res.set('Cache-Control', 'public, max-age=3600')
+    res.set('Cache-Control', 'private, max-age=3600')
     res.sendFile(file)
   } catch (err) {
     next(err)
