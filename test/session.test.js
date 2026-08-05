@@ -51,6 +51,8 @@ test('la sesión conserva rol, identidad visible y contexto del launch', () => {
     identity: 'agarcia',
     contextId: 'curso-9',
     isInstructor: true,
+    mode: 'launch',
+    resource: { kind: 'video', id: 'video-9' },
     deepLinkingSettings: { deep_link_return_url: 'https://moodle/x' }
   })
   const session = verifySession(token)
@@ -60,6 +62,20 @@ test('la sesión conserva rol, identidad visible y contexto del launch', () => {
   assert.equal(session.contextId, 'curso-9')
   assert.equal(session.isInstructor, true)
   assert.equal(session.canDeepLink, true)
+  assert.equal(session.mode, 'launch')
+  assert.deepEqual(session.resource, { kind: 'video', id: 'video-9' })
+})
+
+test('una sesión de catálogo no adquiere acceso implícito a ningún vídeo', () => {
+  const token = issueSession({
+    sub: 'profesor-1',
+    platformId: 'plat-1',
+    isInstructor: true,
+    mode: 'catalog'
+  })
+  const session = verifySession(token)
+  assert.equal(session.mode, 'catalog')
+  assert.equal(session.resource, null)
 })
 
 test('un alumno no se convierte en profesor por reusar el token', () => {

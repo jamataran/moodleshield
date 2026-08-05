@@ -1,7 +1,8 @@
 name: CD · main → test
 
 # Cada push a main: verifica, construye UNA vez, publica :sha-<commit> y :edge,
-# y escribe la etiqueta en infra/test/.env. Portainer (GitOps) redespliega test.
+# y escribe la etiqueta directamente en infra/test/compose.yml. Portainer
+# (GitOps) sólo necesita leer el Compose para redesplegar test.
 #
 # La promoción a prod NO pasa por aquí: cd-promote.yml re-etiqueta este mismo
 # digest cuando se crea un tag vX.Y.Z. Misma imagen hacia arriba.
@@ -59,12 +60,15 @@ jobs:
         run: |
           set -euo pipefail
           for env in test prod; do
-            docker compose --env-file "infra/$env/.env" --env-file "infra/$env/.env.ci" \
+            grep -Eq '^    image: ghcr.io/[^[:space:]]+/app:[^[:space:]]+$' "infra/$env/compose.yml"
+            grep -Eq '^    image: ghcr.io/[^[:space:]]+/worker:[^[:space:]]+$' "infra/$env/compose.yml"
+            ! grep -Eq 'IMAGE_(REPO|TAG)' "infra/$env/compose.yml"
+            docker compose --env-file "infra/$env/.env.sample" --env-file "infra/$env/.env.ci" \
               -f "infra/$env/compose.yml" config -q
           done
           docker compose -f infra/local/compose.yml config -q
           fail=0
-          for f in infra/*/.env; do
+          for f in infra/*/.env.sample; do
             while IFS= read -r line; do
               case "$line" in \#*|'') continue ;; esac
               key=${line%%=*}; value=${line#*=}
@@ -119,7 +123,7 @@ jobs:
           TAGS: ${{ steps.meta.outputs.sha_tag }},edge
           APP_VERSION: ${{ steps.meta.outputs.sha_tag }}
 
-      - name: Desplegar en test (bump de infra/test/.env)
+      - name: Desplegar en test (bump de infra/test/compose.yml)
         env:
           SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
           REPO: ${{ steps.meta.outputs.repo }}
@@ -130,21 +134,21 @@ jobs:
 
           # El checkout está anclado al SHA del evento. Si mientras se construía
           # aterrizó otro push, hacer el sed sobre esa base antigua y rebasar
-          # después provoca conflicto en la MISMA línea (IMAGE_TAG) y el deploy
+          # después provoca conflicto en las MISMAS líneas (image:) y el deploy
           # falla sin posibilidad de recuperarlo con un re-run. Por eso se parte
           # siempre de la punta real de main, y se reintenta si nos adelantan.
           for intento in 1 2 3; do
             git fetch origin main
             git checkout -B main origin/main
 
-            sed -i -E "s|^IMAGE_TAG=.*|IMAGE_TAG=${SHA_TAG}|"  infra/test/.env
-            sed -i -E "s|^IMAGE_REPO=.*|IMAGE_REPO=${REPO}|"   infra/test/.env
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${SHA_TAG}|"       infra/test/compose.yml
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${SHA_TAG}|" infra/test/compose.yml
 
-            if git diff --quiet -- infra/test/.env; then
+            if git diff --quiet -- infra/test/compose.yml; then
               echo "Sin cambios (la etiqueta ya era ${SHA_TAG})"; exit 0
             fi
 
-            git add infra/test/.env
+            git add infra/test/compose.yml
             # Los pushes con GITHUB_TOKEN no disparan workflows; el [skip ci] es
             # el cinturón además de los tirantes.
             git commit -m "deploy(test): ${SHA_TAG} [skip ci]"

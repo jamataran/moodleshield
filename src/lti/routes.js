@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { randomUUID, randomBytes } from 'node:crypto'
 import config from '../config.js'
 import logger from '../logger.js'
-import { one, many } from '../db/index.js'
+import { one } from '../db/index.js'
 import { getPublicJwks } from './keys.js'
 import { findPlatform, listPlatforms, upsertPlatform } from './platform.js'
 import { saveOidcState, validateLaunch, LtiError } from './validate.js'
@@ -10,7 +10,8 @@ import { MESSAGE_TYPE } from './claims.js'
 import { issueSession, issueToken, verifyToken } from '../session.js'
 import { renderPage } from '../ui/render.js'
 import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
-import { recordView } from '../services/videos.js'
+import { getVideoForPlatform, listReadyVideosForDeepLink, recordView } from '../services/videos.js'
+import { assertVideoId } from '../media/storage.js'
 
 export const ltiRouter = Router()
 
@@ -92,8 +93,6 @@ ltiRouter.post('/launch', async (req, res, next) => {
     // Identificador visible del alumno: el parámetro personalizado configurado
     // en Moodle (por defecto el username) y, si no llega, lis_person_sourcedid.
     const identity = context.custom?.[config.lti.identityCustomParam] ?? context.lisPersonSourcedId ?? null
-    const sessionToken = issueSession({ ...context, identity })
-
     logger.info(
       {
         sub: context.sub,
@@ -105,12 +104,14 @@ ltiRouter.post('/launch', async (req, res, next) => {
     )
 
     if (context.messageType === MESSAGE_TYPE.deepLinking) {
+      const sessionToken = issueSession({ ...context, identity, mode: 'catalog' })
       // Token aparte con lo que hace falta para responder a Moodle: adónde
       // devolver la selección y el `data` opaco que hay que reflejar tal cual.
       const dlToken = issueToken(
         {
           typ: 'dl',
           pid: platform.id,
+          sub: context.sub,
           dep: context.deploymentId,
           ret: context.deepLinkingSettings?.deep_link_return_url ?? null,
           dat: context.deepLinkingSettings?.data ?? null,
@@ -136,6 +137,7 @@ ltiRouter.post('/launch', async (req, res, next) => {
 
     if (!videoId) {
       if (context.isInstructor) {
+        const sessionToken = issueSession({ ...context, identity, mode: 'manage' })
         return res.type('html').send(
           await renderPage('catalog.html', {
             bootstrap: {
@@ -153,9 +155,7 @@ ltiRouter.post('/launch', async (req, res, next) => {
       )
     }
 
-    const video = await one('SELECT id, title, status, duration_seconds FROM video WHERE id = $1', [
-      videoId
-    ])
+    const video = await getVideoForPlatform(assertVideoId(videoId), platform.id)
     if (!video) throw new LtiError('El vídeo asociado ya no existe', { status: 404, code: 'video_missing' })
     if (video.status !== 'ready') {
       return res.status(202).type('html').send(
@@ -170,6 +170,13 @@ ltiRouter.post('/launch', async (req, res, next) => {
       identity,
       ip: req.ip,
       userAgent: req.get('user-agent')
+    })
+
+    const sessionToken = issueSession({
+      ...context,
+      identity,
+      mode: 'launch',
+      resource: { kind: 'video', id: video.id }
     })
 
     return res.type('html').send(
@@ -203,18 +210,25 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
       })
     }
 
-    const ids = []
+    const selected = []
       .concat(req.body?.videoIds ?? req.body?.videoId ?? [])
       .filter(Boolean)
-    if (ids.length === 0) throw new LtiError('No se seleccionó ningún vídeo', { code: 'no_selection' })
+    if (selected.length === 0) throw new LtiError('No se seleccionó ningún vídeo', { code: 'no_selection' })
+    let ids
+    try {
+      ids = selected.map(assertVideoId)
+    } catch {
+      throw new LtiError('La selección contiene un identificador inválido', { code: 'invalid_selection' })
+    }
 
     const platform = await one('SELECT * FROM lti_platform WHERE id = $1', [payload.pid])
     if (!platform) throw new LtiError('Plataforma desconocida', { status: 404 })
 
-    const rows = await many(
-      "SELECT id, title, description FROM video WHERE id = ANY($1::uuid[]) AND status = 'ready'",
-      [ids]
-    )
+    const rows = await listReadyVideosForDeepLink({
+      ids,
+      platformId: payload.pid,
+      ownerSub: payload.sub
+    })
     if (rows.length === 0) {
       throw new LtiError('Ninguno de los vídeos seleccionados está listo', { code: 'not_ready' })
     }

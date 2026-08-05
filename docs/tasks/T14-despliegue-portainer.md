@@ -36,10 +36,10 @@ directorio estable, así que un `./datos` acaba en cualquier sitio. De ahí
 
 **Incluye**
 
-- `infra/{test,prod}/compose.yml` con los cinco servicios.
+- `infra/{test,prod}/compose.yml` con los cuatro servicios base.
 - Límites de memoria y CPU por servicio.
 - Healthchecks y dependencias.
-- Perfiles para elegir túnel.
+- Publicación HTTP sólo hacia el reverse proxy del host.
 - Script de preparación del host.
 
 **No incluye**
@@ -55,7 +55,6 @@ directorio estable, así que un `./datos` acaba en cualquier sitio. De ahí
 | `app` | `<repo>/app` | 512 MB | LTI, API, playlists |
 | `worker` | `<repo>/worker` | 1,5 GB / 2 CPU | ffmpeg |
 | `proxy` | nginx:1.27-alpine | 128 MB | Segmentos firmados y proxy |
-| `cloudflared` o `tailscale` | | 128 MB | HTTPS público (perfil) |
 
 Total en reposo, unos 2,7 GB de límite; el consumo real en reposo ronda los
 400 MB, y el resto es margen para ffmpeg.
@@ -68,15 +67,19 @@ Detalle completo en el README del entorno:
 
 1. **Preparar el host** (una vez, por SSH):
    ```bash
-   sudo ./scripts/bootstrap-host.sh /docker-apps/moodleshield prod
+   sudo ./scripts/bootstrap-host.sh /docker-apps/moodleshield-pro prod
    ```
 2. **Generar los secretos**:
    ```bash
    ./scripts/generate-secrets.sh
    ```
    Guardar `WATERMARK_SECRET` en el gestor de contraseñas **antes** de seguir.
-3. **Ajustar** `infra/prod/.env` (`DATA_ROOT`, `INFRA_ROOT`, `PUBLIC_URL`,
-   `IMAGE_REPO`) y hacer commit.
+3. **Revisar** `infra/prod/compose.yml`: trae por defecto
+   `DATA_ROOT=/docker-apps/moodleshield-pro` e
+   `INFRA_ROOT=/docker-apps/moodleshield-pro/repo/infra`. Sobrescribe esos
+   valores en las variables del stack si tu host usa otras rutas. Las imágenes
+   completas y sus tags están en el Compose; no dependen de `IMAGE_REPO` en un
+   `.env`.
 4. **Crear el stack en Portainer** desde el repositorio, con *Compose path* =
    `infra/prod/compose.yml`, pegando los secretos en *Environment variables*.
 5. **Activar GitOps updates** (→ T15).
@@ -85,7 +88,7 @@ Detalle completo en el README del entorno:
 
 - [ ] El stack levanta desde Portainer sin tocar nada por SSH después del
       `bootstrap-host.sh`.
-- [ ] `docker compose ps` muestra los cinco servicios en `healthy`.
+- [ ] `docker compose ps` muestra `db`, `app`, `worker` y `proxy`.
 - [ ] `https://<dominio>/readyz` devuelve `{"status":"ready"}`.
 - [ ] Reiniciar el servidor entero deja el sistema funcionando solo.
 - [ ] Borrar el contenedor `app` y dejar que Docker lo recree no pierde datos.
@@ -96,7 +99,7 @@ Detalle completo en el README del entorno:
 
 ```bash
 # Validar el compose antes de subirlo
-docker compose --env-file infra/prod/.env --env-file infra/prod/.env.ci \
+docker compose --env-file infra/prod/.env.sample --env-file infra/prod/.env.ci \
   -f infra/prod/compose.yml config -q && echo OK
 
 # En el servidor

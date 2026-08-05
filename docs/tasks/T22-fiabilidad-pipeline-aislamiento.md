@@ -5,7 +5,7 @@
 | **Fase** | 9 · Fundamentos productivos |
 | **Depende de** | T02, T06, T07, T08, T12 |
 | **Bloquea a** | T17, T20, T21 y cierre real de T08 |
-| **Estado** | ⬜ pendiente · prioritaria |
+| **Estado** | 🟡 parcial · prioritaria |
 | **Esfuerzo** | 2–3 días |
 
 ## Objetivo

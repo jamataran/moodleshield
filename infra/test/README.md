@@ -2,12 +2,13 @@
 
 ```
 INTERNET ──▶ nginx proxy (tu edge, TLS) ──▶ proxy del stack ──▶ contenedores
-              video-test.tudominio.com       127.0.0.1:8081      app · worker · db
+              video-test.tudominio.com       127.0.0.1:43128     app · worker · db
 ```
 
 Réplica de producción donde aterriza **cada push a `main`**: el CI publica
-`app`/`worker` con etiqueta `sha-<commit>`, escribe esa etiqueta en el `.env` de
-esta carpeta y hace commit; Portainer detecta el cambio y redespliega.
+`app`/`worker` con etiqueta `sha-<commit>`, actualiza las dos referencias de
+imagen directamente en este `compose.yml` y hace commit; Portainer detecta el
+cambio y redespliega leyendo sólo el Compose.
 
 Diferencias deliberadas respecto a prod:
 
@@ -20,8 +21,10 @@ Diferencias deliberadas respecto a prod:
 
 ## El edge: tu nginx
 
-El stack **no** termina TLS: expone HTTP en `127.0.0.1:8081` (configurable con
-`BIND_ADDRESS`/`HTTP_PORT`) y espera un proxy delante. Requisitos del edge:
+El stack **no** termina TLS: expone HTTP en `127.0.0.1:43128` (configurable con
+`BIND_ADDRESS`/`HTTP_PORT`) y espera un proxy delante. El entorno de test vive
+en un servidor público y por diseño no incluye `cloudflared` ni `tailscale`.
+Requisitos del edge:
 
 ```nginx
 server {
@@ -30,7 +33,7 @@ server {
     # ... certificados ...
 
     location / {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:43128;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;   # imprescindible: la app genera URLs https con esto
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -45,15 +48,12 @@ Con Nginx Proxy Manager: mismo destino, y las tres cabeceras/ajustes en la
 pestaña *Advanced*. Si tu proxy corre en Docker en el mismo host, pon
 `BIND_ADDRESS=0.0.0.0` y restringe por firewall, o conéctalo a la red del stack.
 
-¿Sin edge propio? Los perfiles `cloudflare` y `tailscale` del compose levantan
-un túnel como alternativa: [`../../docs/https-tunel.md`](../../docs/https-tunel.md).
-
 ## Alta en Portainer (una vez)
 
 1. **Host** (por SSH):
    ```bash
-   git clone https://github.com/jamataran/moodleshield /docker-apps/moodleshield/repo
-   sudo /docker-apps/moodleshield/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield test
+   git clone https://github.com/jamataran/moodleshield /docker-apps/moodleshield-test/repo
+   sudo /docker-apps/moodleshield-test/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield-test test
    ```
    El clon del host existe para que nginx monte `infra/nginx/` (Portainer clona
    dentro de su propio volumen, no en una ruta estable del host). Sólo hay que
@@ -62,8 +62,11 @@ un túnel como alternativa: [`../../docs/https-tunel.md`](../../docs/https-tunel
 2. **Secretos**: `./scripts/generate-secrets.sh` y guárdalos (con
    `WATERMARK_SECRET` el primero) en el gestor de contraseñas.
 
-3. **Este `.env`** (commit y push): `PUBLIC_URL`, `DATA_ROOT`, `INFRA_ROOT`.
-   `IMAGE_TAG` no lo toques: lo gestiona el CI.
+3. El Compose ya trae por defecto `DATA_ROOT=/docker-apps/moodleshield-test`
+   e `INFRA_ROOT=/docker-apps/moodleshield-test/repo/infra`. Si necesitas
+   cambiarlos, define esas variables en Portainer. `.env.sample` sólo es una
+   plantilla para ejecutar el stack manualmente; no hace falta crear un `.env`
+   para Portainer.
 
 4. **Portainer** → *Stacks → Add stack → Repository*:
 
@@ -83,13 +86,13 @@ un túnel como alternativa: [`../../docs/https-tunel.md`](../../docs/https-tunel
 
 ```bash
 P="docker compose -p moodleshield-test"
-$P ps                                   # los cuatro/cinco en healthy
+$P ps                                   # db, app, worker y proxy
 $P logs -f app worker
 $P exec db psql -U moodleshield -c "SELECT status, count(*) FROM transcode_job GROUP BY status"
 ```
 
-¿Qué versión hay desplegada? La que diga `IMAGE_TAG` en el `.env` de esta
-carpeta — el historial de `git log --oneline -- infra/test/.env` es el
+¿Qué versión hay desplegada? La que aparezca en las líneas `image:` de este
+Compose — el historial de `git log --oneline -- infra/test/compose.yml` es el
 historial de despliegues.
 
 ## Diagnóstico

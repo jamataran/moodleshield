@@ -11,10 +11,9 @@ Tres entornos, cada uno con su carpeta, su `compose.yml` y su README:
 ```
 infra/
 ├── nginx/          configuración compartida (plantilla con secure_link)
-├── tailscale/      serve.json para el perfil tailscale
 ├── local/          compose + .env + README
-├── test/           compose + .env + .env.example + .env.ci + README
-└── prod/           idéntico a test
+├── test/           compose + .env.sample + .env.ci + README
+└── prod/           compose + .env.sample + .env.ci + README
 ```
 
 ## Flujo de promoción
@@ -23,10 +22,10 @@ infra/
 PR ──▶ ci.yml (lint + tests + build sin push)
  │
  ▼ merge / push
-main ──▶ cd-main.yml ──▶ ghcr.io/...:sha-abc1234 ──▶ bump infra/test/.env ──▶ Portainer TEST
+main ──▶ cd-main.yml ──▶ ghcr.io/...:sha-abc1234 ──▶ bump infra/test/compose.yml ──▶ Portainer TEST
                                    │
 tag v1.2.0 ──▶ cd-promote.yml ─────┴──▶ re-etiqueta el MISMO digest como v1.2.0
-                                        ──▶ bump infra/prod/.env ──▶ Portainer PROD
+                                        ──▶ bump infra/prod/compose.yml ──▶ Portainer PROD
 ```
 
 La promoción no reconstruye: `docker buildx imagetools create` copia el
@@ -36,18 +35,18 @@ manifiesto. Test y prod ejecutan el mismo binario.
 
 | Dónde | Qué | ¿Versionado? |
 |---|---|---|
-| `infra/<env>/.env` | `IMAGE_TAG` (lo escribe el CI), rutas, `PUBLIC_URL`, límites | **Sí** |
+| `infra/<env>/compose.yml` | Imágenes completas y tag (lo escribe el CI), defaults de rutas | **Sí** |
 | Variables del stack en Portainer | Todos los secretos | **No** |
-| `infra/<env>/.env.example` | Plantilla de secretos, vacía | Sí (vacía) |
+| `infra/<env>/.env.sample` | Plantilla para ejecutar manualmente, con defaults y secretos vacíos | Sí |
 | `infra/<env>/.env.ci` | Relleno `ci` para validar el compose sin secretos | Sí |
 
-Funciona por la precedencia de compose: las variables de entorno (Portainer)
-ganan al fichero `.env`. El CI falla si detecta cualquier `*SECRET*`,
-`*PASSWORD*`, `*TOKEN*` o `*AUTHKEY*` con valor en un `.env` versionado.
+Portainer sólo necesita leer el Compose y aportar los secretos como variables
+del stack. No dependemos de que Portainer cargue un `.env` del repositorio. El
+CI falla si detecta cualquier secreto con valor en un `.env.sample` versionado.
 
 Validar un compose sin secretos reales:
 
 ```bash
-docker compose --env-file infra/test/.env --env-file infra/test/.env.ci \
+docker compose --env-file infra/test/.env.sample --env-file infra/test/.env.ci \
   -f infra/test/compose.yml config -q && echo OK
 ```

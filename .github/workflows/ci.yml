@@ -39,19 +39,23 @@ jobs:
 
       - name: Verificar migraciones contra Postgres real
         run: |
+          trap 'docker rm -f pg >/dev/null 2>&1 || true' EXIT
           docker run -d --name pg \
             -e POSTGRES_DB=moodleshield -e POSTGRES_USER=moodleshield \
             -e POSTGRES_PASSWORD=moodleshield -p 5432:5432 postgres:16-alpine
           for i in $(seq 1 30); do docker exec pg pg_isready -U moodleshield && break; sleep 2; done
           DB_HOST=127.0.0.1 DB_PASSWORD=moodleshield npm run migrate
           DB_HOST=127.0.0.1 DB_PASSWORD=moodleshield npm run migrate   # idempotencia
-          docker rm -f pg
+          DB_HOST=127.0.0.1 DB_PASSWORD=moodleshield npm run test:integration
 
       - name: Validar compose de los tres entornos
         run: |
           set -euo pipefail
           for env in test prod; do
-            docker compose --env-file "infra/$env/.env" --env-file "infra/$env/.env.ci" \
+            grep -Eq '^    image: ghcr.io/[^[:space:]]+/app:[^[:space:]]+$' "infra/$env/compose.yml"
+            grep -Eq '^    image: ghcr.io/[^[:space:]]+/worker:[^[:space:]]+$' "infra/$env/compose.yml"
+            ! grep -Eq 'IMAGE_(REPO|TAG)' "infra/$env/compose.yml"
+            docker compose --env-file "infra/$env/.env.sample" --env-file "infra/$env/.env.ci" \
               -f "infra/$env/compose.yml" config -q
             echo "infra/$env OK"
           done
@@ -62,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for f in infra/*/.env; do
+          for f in infra/*/.env.sample; do
             while IFS= read -r line; do
               case "$line" in \#*|'') continue ;; esac
               key=${line%%=*}; value=${line#*=}

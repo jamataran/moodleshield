@@ -2,13 +2,13 @@
 
 ```
 INTERNET ──▶ nginx proxy (tu edge, TLS) ──▶ proxy del stack ──▶ contenedores
-              video.tudominio.com            127.0.0.1:8080      app · worker · db
+              video.tudominio.com            127.0.0.1:43127     app · worker · db
 ```
 
 Aquí sólo llegan **versiones etiquetadas**. Al crear un tag `vX.Y.Z`, el CI
 **no reconstruye nada**: re-etiqueta el mismo digest que ya rodó en test
-(`docker buildx imagetools create`) y escribe la versión en el `.env` de esta
-carpeta. Lo que se probó en test es, bit a bit, lo que llega aquí.
+(`docker buildx imagetools create`) y actualiza las referencias de imagen en
+este `compose.yml`. Lo que se probó en test es, bit a bit, lo que llega aquí.
 
 ```
 push a main ──▶ imagen sha-abc1234 ──▶ TEST
@@ -21,7 +21,9 @@ la versión anterior.
 
 ## El edge: tu nginx
 
-Idéntico a test pero apuntando a `127.0.0.1:8080`. Lo crítico:
+Idéntico a test pero apuntando a `127.0.0.1:43127`. Producción vive en un
+servidor público y por diseño no incluye `cloudflared` ni `tailscale`. Lo
+crítico:
 
 ```nginx
 proxy_set_header X-Forwarded-Proto https;   # sin esto, la app genera URLs http y LTI falla
@@ -30,17 +32,13 @@ proxy_request_buffering off;
 proxy_read_timeout 3600s;
 ```
 
-Sin edge propio, los perfiles `cloudflare`/`tailscale` del compose levantan un
-túnel (ojo: Cloudflare gratuito corta las subidas a 100 MB —
-[`../../docs/https-tunel.md`](../../docs/https-tunel.md)).
-
 ## Alta en Portainer (una vez)
 
 Igual que test cambiando el entorno:
 
 1. ```bash
-   git clone https://github.com/jamataran/moodleshield /docker-apps/moodleshield/repo
-   sudo /docker-apps/moodleshield/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield prod
+   git clone https://github.com/jamataran/moodleshield /docker-apps/moodleshield-pro/repo
+   sudo /docker-apps/moodleshield-pro/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield-pro prod
    ```
 2. Secretos: `./scripts/generate-secrets.sh` → variables del stack en Portainer.
 
@@ -48,20 +46,33 @@ Igual que test cambiando el entorno:
    > contraseñas ANTES del primer despliegue: si se pierde o se cambia, todas
    > las trazas forenses anteriores dejan de poder atribuirse.
 
-3. Este `.env` (commit): `PUBLIC_URL`, `DATA_ROOT`, `INFRA_ROOT`.
+3. El Compose ya trae por defecto `DATA_ROOT=/docker-apps/moodleshield-pro`
+   e `INFRA_ROOT=/docker-apps/moodleshield-pro/repo/infra`. Si necesitas
+   cambiarlos, define esas variables en Portainer. `.env.sample` es sólo una
+   plantilla para ejecutar el stack manualmente.
 4. Portainer → *Add stack → Repository* con *Compose path* =
    `infra/prod/compose.yml`, GitOps activado (webhook → secreto
    `PORTAINER_WEBHOOK_PROD` en GitHub).
 
 ## Publicar una versión
 
+La forma recomendada es **GitHub → Actions → Release · test → prod → Run
+workflow**. Introduce una versión como `v0.1.0` y pulsa **Run workflow**. El
+workflow encuentra la imagen actualmente desplegada en test, crea el tag y
+promueve el mismo digest.
+
+Como alternativa, desde la terminal:
+
 ```bash
-git tag v0.1.0
+git log --oneline -5           # localiza el commit antes de deploy(test)
+git tag v0.1.0 <sha-del-commit-de-codigo>
 git push origin v0.1.0
 ```
 
-Eso es todo: en <1 minuto de Actions, la imagen que ya estaba en test queda
-etiquetada `v0.1.0` + `latest` y `infra/prod/.env` apunta a ella.
+El SHA debe ser el que aparece en el resumen de `cd-main.yml` como
+`sha-<commit>` (el commit padre del `deploy(test): ...` automático), no el
+`deploy(test)` más reciente. En <1 minuto de Actions, la imagen que ya estaba en test queda
+etiquetada `v0.1.0` + `latest` y `infra/prod/compose.yml` apunta a ella.
 
 Sólo se pueden etiquetar commits que hayan pasado por `main` (su imagen
 `sha-…` debe existir); si no, el workflow falla con un mensaje claro en vez de

@@ -96,11 +96,11 @@ distintas, no hay marca forense.
 
 | Fase | Tareas | Entregable | Prueba de éxito |
 |---|---|---|---|
-| **0 · Base** | [T01](tasks/done/T01-bootstrap-proyecto.md), [T02](tasks/done/T02-esquema-base-datos.md) | Proyecto arrancando contra Postgres | `npm run dev` responde `{"status":"ready"}` en `/readyz` |
-| **1 · HTTPS** | [T03](tasks/T03-https-y-tunel.md) | Túnel funcionando | La URL pública sirve `/lti/keys` con certificado válido |
-| **2 · LTI** ⭐ | [T04](tasks/done/T04-lti-handshake.md), [T05](tasks/done/T05-alta-en-moodle.md) | Launch validado | Abrir la actividad en Moodle muestra el nombre del alumno |
-| **3 · Vídeo** | [T06](tasks/done/T06-subida-videos.md), [T07](tasks/done/T07-pipeline-transcodificacion.md), [T08](tasks/T08-worker-cola.md) | Pipeline A/B + AES | Dos carpetas con segmentos alineados; VLC no reproduce un `.ts` suelto |
-| **4 · Marca** ⭐ | [T09](tasks/done/T09-playlist-por-alumno.md), [T10](tasks/done/T10-entrega-segmentos-firmada.md) | Playlist personalizada | Dos alumnos reciben `index.m3u8` con mezclas A/B distintas |
+| **0 · Base** | [T01](tasks/T01-bootstrap-proyecto.md), [T02](tasks/T02-esquema-base-datos.md) | Proyecto arrancando contra Postgres | `npm run dev` responde `{"status":"ready"}` en `/readyz` |
+| **1 · HTTPS** | [T03](tasks/T03-https-y-tunel.md) | Edge público funcionando | La URL pública sirve `/lti/keys` con certificado válido |
+| **2 · LTI** ⭐ | [T04](tasks/T04-lti-handshake.md), [T05](tasks/T05-alta-en-moodle.md) | Launch validado | Abrir la actividad en Moodle muestra el nombre del alumno |
+| **3 · Vídeo** | [T06](tasks/T06-subida-videos.md), [T07](tasks/T07-pipeline-transcodificacion.md), [T08](tasks/T08-worker-cola.md) | Pipeline A/B + AES | Dos carpetas con segmentos alineados; VLC no reproduce un `.ts` suelto |
+| **4 · Marca** ⭐ | [T09](tasks/T09-playlist-por-alumno.md), [T10](tasks/T10-entrega-segmentos-firmada.md) | Playlist personalizada | Dos alumnos reciben `index.m3u8` con mezclas A/B distintas |
 | **5 · Player** | [T11](tasks/T11-player-overlay.md) | Reproductor con overlay | El vídeo se reproduce en el iframe de Moodle con el DNI flotando |
 | **6 · Profesor** | [T12](tasks/done/T12-deep-linking-catalogo.md) | Deep Linking | El profesor inserta un vídeo sin salir del editor del curso |
 | **7 · Forense** | [T13](tasks/T13-trazado-forense.md) | `tools/trace.mjs` | Grabas la pantalla como alumno X y el script señala a X |

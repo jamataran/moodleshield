@@ -63,7 +63,7 @@ jobs:
             echo "✓ ${img}: ${SRC} → ${VERSION} (mismo digest)"
           done
 
-      - name: Desplegar en prod (bump de infra/prod/.env)
+      - name: Desplegar en prod (bump de infra/prod/compose.yml)
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           REPO: ${{ steps.meta.outputs.repo }}
@@ -78,14 +78,14 @@ jobs:
             git fetch origin main
             git checkout -B main origin/main
 
-            sed -i -E "s|^IMAGE_TAG=.*|IMAGE_TAG=${VERSION}|" infra/prod/.env
-            sed -i -E "s|^IMAGE_REPO=.*|IMAGE_REPO=${REPO}|"  infra/prod/.env
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
 
-            if git diff --quiet -- infra/prod/.env; then
+            if git diff --quiet -- infra/prod/compose.yml; then
               echo "Sin cambios (prod ya estaba en ${VERSION})"; exit 0
             fi
 
-            git add infra/prod/.env
+            git add infra/prod/compose.yml
             git commit -m "deploy(prod): ${VERSION} [skip ci]"
             if git push origin main; then
               echo "Desplegado ${VERSION} en prod"; exit 0

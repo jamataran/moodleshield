@@ -1,0 +1,154 @@
+name: Release · test → prod
+
+# Publicación manual desde GitHub Actions. Evita tener que localizar a mano el
+# commit padre de deploy(test): crea el tag y promueve el mismo digest.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versión semver con prefijo v, por ejemplo v0.1.0'
+        required: true
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Etiquetar y publicar en producción
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Obtener main completo
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolver y validar versión e imagen de test
+        id: meta
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::La versión debe tener formato vX.Y.Z, por ejemplo v0.1.0"
+            exit 1
+          }
+
+          app_image=$(awk '$1 == "image:" && $2 ~ /\/app:/ {print $2; exit}' infra/test/compose.yml)
+          sha_tag="${app_image##*:}"
+          [[ "$sha_tag" =~ ^sha-[0-9a-f]{7,40}$ ]] || {
+            echo "::error::infra/test/compose.yml no apunta a una imagen sha-* válida: $sha_tag"
+            exit 1
+          }
+
+          deploy_commit=$(git log --format='%H %s' origin/main | awk -v tag="$sha_tag" '$0 ~ "deploy\\(test\\): " tag " \\[skip ci\\]" {print $1; exit}')
+          [[ -n "$deploy_commit" ]] || {
+            echo "::error::No se encontró el commit deploy(test) de $sha_tag en main"
+            exit 1
+          }
+
+          source_commit=$(git rev-parse "${deploy_commit}^")
+          source_tag="sha-${source_commit:0:7}"
+          [[ "$source_tag" == "$sha_tag" ]] || {
+            echo "::error::$sha_tag no corresponde al commit padre de $deploy_commit"
+            exit 1
+          }
+          git merge-base --is-ancestor "$source_commit" origin/main || {
+            echo "::error::El commit de test no pertenece a main"
+            exit 1
+          }
+
+          if git show-ref --tags --verify --quiet "refs/tags/$VERSION" || git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            existing=$(git rev-list -n1 "$VERSION" 2>/dev/null || true)
+            [[ "$existing" == "$source_commit" ]] || {
+              echo "::error::El tag $VERSION ya existe y apunta a otro commit"
+              exit 1
+            }
+            echo "El tag $VERSION ya apunta al commit correcto; continuamos la promoción"
+          fi
+
+          echo "repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=$sha_tag" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Crear tag de release
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.meta.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git show-ref --tags --verify --quiet "refs/tags/$VERSION"; then
+            git tag "$VERSION" "$SOURCE_COMMIT"
+            git push origin "$VERSION"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promover el mismo digest a GHCR
+        env:
+          REPO: ${{ steps.meta.outputs.repo }}
+          SOURCE_TAG: ${{ steps.meta.outputs.sha_tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          for image in app worker; do
+            source="ghcr.io/${REPO}/${image}:${SOURCE_TAG}"
+            docker buildx imagetools inspect "$source" >/dev/null
+            docker buildx imagetools create \
+              -t "ghcr.io/${REPO}/${image}:${VERSION}" \
+              -t "ghcr.io/${REPO}/${image}:latest" \
+              "$source"
+          done
+
+      - name: Apuntar producción a la nueva versión
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          REPO: ${{ steps.meta.outputs.repo }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B main origin/main
+          sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
+          sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
+          git add infra/prod/compose.yml
+          git commit -m "deploy(prod): ${VERSION} [skip ci]"
+          git push origin main
+
+      - name: Avisar a Portainer (opcional)
+        env:
+          WEBHOOK: ${{ secrets.PORTAINER_WEBHOOK_PROD }}
+        run: |
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "Sin webhook: Portainer redesplegará en su próximo polling."
+            exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$WEBHOOK")
+          echo "Portainer respondió $code"
+          [ "$code" -lt 400 ]
+
+      - name: Resumen
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SOURCE_TAG: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          {
+            echo "### Producción → `${VERSION}`"
+            echo ""
+            echo "Promocionado desde `${SOURCE_TAG}` sin reconstruir."
+          } >> "$GITHUB_STEP_SUMMARY"
