@@ -154,7 +154,7 @@ export function validateJwksPayload (payload) {
 
 function downloadJson (url, allowedAddresses) {
   return new Promise((resolve, reject) => {
-    const destination = allowedAddresses[0]
+    const destination = allowedAddresses.find(({ family }) => family === 4) ?? allowedAddresses[0]
     const req = https.request({
       // La conexión queda fijada a la IP que resolvimos y validamos nosotros.
       // `servername` y Host conservan el nombre original para SNI/certificado,
