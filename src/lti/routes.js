@@ -12,6 +12,8 @@ import { renderPage } from '../ui/render.js'
 import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
 import { getVideoForPlatform, listReadyVideosForDeepLink, recordView } from '../services/videos.js'
 import { assertVideoId } from '../media/storage.js'
+import { normalizePlatformInput } from '../admin/platform-validator.js'
+import { AmbiguousPlatformError } from '../services/platforms.js'
 
 export const ltiRouter = Router()
 
@@ -65,6 +67,9 @@ async function handleLogin (req, res, next) {
     logger.debug({ issuer: platform.issuer }, 'Redirigiendo al endpoint de autorización')
     res.redirect(302, auth.toString())
   } catch (err) {
+    if (err instanceof AmbiguousPlatformError) {
+      return next(new LtiError(err.message, { status: 400, code: err.code }))
+    }
     next(err)
   }
 }
@@ -262,10 +267,10 @@ ltiRouter.post('/platforms', async (req, res, next) => {
     if (missing.length) {
       return res.status(400).json({ error: `faltan campos: ${missing.join(', ')}` })
     }
-    const platform = await upsertPlatform({
+    const platform = await upsertPlatform(normalizePlatformInput({
       ...req.body,
       deploymentIds: [].concat(req.body.deploymentIds ?? []).filter(Boolean)
-    })
+    }))
     res.status(201).json({ id: platform.id, issuer: platform.issuer, clientId: platform.client_id })
   } catch (err) {
     next(err)

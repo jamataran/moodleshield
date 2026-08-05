@@ -65,6 +65,12 @@ export async function validateLaunch ({ idToken, state }) {
   if (!platform) {
     throw new LtiError('La plataforma del state ya no existe', { status: 401, code: 'unknown_platform' })
   }
+  if (!platform.enabled) {
+    throw new LtiError('La plataforma está deshabilitada', {
+      status: 401,
+      code: 'platform_disabled'
+    })
+  }
 
   // Peek sin verificar sólo para dar errores legibles si el token viene de
   // otro issuer del esperado; la verificación real es la de abajo.

@@ -60,7 +60,10 @@ pestaña *Advanced*. Si tu proxy corre en Docker en el mismo host, pon
    hacer `git pull` en él si cambia algo bajo `infra/nginx/` — es raro.
 
 2. **Secretos**: `./scripts/generate-secrets.sh` y guárdalos (con
-   `WATERMARK_SECRET` el primero) en el gestor de contraseñas.
+   `WATERMARK_SECRET` el primero) en el gestor de contraseñas. Define además
+   `ADMIN_USERNAME` y genera `ADMIN_PASSWORD_HASH` con
+   `node scripts/hash-admin-password.mjs`; el script de secretos ya emite
+   `ADMIN_SESSION_SECRET`.
 
 3. El Compose ya trae por defecto `DATA_ROOT=/docker-apps/moodleshield-test`
    e `INFRA_ROOT=/docker-apps/moodleshield-test/repo/infra`. Si necesitas

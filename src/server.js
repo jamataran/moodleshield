@@ -6,6 +6,7 @@ import { closeDatabase } from './db/index.js'
 import { getActiveKey } from './lti/keys.js'
 import { purgeExpiredStates } from './lti/validate.js'
 import { ensureDirs } from './media/storage.js'
+import { purgeAdminData } from './admin/auth.js'
 
 assertConfigValid()
 
@@ -27,6 +28,9 @@ const server = app.listen(config.http.port, config.http.host, () => {
 
 const purgeTimer = setInterval(() => {
   purgeExpiredStates().catch((err) => logger.warn({ err }, 'Fallo purgando states OIDC'))
+  if (config.admin.enabled) {
+    purgeAdminData().catch((err) => logger.warn({ err }, 'Fallo purgando datos admin caducados'))
+  }
 }, 15 * 60 * 1000)
 purgeTimer.unref()
 

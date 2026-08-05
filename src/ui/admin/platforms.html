@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Instancias Moodle · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="admin" data-page="platforms">
+  <header class="bar admin-bar">
+    <div><p class="eyebrow">MoodleShield</p><h1>Instancias Moodle</h1></div>
+    <nav><a class="btn primary" href="/admin/platforms/new">Nueva instancia</a>
+      <form id="logout" method="post" action="/admin/logout"><input type="hidden" name="_csrf"><button>Salir</button></form></nav>
+  </header>
+  <main class="admin-main">
+    <div id="notice" class="notice ok" hidden></div>
+    <section class="panel">
+      <div class="filters" aria-label="Filtrar por estado">
+        <a href="/admin/platforms">Todas</a><a href="/admin/platforms?status=active">Activas</a><a href="/admin/platforms?status=inactive">Inactivas</a>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Issuer</th><th>Client ID</th><th>Deployments</th><th>Estado</th><th>Conexión</th><th></th></tr></thead><tbody id="platformRows"></tbody></table></div>
+      <p id="empty" class="muted" hidden>No hay plataformas con este filtro.</p>
+    </section>
+    <section class="panel"><h2>Actividad administrativa reciente</h2><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Acción</th><th>Plataforma</th><th>Detalle</th><th>IP</th></tr></thead><tbody id="auditRows"></tbody></table></div></section>
+  </main>
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/assets/admin.js" defer></script>
+</body>
+</html>

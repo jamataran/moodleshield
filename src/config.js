@@ -43,6 +43,36 @@ function bool (name, fallback = false) {
 const nodeEnv = optional('NODE_ENV', 'development')
 const isProduction = nodeEnv === 'production'
 
+function looksLikeScryptHash (value) {
+  const match = /^scrypt:(\d+):(\d+):(\d+):([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(value)
+  if (!match) return false
+  const [, n, r, p, salt, digest] = match
+  try {
+    return Number(n) === 16384 && Number(r) === 8 && Number(p) === 1 &&
+      Buffer.from(salt, 'base64url').length >= 16 &&
+      Buffer.from(digest, 'base64url').length >= 32
+  } catch {
+    return false
+  }
+}
+
+const adminUsername = optional('ADMIN_USERNAME')
+const adminPasswordHash = optional('ADMIN_PASSWORD_HASH')
+const adminSessionSecret = optional('ADMIN_SESSION_SECRET')
+const anyAdminCredential = Boolean(adminUsername || adminPasswordHash || adminSessionSecret)
+const adminEnabled = Boolean(adminUsername && adminPasswordHash && adminSessionSecret)
+
+if (isProduction || anyAdminCredential) {
+  if (!adminUsername) errors.push('Falta la variable de entorno obligatoria ADMIN_USERNAME')
+  if (!adminPasswordHash) errors.push('Falta la variable de entorno obligatoria ADMIN_PASSWORD_HASH')
+  if (!adminSessionSecret || adminSessionSecret.length < 32) {
+    errors.push('ADMIN_SESSION_SECRET debe tener al menos 32 caracteres')
+  }
+  if (adminPasswordHash && !looksLikeScryptHash(adminPasswordHash)) {
+    errors.push('ADMIN_PASSWORD_HASH no es un hash scrypt válido')
+  }
+}
+
 // En desarrollo permitimos secretos por defecto para que `npm run dev` arranque
 // sin ceremonia. En producción son obligatorios y de longitud mínima.
 function secret (name) {
@@ -158,6 +188,15 @@ export const config = {
     adminToken: optional('LTI_ADMIN_TOKEN', '')
   },
 
+  admin: {
+    enabled: adminEnabled,
+    username: adminUsername,
+    passwordHash: adminPasswordHash,
+    sessionSecret: adminSessionSecret,
+    sessionTtlSeconds: integer('ADMIN_SESSION_TTL_SECONDS', 8 * 60 * 60),
+    allowPrivateLtiHosts: bool('ADMIN_ALLOW_PRIVATE_LTI_HOSTS', false)
+  },
+
   log: {
     level: optional('LOG_LEVEL', isProduction ? 'info' : 'debug'),
     pretty: bool('LOG_PRETTY', !isProduction)
@@ -170,6 +209,9 @@ export function assertConfigValid () {
   }
   if (config.isProduction && !config.publicUrl.startsWith('https://')) {
     errors.push('PUBLIC_URL debe ser https:// en producción (Moodle lo exige para LTI 1.3)')
+  }
+  if (config.admin.enabled && !config.publicUrl.startsWith('https://')) {
+    errors.push('Activar la consola admin exige una PUBLIC_URL https://')
   }
   if (config.transcode.heartbeatMs >= config.transcode.leaseSeconds * 1000) {
     errors.push('TRANSCODE_HEARTBEAT_MS debe ser menor que TRANSCODE_LEASE_SECONDS')

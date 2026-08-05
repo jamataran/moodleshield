@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Genera los cuatro secretos que necesita MoodleShield.
+# Genera los secretos aleatorios que necesita MoodleShield.
 #
 #   ./scripts/generate-secrets.sh            # imprime por pantalla
 #   ./scripts/generate-secrets.sh --env      # rellena el .env local
@@ -12,7 +12,7 @@ set -euo pipefail
 # DB_PASSWORD va aquí porque los compose de test/prod lo exigen (`:?falta
 # DB_PASSWORD`) y el flujo documentado es pegar esta salida tal cual en
 # Portainer: si falta, el primer despliegue ni siquiera parsea.
-KEYS=(DB_PASSWORD SESSION_SECRET WATERMARK_SECRET MEDIA_KEY_SECRET MEDIA_LINK_SECRET)
+KEYS=(DB_PASSWORD SESSION_SECRET WATERMARK_SECRET MEDIA_KEY_SECRET MEDIA_LINK_SECRET ADMIN_SESSION_SECRET)
 
 if [[ "${1:-}" == "--env" ]]; then
   target="${2:-.env}"

@@ -8,26 +8,11 @@ import { ltiRouter, ltiErrorHandler } from './lti/routes.js'
 import { videosRouter } from './routes/videos.js'
 import { hlsRouter, mediaRouter } from './routes/hls.js'
 import { healthRouter } from './routes/health.js'
-import { listPlatforms } from './lti/platform.js'
 import { renderPage, uiDir } from './ui/render.js'
+import { adminRouter } from './admin/routes.js'
+import { getFrameAncestors, refreshFrameAncestors } from './security/frame-ancestors.js'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-
-/**
- * Orígenes autorizados a embebernos en un iframe. Se calculan a partir de las
- * plataformas registradas: mientras haya al menos una, `frame-ancestors` deja
- * de ser un comodín. Se refresca en segundo plano cada minuto.
- */
-let frameAncestors = "'self'"
-async function refreshFrameAncestors () {
-  try {
-    const platforms = await listPlatforms()
-    const origins = [...new Set(platforms.map((p) => new URL(p.issuer).origin))]
-    frameAncestors = origins.length ? `'self' ${origins.join(' ')}` : "'self' https:"
-  } catch (err) {
-    logger.warn({ err }, 'No se pudo refrescar frame-ancestors; se mantiene el valor anterior')
-  }
-}
 
 export async function createApp () {
   const app = express()
@@ -63,7 +48,7 @@ export async function createApp () {
       "connect-src 'self'",
       "object-src 'none'",
       "base-uri 'none'",
-      `frame-ancestors ${frameAncestors}`
+      `frame-ancestors ${getFrameAncestors()}`
     ].join('; '))
     res.set('X-Content-Type-Options', 'nosniff')
     res.set('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -78,6 +63,7 @@ export async function createApp () {
   app.use(express.json({ limit: config.http.bodyLimit }))
 
   app.use(healthRouter)
+  app.use('/admin', adminRouter)
   app.use('/lti', ltiRouter)
   app.use('/videos', videosRouter)
   app.use('/hls', hlsRouter)

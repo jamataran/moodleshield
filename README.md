@@ -165,7 +165,13 @@ Linking* (Moodle sólo muestra esa opción tras el primer guardado), con
 **3.** En la lista de herramientas, pulsa el icono de **detalles de
 configuración** de MoodleShield y anota `Client ID` y `Deployment ID`.
 
-**4.** Registra tu Moodle en MoodleShield:
+**4.** Registra tu Moodle en MoodleShield desde `https://TU-DOMINIO/admin`:
+
+- crea la instancia con el issuer, Client ID y Deployment ID del paso 3;
+- revisa los endpoints de Moodle que propone el formulario;
+- guarda y pulsa **Probar conexión**.
+
+La API bearer y el script siguen disponibles para automatización:
 
 ```bash
 node scripts/register-platform.mjs \
@@ -395,7 +401,7 @@ migrations/            SQL plano, aplicado solo al arrancar
 infra/{local,test,prod}/  un compose autosuficiente por entorno, con su README
 docker/                Dockerfile con dos destinos + bake
 tools/trace.mjs        trazado forense
-test/                  58 tests unitarios + 7 de integración con Postgres
+test/                  tests unitarios y de integración con Postgres
 ```
 
 ## Configuración
@@ -413,6 +419,9 @@ que más se tocan:
 | `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
 | `TRANSCODE_HEARTBEAT_MS` | `20000` | Renovación del lease y sondeo de cancelación |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas anteriores |
+| `ADMIN_USERNAME` | — | Usuario único de la consola `/admin`; obligatorio en producción |
+| `ADMIN_PASSWORD_HASH` | — | Hash generado con `node scripts/hash-admin-password.mjs`; nunca contraseña en claro |
+| `ADMIN_SESSION_SECRET` | — | Secreto aleatorio de al menos 32 caracteres para la consola |
 
 ## Coste de CPU y de disco
 
