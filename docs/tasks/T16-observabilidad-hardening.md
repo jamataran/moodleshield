@@ -35,6 +35,14 @@ Ya está resuelto en el scaffolding:
 
 Queda por hacer lo que depende de tu operativa.
 
+### Estado real de la redacción de tokens
+
+La redacción de campos estructurados existe, pero `pino-http` conserva la URL
+completa en `req.url`, y nginx usa actualmente el formato `combined`. Por tanto,
+las queries con `st`, `kt` y `md5` todavía pueden aparecer en logs. El criterio
+de aceptación de esta tarea no se cumple hasta registrar `$uri` sin query y
+sanear también la URL que recibe el logger de la app.
+
 ## Alcance
 
 **Incluye (pendiente)**

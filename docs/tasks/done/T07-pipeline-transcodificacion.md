@@ -5,7 +5,7 @@
 | **Fase** | 3 · Vídeo |
 | **Depende de** | T06 |
 | **Bloquea a** | T09, T13 |
-| **Scaffolding** | ✅ hecho y verificado |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 1 día |
 
 ## Objetivo
@@ -156,3 +156,9 @@ ffmpeg -i B/seg_0003.ts -frames:v 1 /tmp/b.png
 - **Tiempo de procesado.** Con `veryfast` en CPU, aproximadamente el doble de la
   duración del vídeo (son dos pases). Una clase de una hora son unas dos horas
   de proceso: conviene subir el material con antelación.
+
+## Cierre
+
+La ejecución real genera variantes A/B alineadas, misma clave y duraciones,
+segmentos cifrados, portada y metadatos; `key.info` desaparece al finalizar y las
+pruebas de transcode/playlist pasan.

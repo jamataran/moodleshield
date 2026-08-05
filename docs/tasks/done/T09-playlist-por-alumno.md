@@ -5,7 +5,7 @@
 | **Fase** | 4 · Marca ⭐ |
 | **Depende de** | T04, T07, T08 |
 | **Bloquea a** | T11, T13 |
-| **Scaffolding** | ✅ hecho |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 0,5 día |
 
 ## Objetivo
@@ -114,4 +114,11 @@ node tools/trace.mjs --video $VID --pattern-of <userSub>
   gestor de contraseñas antes del primer despliegue.
 - **El token va en la URL.** No hay alternativa: `hls.js` no puede poner
   cabeceras en las peticiones de segmentos. Se mitiga con caducidad corta y
-  redacción en los logs (`src/logger.js` oculta `st`, `kt` y `md5`).
+  redacción de campos estructurados. T16 sigue abierta porque falta eliminar la
+  query de `req.url` y del access log de nginx.
+
+## Cierre
+
+Las pruebas y el entorno real confirman que dos alumnos reciben patrones y
+playlists A/B distintos para el mismo vídeo, manteniendo una generación
+determinista para cada identidad.

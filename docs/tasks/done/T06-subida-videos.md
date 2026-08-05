@@ -5,7 +5,7 @@
 | **Fase** | 3 · Vídeo |
 | **Depende de** | T02, T04 |
 | **Bloquea a** | T07, T08 |
-| **Scaffolding** | ✅ hecho |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 0,5 día |
 
 ## Objetivo
@@ -90,7 +90,7 @@ ls -la .data/uploads/
 
 - **El límite de 100 MB de Cloudflare Tunnel** en plan gratuito corta las
   subidas grandes con un error de red poco informativo. Ver
-  [`../https-tunel.md`](../https-tunel.md).
+  [`../../https-tunel.md`](../../https-tunel.md).
 - **Disco lleno.** No hay control de cuota. Con `df` y una alerta basta para el
   MVP, pero conviene tenerlo presente: un profesor puede llenar el disco.
 - **Nombres de fichero con recorrido de ruta.** Nunca se usa el nombre original
@@ -98,4 +98,11 @@ ls -la .data/uploads/
   se filtra contra una lista blanca.
 - **Subidas interrumpidas.** Si la conexión se corta, queda el fichero parcial
   en `UPLOAD_ROOT`. El vídeo no llega a encolarse, así que no se procesa nada
-  corrupto, pero el fichero se queda. Merece una limpieza periódica (→ T16).
+  corrupto, pero el fichero se queda. T22 endurece cancelación, compensación y
+  limpieza periódica sin reabrir el recorrido feliz de esta tarea.
+
+## Cierre
+
+La subida streaming funciona detrás de nginx sin buffering; ocho uploads reales
+se procesaron hasta `ready`, sus jobs acabaron en `done` y los originales fueron
+retirados. Las carreras y pruebas de fallo quedan aisladas como seguimiento T22.

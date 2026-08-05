@@ -5,7 +5,7 @@
 | **Fase** | 3 · Vídeo |
 | **Depende de** | T02, T07 |
 | **Bloquea a** | T09 |
-| **Scaffolding** | ✅ hecho |
+| **Estado** | 🟡 parcial · recuperación tras crash incorrecta |
 | **Esfuerzo** | 0,5 día |
 
 ## Objetivo
@@ -28,6 +28,17 @@ La cola vive en Postgres. No hace falta Redis ni RabbitMQ: `SELECT … FOR UPDAT
 SKIP LOCKED` da exactamente la semántica de cola de trabajo, y evita una pieza
 de infraestructura entera. Con eso, levantar un segundo worker es cambiar un
 número en el compose — cada uno coge trabajos distintos sin coordinación.
+
+## Estado real
+
+El recorrido normal y los reintentos funcionan, pero esta tarea no está cerrada:
+`requeueStaleJobs()` sólo se ejecuta una vez al arrancar y sólo recupera jobs con
+más de seis horas. Si el worker muere y reinicia enseguida, el trabajo permanece
+en `running` indefinidamente hasta otro reinicio posterior. Además, Compose puede
+enviar `SIGKILL` a los 10 segundos aunque el proceso espere 30 durante shutdown.
+
+T22 define el lease, heartbeat, reaper periódico y `stop_grace_period` necesarios.
+T08 sólo se moverá a `done` cuando pase de verdad el criterio de reinicio.
 
 ## Alcance
 

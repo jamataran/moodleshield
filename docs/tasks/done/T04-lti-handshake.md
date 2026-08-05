@@ -5,7 +5,7 @@
 | **Fase** | 2 · LTI ⭐ |
 | **Depende de** | T02, T03 |
 | **Bloquea a** | T05, T09, T12 |
-| **Scaffolding** | ✅ hecho |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 1–2 días |
 
 ## Objetivo
@@ -36,7 +36,7 @@ pero arrastra `mongoose` como dependencia obligatoria aunque uses Postgres, y su
 plugin de Postgres (`ltijs-sequelize`) no se toca desde 2022. Implementar el
 handshake sobre `jose` son unas 350 líneas, elimina dos dependencias pesadas y
 —más importante— da control total sobre el manejo de sesión en iframe, que es
-justo donde más se sufre. Está razonado en [`../decisiones.md`](../decisiones.md#adr-002).
+justo donde más se sufre. Está razonado en [`../../decisiones.md`](../../decisiones.md#adr-002).
 
 **Decisión relevante: sesiones sin cookies.** Tras validar el `id_token` se
 emite un token firmado (HMAC-SHA256) que viaja en la URL o en `Authorization:
@@ -134,3 +134,8 @@ el `redirect_uri` configurado en Moodle no es exactamente
 - **Caché del JWKS.** Se cachea 12 horas y se refresca sólo al ver un `kid`
   desconocido. Si Moodle rota sus claves de forma abrupta, el primer launch
   fallará y el siguiente irá bien.
+
+## Cierre
+
+El JWKS RSA/RS256 es válido y se han completado launches reales de profesor y
+alumno, incluida validación de state, nonce, firma, issuer, client y deployment.

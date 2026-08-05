@@ -5,7 +5,7 @@
 | **Fase** | 4 · Marca ⭐ |
 | **Depende de** | T09 |
 | **Bloquea a** | — |
-| **Scaffolding** | ✅ hecho |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 0,5 día |
 
 ## Objetivo
@@ -124,3 +124,8 @@ curl -s -o /dev/null -w 'clave cruda:    %{http_code}\n' "https://tu-dominio/med
 - **MD5.** `secure_link` usa MD5 por diseño de nginx. Aquí no es un problema: no
   se protege confidencialidad, sino autorización de acceso a corto plazo, con el
   secreto en la posición que impide la extensión de longitud.
+
+## Cierre
+
+Verificado extremo a extremo: un segmento con URL firmada devuelve 200; sin
+firma, con variante no autorizada, playlist cruda o clave cruda devuelve 403.

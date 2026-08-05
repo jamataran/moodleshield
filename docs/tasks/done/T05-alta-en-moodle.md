@@ -5,7 +5,7 @@
 | **Fase** | 2 · LTI ⭐ |
 | **Depende de** | T03, T04 |
 | **Bloquea a** | T09, T11, T12 — todo lo que se prueba desde Moodle |
-| **Scaffolding** | ⬜ pendiente (es configuración de tu Moodle) |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 0,5 día |
 
 ## Objetivo
@@ -44,7 +44,7 @@ al guardar; el `deployment_id` aparece después, en la lista de herramientas.
 ## Pasos
 
 El procedimiento completo, con las capturas conceptuales de cada pantalla, está
-en [`../moodle-setup.md`](../moodle-setup.md). Resumen:
+en [`../../moodle-setup.md`](../../moodle-setup.md). Resumen:
 
 1. **En Moodle** · *Administración del sitio → Extensiones → Herramienta externa
    → Configurar herramienta manualmente*, con los datos de
@@ -105,3 +105,9 @@ Ordenadas por frecuencia con la que muerden:
   ventana* funciona igual, pero se pierde la integración visual.
 - **Moodle en HTTP.** Si tu propio Moodle no es HTTPS, el navegador bloqueará el
   iframe HTTPS por contenido mixto.
+
+## Cierre
+
+La herramienta está registrada en Moodle, ambos roles completan el launch y los
+eventos reales conservan la identidad visible. La futura consola multiinstancia
+se especifica en T19 y no reabre este alta manual ya validada.

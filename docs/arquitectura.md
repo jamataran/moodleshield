@@ -116,7 +116,7 @@ view_event       quién abrió qué → candidatos del trazado forense
 schema_migration control de migraciones
 ```
 
-Detalle y motivos en [`tasks/T02`](tasks/T02-esquema-base-datos.md).
+Detalle y motivos en [`tasks/T02`](tasks/done/T02-esquema-base-datos.md).
 
 ## Endpoints
 

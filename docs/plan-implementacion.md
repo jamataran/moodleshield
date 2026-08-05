@@ -96,15 +96,18 @@ distintas, no hay marca forense.
 
 | Fase | Tareas | Entregable | Prueba de éxito |
 |---|---|---|---|
-| **0 · Base** | [T01](tasks/T01-bootstrap-proyecto.md), [T02](tasks/T02-esquema-base-datos.md) | Proyecto arrancando contra Postgres | `npm run dev` responde `{"status":"ready"}` en `/readyz` |
+| **0 · Base** | [T01](tasks/done/T01-bootstrap-proyecto.md), [T02](tasks/done/T02-esquema-base-datos.md) | Proyecto arrancando contra Postgres | `npm run dev` responde `{"status":"ready"}` en `/readyz` |
 | **1 · HTTPS** | [T03](tasks/T03-https-y-tunel.md) | Túnel funcionando | La URL pública sirve `/lti/keys` con certificado válido |
-| **2 · LTI** ⭐ | [T04](tasks/T04-lti-handshake.md), [T05](tasks/T05-alta-en-moodle.md) | Launch validado | Abrir la actividad en Moodle muestra el nombre del alumno |
-| **3 · Vídeo** | [T06](tasks/T06-subida-videos.md), [T07](tasks/T07-pipeline-transcodificacion.md), [T08](tasks/T08-worker-cola.md) | Pipeline A/B + AES | Dos carpetas con segmentos alineados; VLC no reproduce un `.ts` suelto |
-| **4 · Marca** ⭐ | [T09](tasks/T09-playlist-por-alumno.md), [T10](tasks/T10-entrega-segmentos-firmada.md) | Playlist personalizada | Dos alumnos reciben `index.m3u8` con mezclas A/B distintas |
+| **2 · LTI** ⭐ | [T04](tasks/done/T04-lti-handshake.md), [T05](tasks/done/T05-alta-en-moodle.md) | Launch validado | Abrir la actividad en Moodle muestra el nombre del alumno |
+| **3 · Vídeo** | [T06](tasks/done/T06-subida-videos.md), [T07](tasks/done/T07-pipeline-transcodificacion.md), [T08](tasks/T08-worker-cola.md) | Pipeline A/B + AES | Dos carpetas con segmentos alineados; VLC no reproduce un `.ts` suelto |
+| **4 · Marca** ⭐ | [T09](tasks/done/T09-playlist-por-alumno.md), [T10](tasks/done/T10-entrega-segmentos-firmada.md) | Playlist personalizada | Dos alumnos reciben `index.m3u8` con mezclas A/B distintas |
 | **5 · Player** | [T11](tasks/T11-player-overlay.md) | Reproductor con overlay | El vídeo se reproduce en el iframe de Moodle con el DNI flotando |
-| **6 · Profesor** | [T12](tasks/T12-deep-linking-catalogo.md) | Deep Linking | El profesor inserta un vídeo sin salir del editor del curso |
+| **6 · Profesor** | [T12](tasks/done/T12-deep-linking-catalogo.md) | Deep Linking | El profesor inserta un vídeo sin salir del editor del curso |
 | **7 · Forense** | [T13](tasks/T13-trazado-forense.md) | `tools/trace.mjs` | Grabas la pantalla como alumno X y el script señala a X |
 | **8 · Producción** | [T14](tasks/T14-despliegue-portainer.md), [T15](tasks/T15-cicd-gitops.md), [T16](tasks/T16-observabilidad-hardening.md) | Stack desplegado con GitOps | Un push a `main` actualiza el entorno de test solo |
+| **9 · Base productiva** | [T22](tasks/T22-fiabilidad-pipeline-aislamiento.md), [T19](tasks/T19-consola-admin-instancias-moodle.md) | Pipeline resiliente y alta multiinstancia por UI | Crash del worker se recupera y dos Moodle se administran sin terminal |
+| **10 · Biblioteca** | [T17](tasks/T17-carpetas-biblioteca-profesor.md), [T20](tasks/T20-materiales-pdf.md) | Biblioteca personal con vídeos y PDF | Un profesor organiza e inserta ambos tipos sin ver material ajeno |
+| **11 · Composición** | [T18](tasks/T18-colecciones-una-actividad.md), [T21](tasks/T21-versionado-sustitucion-materiales.md) | Colecciones y actualización sin romper enlaces | Una actividad contiene varios materiales y conserva UUID al sustituirlos |
 
 ⭐ = fase que valida la viabilidad. Si falla, conviene parar y replantear antes
 de seguir invirtiendo.
@@ -117,6 +120,11 @@ T01 ─▶ T02 ─▶ T03 ─▶ T04 ─▶ T05 ──────────�
                        └▶ T06 ─▶ T07 ─▶ T08 ─▶ T09 ─▶ T10 ─▶ T11 ─▶ T12 ─▶ T13
                                                                             │
                                     T14 ─▶ T15 ─▶ T16 ◀──────────────────────┘
+
+Nueva etapa productiva:
+
+T22 ─▶ T17 ─▶ T20 ─▶ T18 ─▶ T21
+  └────────────── T19 (paralelizable) ──────────────┘
 ```
 
 - **T03 (HTTPS)** se puede hacer el primer día en paralelo con T01–T02: no
@@ -125,6 +133,8 @@ T01 ─▶ T02 ─▶ T03 ─▶ T04 ─▶ T05 ──────────�
   en T09. Si trabaja más de una persona, ese es el corte natural.
 - **T14–T16 (producción)** pueden empezar en cuanto exista una imagen que
   arranque, aunque no haga nada útil todavía.
+- **T22 va antes de ampliar el catálogo**: corrige leases, publicación atómica y
+  autorización. T19 sólo depende de la base LTI y puede avanzar en paralelo.
 
 ## 7. Estimación
 
@@ -142,6 +152,15 @@ T01 ─▶ T02 ─▶ T03 ─▶ T04 ─▶ T05 ──────────�
 | 7 · Forense | 1 día | Calibrar el umbral de detección con material real |
 | 8 · Producción | 1 día | |
 | **Total** | **6–8 días** | |
+
+La etapa posterior tiene una estimación independiente:
+
+| Fase | Esfuerzo | Comentario |
+|---|---|---|
+| 9 · Base productiva/admin | 4–6 días | T22 es prioritaria; T19 puede hacerse en paralelo |
+| 10 · Biblioteca | 4–6 días | Carpetas personales y PDF validado/servido de forma privada |
+| 11 · Composición/ciclo de vida | 5–8 días | Colecciones y migración a revisiones inmutables |
+| **Nueva etapa** | **13–20 días** | Sin incluir corrección forense T13 ni cierre operativo T14–T16 |
 
 ## 8. Riesgos
 

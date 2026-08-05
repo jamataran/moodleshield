@@ -5,7 +5,7 @@
 | **Fase** | 0 · Base |
 | **Depende de** | — |
 | **Bloquea a** | Todas |
-| **Scaffolding** | ✅ hecho |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 0,5 día |
 
 ## Objetivo
@@ -98,3 +98,8 @@ node -e "console.log(Math.round(process.memoryUsage().rss/1048576)+' MB')"
   límite duro real es `mem_limit` en el compose.
 - **`--env-file` no es `dotenv`.** No interpola variables ni admite comillas
   multilínea. Si algún valor las necesita, hay que pasarlo por el entorno real.
+
+## Cierre
+
+`npm test` pasa 49/49, lint está limpio, `/healthz` y `/readyz` responden en el
+stack local y la app en reposo consume aproximadamente 46,5 MiB de RSS.

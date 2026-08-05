@@ -54,7 +54,7 @@ dinámico resueltos.
 
 **Consecuencias.** Somos responsables de la corrección frente al spec. Se
 mitiga concentrando toda la validación en `src/lti/validate.js`, con la lista de
-comprobaciones documentada en [`tasks/T04`](tasks/T04-lti-handshake.md), y con
+comprobaciones documentada en [`tasks/T04`](tasks/done/T04-lti-handshake.md), y con
 tests sobre el aplanado de claims. Si algún día hace falta registro dinámico o
 AGS, hay que implementarlos.
 

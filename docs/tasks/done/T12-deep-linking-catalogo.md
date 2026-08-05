@@ -5,7 +5,7 @@
 | **Fase** | 6 · Profesor |
 | **Depende de** | T04, T05, T06 |
 | **Bloquea a** | — |
-| **Scaffolding** | ✅ hecho |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 0,5 día |
 
 ## Objetivo
@@ -109,3 +109,9 @@ echo "<jwt>" | cut -d. -f2 | base64 -d | jq
   pública. Es una imagen de portada, no contenido protegido.
 - **Reloj y `exp` del JWT.** La respuesta caduca en 10 minutos. Si el reloj va
   desajustado, Moodle la rechaza sin explicar por qué.
+
+## Cierre
+
+Se verificó el flujo real `LtiDeepLinkingRequest → catálogo → respuesta firmada
+→ Resource Link Request`, incluida consulta del JWKS por Moodle y reproducción
+posterior. Carpetas, PDF y colecciones son evoluciones T17, T20 y T18.

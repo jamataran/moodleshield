@@ -5,7 +5,7 @@
 | **Fase** | 0 · Base |
 | **Depende de** | T01 |
 | **Bloquea a** | T04, T06, T08 |
-| **Scaffolding** | ✅ hecho |
+| **Estado** | ✅ done · verificado 2026-08-05 |
 | **Esfuerzo** | 0,5 día |
 
 ## Objetivo
@@ -109,3 +109,9 @@ un Postgres 16 real.
 - **Renumerar o editar una migración ya aplicada.** No se vuelve a ejecutar: la
   tabla de control va por nombre de fichero. Los cambios van siempre en un
   fichero nuevo.
+
+## Cierre
+
+La migración está aplicada en Postgres 16, el advisory lock y la ejecución
+transaccional están activos y CI verifica dos ejecuciones consecutivas sin
+duplicar ni alterar el esquema.
