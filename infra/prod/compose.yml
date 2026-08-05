@@ -136,8 +136,8 @@ services:
       - ${INFRA_ROOT}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
       - ${DATA_ROOT}/media:/srv/media:ro
     ports:
-      # Sólo en loopback: quien expone al mundo es el túnel, no este puerto.
-      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
+      # Sólo en loopback: quien expone al mundo es el reverse proxy del host.
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-43127}:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -145,50 +145,8 @@ services:
       retries: 3
     mem_limit: 128m
     logging: *logging
-    networks: [internal, edge]
-
-  # ---------------------------------------------------------------------------
-  # Túnel HTTPS. Se elige uno con perfiles:
-  #   docker compose --profile cloudflare up -d
-  #   docker compose --profile tailscale  up -d
-  # Ver docs/https-tunel.md
-  # ---------------------------------------------------------------------------
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    profiles: [cloudflare]
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
-    depends_on:
-      proxy:
-        condition: service_started
-    mem_limit: 128m
-    logging: *logging
-    networks: [edge]
-
-  tailscale:
-    image: tailscale/tailscale:latest
-    profiles: [tailscale]
-    restart: unless-stopped
-    hostname: ${TS_HOSTNAME:-moodleshield}
-    environment:
-      TS_AUTHKEY: ${TS_AUTHKEY:-}
-      TS_STATE_DIR: /var/lib/tailscale
-      TS_SERVE_CONFIG: /config/serve.json
-      TS_USERSPACE: "true"
-    volumes:
-      - ${DATA_ROOT}/tailscale:/var/lib/tailscale
-      - ${INFRA_ROOT}/tailscale/serve.json:/config/serve.json:ro
-    depends_on:
-      proxy:
-        condition: service_started
-    mem_limit: 128m
-    logging: *logging
-    networks: [edge]
+    networks: [internal]
 
 networks:
   internal:
-    driver: bridge
-  edge:
     driver: bridge
