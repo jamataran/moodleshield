@@ -20,7 +20,7 @@ Este repositorio ya trae el esqueleto construido y probado. La columna
 |---|---|---|---|
 | [T01](T01-bootstrap-proyecto.md) | Bootstrap del proyecto | 0 · Base | ✅ hecho |
 | [T02](T02-esquema-base-datos.md) | Esquema de base de datos y migraciones | 0 · Base | ✅ hecho |
-| [T03](T03-https-y-tunel.md) | HTTPS público con túnel | 1 · HTTPS | 🟡 parcial |
+| [T03](T03-https-y-tunel.md) | HTTPS público con reverse proxy | 1 · HTTPS | 🟡 parcial |
 | [T04](T04-lti-handshake.md) | Handshake LTI 1.3 | 2 · LTI | ✅ hecho |
 | [T05](T05-alta-en-moodle.md) | Alta de la herramienta en Moodle | 2 · LTI | ⬜ pendiente |
 | [T06](T06-subida-videos.md) | Subida de vídeos | 3 · Vídeo | ✅ hecho |

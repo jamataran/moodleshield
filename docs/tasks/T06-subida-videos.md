@@ -88,8 +88,9 @@ ls -la .data/uploads/
 
 ## Riesgos y trampas
 
-- **El límite de 100 MB de Cloudflare Tunnel** en plan gratuito corta las
-  subidas grandes con un error de red poco informativo. Ver
+- **El límite de 100 MB de Cloudflare Tunnel** corta las subidas grandes cuando
+  se prueba desde local mediante el túnel gratuito. Test y producción usan el
+  edge público del host y no tienen esa limitación. Ver
   [`../https-tunel.md`](../https-tunel.md).
 - **Disco lleno.** No hay control de cuota. Con `df` y una alerta basta para el
   MVP, pero conviene tenerlo presente: un profesor puede llenar el disco.

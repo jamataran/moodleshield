@@ -21,7 +21,9 @@ la versión anterior.
 
 ## El edge: tu nginx
 
-Idéntico a test pero apuntando a `127.0.0.1:8080`. Lo crítico:
+Idéntico a test pero apuntando a `127.0.0.1:8080`. Producción vive en un
+servidor público y por diseño no incluye `cloudflared` ni `tailscale`. Lo
+crítico:
 
 ```nginx
 proxy_set_header X-Forwarded-Proto https;   # sin esto, la app genera URLs http y LTI falla
@@ -29,10 +31,6 @@ client_max_body_size 4g;                    # ≥ MAX_UPLOAD_SIZE del stack
 proxy_request_buffering off;
 proxy_read_timeout 3600s;
 ```
-
-Sin edge propio, los perfiles `cloudflare`/`tailscale` del compose levantan un
-túnel (ojo: Cloudflare gratuito corta las subidas a 100 MB —
-[`../../docs/https-tunel.md`](../../docs/https-tunel.md)).
 
 ## Alta en Portainer (una vez)
 

@@ -121,22 +121,19 @@ Eso es la marca forense funcionando.
 ## Conectar con Moodle
 
 Moodle **exige HTTPS** para LTI 1.3 y no acepta certificados autofirmados. Ni
-siquiera para desarrollo vale `localhost`. Hay dos vías, ambas gratuitas y sin
-abrir puertos:
+siquiera para desarrollo vale `localhost`. Test y producción se publican desde
+un servidor conectado a Internet, con TLS en el reverse proxy del host:
 
-| | Cloudflare Tunnel | Tailscale Funnel |
-|---|---|---|
-| Dominio | El tuyo | `<host>.<tailnet>.ts.net` |
-| Alta | 15–30 min (DNS) | 5 min |
-| **Límite de subida** | **100 MB (plan gratuito)** ⚠️ | Sin límite |
-| Para | Producción | Pruebas y desarrollo |
+```text
+INTERNET ──HTTPS──▶ nginx/Nginx Proxy Manager ──HTTP──▶ proxy del stack
+```
 
-El límite de 100 MB de Cloudflare afecta a la **subida** de vídeos, no a la
-reproducción. La combinación que suele funcionar es Cloudflare para el tráfico
-de alumnos y Tailscale (o la red local) para que los profesores suban.
+Los compose permanentes no incluyen `cloudflared` ni `tailscale`. En desarrollo
+local sí puedes usar Cloudflare Tunnel o Tailscale Funnel para conectar un
+Moodle real sin desplegar un servidor.
 
-Guía completa de las dos, incluido el modo efímero para desarrollar en el
-portátil: [`docs/https-tunel.md`](docs/https-tunel.md).
+Guía completa del edge y de los túneles locales:
+[`docs/https-tunel.md`](docs/https-tunel.md).
 
 ### El alta en Moodle, en seis pasos
 
@@ -371,7 +368,7 @@ una persona real. Detalle y limitaciones (recorte de bordes, colusión):
 | [`docs/tasks/`](docs/tasks/README.md) | Una ficha por tarea: alcance, pasos, pruebas, trampas |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Referencia técnica: flujos, endpoints, modelo de seguridad |
 | [`docs/decisiones.md`](docs/decisiones.md) | Las decisiones que costaron pensarlas, y cómo revertirlas |
-| [`docs/https-tunel.md`](docs/https-tunel.md) | Cloudflare vs Tailscale, paso a paso |
+| [`docs/https-tunel.md`](docs/https-tunel.md) | HTTPS público y túneles de desarrollo local |
 | [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle |
 | [`infra/README.md`](infra/README.md) | Los tres entornos y el flujo de promoción; cada uno tiene su propio README |
 
