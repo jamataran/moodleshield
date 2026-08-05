@@ -52,7 +52,10 @@ jobs:
         run: |
           set -euo pipefail
           for env in test prod; do
-            docker compose --env-file "infra/$env/.env" --env-file "infra/$env/.env.ci" \
+            grep -Eq '^    image: ghcr.io/[^[:space:]]+/app:[^[:space:]]+$' "infra/$env/compose.yml"
+            grep -Eq '^    image: ghcr.io/[^[:space:]]+/worker:[^[:space:]]+$' "infra/$env/compose.yml"
+            ! grep -Eq 'IMAGE_(REPO|TAG)' "infra/$env/compose.yml"
+            docker compose --env-file "infra/$env/.env.sample" --env-file "infra/$env/.env.ci" \
               -f "infra/$env/compose.yml" config -q
             echo "infra/$env OK"
           done
@@ -63,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for f in infra/*/.env; do
+          for f in infra/*/.env.sample; do
             while IFS= read -r line; do
               case "$line" in \#*|'') continue ;; esac
               key=${line%%=*}; value=${line#*=}

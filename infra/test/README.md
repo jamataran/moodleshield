@@ -6,8 +6,9 @@ INTERNET ──▶ nginx proxy (tu edge, TLS) ──▶ proxy del stack ──�
 ```
 
 Réplica de producción donde aterriza **cada push a `main`**: el CI publica
-`app`/`worker` con etiqueta `sha-<commit>`, escribe esa etiqueta en el `.env` de
-esta carpeta y hace commit; Portainer detecta el cambio y redespliega.
+`app`/`worker` con etiqueta `sha-<commit>`, actualiza las dos referencias de
+imagen directamente en este `compose.yml` y hace commit; Portainer detecta el
+cambio y redespliega leyendo sólo el Compose.
 
 Diferencias deliberadas respecto a prod:
 
@@ -51,8 +52,8 @@ pestaña *Advanced*. Si tu proxy corre en Docker en el mismo host, pon
 
 1. **Host** (por SSH):
    ```bash
-   git clone https://github.com/jamataran/moodleshield /docker-apps/moodleshield/repo
-   sudo /docker-apps/moodleshield/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield test
+   git clone https://github.com/jamataran/moodleshield /docker-apps/moodleshield-test/repo
+   sudo /docker-apps/moodleshield-test/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield-test test
    ```
    El clon del host existe para que nginx monte `infra/nginx/` (Portainer clona
    dentro de su propio volumen, no en una ruta estable del host). Sólo hay que
@@ -61,8 +62,11 @@ pestaña *Advanced*. Si tu proxy corre en Docker en el mismo host, pon
 2. **Secretos**: `./scripts/generate-secrets.sh` y guárdalos (con
    `WATERMARK_SECRET` el primero) en el gestor de contraseñas.
 
-3. **Este `.env`** (commit y push): `PUBLIC_URL`, `DATA_ROOT`, `INFRA_ROOT`.
-   `IMAGE_TAG` no lo toques: lo gestiona el CI.
+3. El Compose ya trae por defecto `DATA_ROOT=/docker-apps/moodleshield-test`
+   e `INFRA_ROOT=/docker-apps/moodleshield-test/repo/infra`. Si necesitas
+   cambiarlos, define esas variables en Portainer. `.env.sample` sólo es una
+   plantilla para ejecutar el stack manualmente; no hace falta crear un `.env`
+   para Portainer.
 
 4. **Portainer** → *Stacks → Add stack → Repository*:
 
@@ -87,8 +91,8 @@ $P logs -f app worker
 $P exec db psql -U moodleshield -c "SELECT status, count(*) FROM transcode_job GROUP BY status"
 ```
 
-¿Qué versión hay desplegada? La que diga `IMAGE_TAG` en el `.env` de esta
-carpeta — el historial de `git log --oneline -- infra/test/.env` es el
+¿Qué versión hay desplegada? La que aparezca en las líneas `image:` de este
+Compose — el historial de `git log --oneline -- infra/test/compose.yml` es el
 historial de despliegues.
 
 ## Diagnóstico

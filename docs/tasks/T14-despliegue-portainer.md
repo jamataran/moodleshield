@@ -67,15 +67,19 @@ Detalle completo en el README del entorno:
 
 1. **Preparar el host** (una vez, por SSH):
    ```bash
-   sudo ./scripts/bootstrap-host.sh /docker-apps/moodleshield prod
+   sudo ./scripts/bootstrap-host.sh /docker-apps/moodleshield-pro prod
    ```
 2. **Generar los secretos**:
    ```bash
    ./scripts/generate-secrets.sh
    ```
    Guardar `WATERMARK_SECRET` en el gestor de contraseñas **antes** de seguir.
-3. **Ajustar** `infra/prod/.env` (`DATA_ROOT`, `INFRA_ROOT`, `PUBLIC_URL`,
-   `IMAGE_REPO`) y hacer commit.
+3. **Revisar** `infra/prod/compose.yml`: trae por defecto
+   `DATA_ROOT=/docker-apps/moodleshield-pro` e
+   `INFRA_ROOT=/docker-apps/moodleshield-pro/repo/infra`. Sobrescribe esos
+   valores en las variables del stack si tu host usa otras rutas. Las imágenes
+   completas y sus tags están en el Compose; no dependen de `IMAGE_REPO` en un
+   `.env`.
 4. **Crear el stack en Portainer** desde el repositorio, con *Compose path* =
    `infra/prod/compose.yml`, pegando los secretos en *Environment variables*.
 5. **Activar GitOps updates** (→ T15).
@@ -95,7 +99,7 @@ Detalle completo en el README del entorno:
 
 ```bash
 # Validar el compose antes de subirlo
-docker compose --env-file infra/prod/.env --env-file infra/prod/.env.ci \
+docker compose --env-file infra/prod/.env.sample --env-file infra/prod/.env.ci \
   -f infra/prod/compose.yml config -q && echo OK
 
 # En el servidor

@@ -19,10 +19,11 @@ en el CI y gastando los mínimos minutos de Actions posibles.
 Dos principios rigen el diseño:
 
 1. **GitOps**: el repositorio es la fuente de verdad del estado desplegado. El
-   CI no toca ningún servidor; publica imágenes y escribe la etiqueta en
-   `infra/<entorno>/.env`. Portainer, configurado como stack desde Git, ve el
-   commit y redespliega. El historial de despliegues es `git log` y el rollback
-   es `git revert`.
+   CI no toca ningún servidor; publica imágenes y escribe sus referencias
+   completas directamente en `infra/<entorno>/compose.yml`. Portainer,
+   configurado como stack desde Git, sólo lee el Compose, ve el commit y
+   redespliega. El historial de despliegues es `git log` y el rollback es
+   `git revert`.
 
 2. **Build once, promote up**: cada commit se construye **una sola vez**. La
    promoción a prod no reconstruye: `docker buildx imagetools create`
@@ -32,9 +33,9 @@ Dos principios rigen el diseño:
 ```
 PR ─────────▶ ci.yml          lint + tests + build sin push        (~3-4 min)
 push a main ▶ cd-main.yml     verifica → build → :sha-abc1234
-                              → bump infra/test/.env → TEST        (~4-5 min)
+                              → bump infra/test/compose.yml → TEST (~4-5 min)
 tag vX.Y.Z ─▶ cd-promote.yml  re-etiqueta ese digest como vX.Y.Z
-                              → bump infra/prod/.env → PROD        (<1 min)
+                              → bump infra/prod/compose.yml → PROD (<1 min)
 ```
 
 ### Dónde se ahorran los minutos
@@ -70,7 +71,8 @@ revisar antes de mergear.
 .github/workflows/codeql.yml       análisis estático (PR + semanal)
 .github/dependabot.yml             npm, actions y docker, agrupando parches
 docker/docker-bake.hcl             app + worker en una invocación
-infra/{test,prod}/.env             ← IMAGE_TAG lo escribe el CI
+infra/{test,prod}/compose.yml      ← referencias image: las escribe el CI
+infra/{test,prod}/.env.sample      ← plantilla local; Portainer no depende de ella
 ```
 
 ## Pasos para activarlo
@@ -85,7 +87,7 @@ infra/{test,prod}/.env             ← IMAGE_TAG lo escribe el CI
    ghcr.io con un PAT `read:packages`. Sin esto, Portainer no puede hacer pull.
 4. **Webhooks de Portainer** (opcional, para despliegue inmediato en vez de
    polling): secretos `PORTAINER_WEBHOOK_TEST` y `PORTAINER_WEBHOOK_PROD`.
-5. **Primera versión**: `git tag v0.1.0 && git push origin v0.1.0`.
+5. **Primera versión**: GitHub → Actions → Release · test → prod → Run workflow.
 
 ## Criterio de aceptación
 
@@ -108,7 +110,7 @@ infra/{test,prod}/.env             ← IMAGE_TAG lo escribe el CI
 npm run lint && npm test
 docker buildx bake -f docker/docker-bake.hcl --load
 for env in test prod; do
-  docker compose --env-file infra/$env/.env --env-file infra/$env/.env.ci \
+  docker compose --env-file infra/$env/.env.sample --env-file infra/$env/.env.ci \
     -f infra/$env/compose.yml config -q && echo "$env OK"
 done
 docker compose -f infra/local/compose.yml config -q && echo "local OK"
@@ -133,6 +135,6 @@ git revert <commit deploy(...)> && git push
   apuntan siempre a etiquetas concretas; `latest`/`edge` existen para humanos.
 - **La versión que muestra `/healthz` en prod** es la de build (`sha-…`), no el
   tag: el artefacto se construyó una vez y no se re-construye para estampar la
-  versión. El tag vive en la etiqueta de la imagen y en `infra/prod/.env`.
+  versión. El tag vive en la etiqueta de la imagen y en `infra/prod/compose.yml`.
 - **Caché GHA caducada** (7 días sin uso): la primera build tras un parón es
   lenta. Normal.

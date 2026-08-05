@@ -8,7 +8,7 @@
 #   - Menos memoria y CPU reservadas: aquí no hay carga real.
 #
 # Se despliega igual que producción (Portainer + GitOps) o en local con:
-#   docker compose --env-file .env -f compose.yml up -d
+#   docker compose --env-file .env.sample -f compose.yml up -d
 # =============================================================================
 
 name: moodleshield-test
@@ -60,7 +60,7 @@ services:
       POSTGRES_USER: ${DB_USER:-moodleshield}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
     volumes:
-      - ${DATA_ROOT:?falta DATA_ROOT}/pgdata:/var/lib/postgresql/data
+      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/pgdata:/var/lib/postgresql/data
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${DB_PORT_HOST:-55432}:5432"
     healthcheck:
@@ -74,7 +74,7 @@ services:
     networks: [internal]
 
   app:
-    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/app:${IMAGE_TAG:?falta IMAGE_TAG}
+    image: ghcr.io/jamataran/moodleshield/app:sha-371f3cc
     restart: unless-stopped
     init: true
     depends_on:
@@ -82,8 +82,8 @@ services:
         condition: service_healthy
     environment: *app-env
     volumes:
-      - ${DATA_ROOT}/media:/data/media
-      - ${DATA_ROOT}/uploads:/data/uploads
+      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/data/media
+      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/uploads:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -95,7 +95,7 @@ services:
     networks: [internal]
 
   worker:
-    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/worker:${IMAGE_TAG:?falta IMAGE_TAG}
+    image: ghcr.io/jamataran/moodleshield/worker:sha-371f3cc
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -104,8 +104,8 @@ services:
         condition: service_healthy
     environment: *app-env
     volumes:
-      - ${DATA_ROOT}/media:/data/media
-      - ${DATA_ROOT}/uploads:/data/uploads
+      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/data/media
+      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/uploads:/data/uploads
     cpus: ${WORKER_CPUS:-1}
     mem_limit: ${WORKER_MEMORY:-1024m}
     logging: *logging
@@ -122,9 +122,9 @@ services:
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
       NGINX_ENVSUBST_FILTER: "^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)$$"
     volumes:
-      - ${INFRA_ROOT:?falta INFRA_ROOT}/nginx/templates:/etc/nginx/templates:ro
-      - ${INFRA_ROOT}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
-      - ${DATA_ROOT}/media:/srv/media:ro
+      - ${INFRA_ROOT:-/docker-apps/moodleshield-test/repo/infra}/nginx/templates:/etc/nginx/templates:ro
+      - ${INFRA_ROOT:-/docker-apps/moodleshield-test/repo/infra}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
+      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/srv/media:ro
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-43128}:8080"
     healthcheck:
