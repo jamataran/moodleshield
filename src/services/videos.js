@@ -42,64 +42,117 @@ export function getVideo (id) {
  * no revele que el vídeo existe en otro inquilino.
  */
 export function getVideoForPlatform (id, platformId) {
-  if (!platformId) return getVideo(id)
+  if (!platformId) return null
   return one('SELECT * FROM video WHERE id = $1 AND platform_id = $2', [id, platformId])
 }
 
-export function createVideo ({ id, title, description, platformId, ownerSub, ownerName }) {
+export function getVideoForOwner (id, platformId, ownerSub) {
+  if (!platformId || !ownerSub) return Promise.resolve(null)
   return one(
-    `INSERT INTO video (id, title, description, platform_id, owner_sub, owner_name, status)
-     VALUES (COALESCE($1, gen_random_uuid()), $2, $3, $4, $5, $6, 'uploaded')
-     RETURNING *`,
-    [id ?? null, title, description ?? '', platformId ?? null, ownerSub ?? null, ownerName ?? null]
+    'SELECT * FROM video WHERE id = $1 AND platform_id = $2 AND owner_sub = $3',
+    [id, platformId, ownerSub]
   )
 }
 
-/** Marca el vídeo como encolado y crea su trabajo de transcodificación. */
-export function enqueueTranscode (videoId, sourcePath, sizeBytes, originalFilename) {
+export function listReadyVideosForDeepLink ({ ids, platformId, ownerSub }) {
+  if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
+  return many(
+    `SELECT id, title, description
+       FROM video
+      WHERE id = ANY($1::uuid[]) AND status = 'ready'
+        AND platform_id = $2 AND owner_sub = $3`,
+    [ids, platformId, ownerSub]
+  )
+}
+
+/** La fila visible y su job nacen o fallan juntos. */
+export function createVideoAndJob ({
+  id,
+  title,
+  description,
+  platformId,
+  ownerSub,
+  ownerName,
+  sourcePath,
+  sizeBytes,
+  originalFilename
+}) {
   return transaction(async (client) => {
-    await client.query(
-      `UPDATE video
-          SET status = 'queued', size_bytes = $2, original_filename = $3,
-              error = NULL, updated_at = now()
-        WHERE id = $1`,
-      [videoId, sizeBytes ?? null, originalFilename ?? null]
+    const { rows: videos } = await client.query(
+      `INSERT INTO video
+         (id, title, description, platform_id, owner_sub, owner_name, status,
+          size_bytes, original_filename)
+       VALUES ($1,$2,$3,$4,$5,$6,'queued',$7,$8)
+       RETURNING *`,
+      [id, title, description ?? '', platformId, ownerSub, ownerName ?? null,
+        sizeBytes ?? null, originalFilename ?? null]
     )
     const { rows } = await client.query(
       `INSERT INTO transcode_job (video_id, source_path) VALUES ($1,$2) RETURNING id`,
-      [videoId, sourcePath]
+      [id, sourcePath]
     )
-    logger.info({ videoId, jobId: rows[0].id }, 'Trabajo de transcodificación encolado')
-    return rows[0].id
+    logger.info({ videoId: id, jobId: rows[0].id }, 'Trabajo de transcodificación encolado')
+    return { video: videos[0], jobId: rows[0].id }
   })
 }
 
-export function markVideoReady (videoId, meta) {
-  return query(
-    `UPDATE video
-        SET status = 'ready', duration_seconds = $2, segment_count = $3, segment_seconds = $4,
-            width = $5, height = $6, error = NULL, updated_at = now()
-      WHERE id = $1`,
-    [
-      videoId,
-      meta.durationSeconds ?? null,
-      meta.segmentCount ?? null,
-      meta.segmentSeconds ?? null,
-      meta.width ?? null,
-      meta.height ?? null
-    ]
-  )
+export function requestVideoCancellation ({ videoId, platformId, ownerSub }) {
+  return transaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT id, status FROM video
+        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3`,
+      [videoId, platformId, ownerSub]
+    )
+    if (rows.length === 0) return { status: 'not_found' }
+    if (!['queued', 'processing'].includes(rows[0].status)) {
+      return { status: 'not_active', videoStatus: rows[0].status }
+    }
+
+    const { rows: jobs } = await client.query(
+      `UPDATE transcode_job
+          SET cancel_requested_at = COALESCE(cancel_requested_at, now()),
+              status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
+              finished_at = CASE WHEN status = 'pending' THEN now() ELSE finished_at END
+        WHERE video_id = $1 AND status IN ('pending','running')
+        RETURNING status`,
+      [videoId]
+    )
+    if (jobs.length === 0) {
+      const { rows: current } = await client.query('SELECT status FROM video WHERE id = $1', [videoId])
+      if (!['queued', 'processing'].includes(current[0]?.status)) {
+        return { status: 'not_active', videoStatus: current[0]?.status ?? rows[0].status }
+      }
+    }
+    const immediate = jobs.length === 0 || jobs.every((job) => job.status === 'cancelled')
+    if (immediate) {
+      await client.query(
+        "UPDATE video SET status = 'cancelled', error = NULL, updated_at = now() WHERE id = $1",
+        [videoId]
+      )
+    }
+    return { status: immediate ? 'cancelled' : 'cancelling' }
+  })
 }
 
-export function markVideoFailed (videoId, message) {
-  return query(
-    "UPDATE video SET status = 'failed', error = $2, updated_at = now() WHERE id = $1",
-    [videoId, String(message).slice(0, 4000)]
-  )
-}
-
-export function deleteVideo (videoId) {
-  return query('DELETE FROM video WHERE id = $1', [videoId])
+export function deleteOwnedVideo ({ videoId, platformId, ownerSub }) {
+  return transaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT id, status FROM video
+        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3
+        FOR UPDATE`,
+      [videoId, platformId, ownerSub]
+    )
+    if (rows.length === 0) return { status: 'not_found', sourcePaths: [] }
+    if (['queued', 'processing'].includes(rows[0].status)) {
+      return { status: 'active', sourcePaths: [] }
+    }
+    const { rows: jobs } = await client.query(
+      'SELECT source_path FROM transcode_job WHERE video_id = $1 FOR UPDATE',
+      [videoId]
+    )
+    await client.query('DELETE FROM video WHERE id = $1', [videoId])
+    return { status: 'deleted', sourcePaths: jobs.map((job) => job.source_path) }
+  })
 }
 
 /**

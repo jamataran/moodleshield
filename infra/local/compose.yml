@@ -49,6 +49,8 @@ x-app-env: &app-env
   # Marca A/B visible a simple vista: en local se quiere VER el patrón.
   MARK_ALPHA: ${MARK_ALPHA:-0.5}
   TRANSCODE_CONCURRENCY: "1"
+  TRANSCODE_LEASE_SECONDS: ${TRANSCODE_LEASE_SECONDS:-90}
+  TRANSCODE_HEARTBEAT_MS: ${TRANSCODE_HEARTBEAT_MS:-20000}
   FFMPEG_NICE: "10"
 
 services:
@@ -99,6 +101,7 @@ services:
     image: moodleshield/worker:local
     restart: unless-stopped
     init: true
+    stop_grace_period: 45s
     depends_on:
       db:
         condition: service_healthy

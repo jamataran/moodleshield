@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { markFilter, MARK_GEOMETRY } from '../src/media/transcode.js'
+import { markFilter, MARK_GEOMETRY, runProcess } from '../src/media/transcode.js'
 
 test('las marcas A y B están en lados opuestos, a la misma altura', () => {
   const a = markFilter('A', 0.06)
@@ -37,4 +37,15 @@ test('una variante desconocida no genera un filtro silenciosamente inválido', (
   // Cualquier valor que no sea 'A' se trata como la marca izquierda; lo que no
   // puede pasar es que se genere un filtro vacío.
   assert.ok(markFilter('B').startsWith('drawbox='))
+})
+
+test('AbortSignal termina un proceso hijo sin esperar a que acabe solo', async () => {
+  const controller = new AbortController()
+  const started = Date.now()
+  const running = runProcess(process.execPath, ['-e', 'setTimeout(() => {}, 10_000)'], {
+    signal: controller.signal
+  })
+  setTimeout(() => controller.abort(new Error('cancelado por test')), 25)
+  await assert.rejects(running, /cancelado por test/)
+  assert.ok(Date.now() - started < 2000)
 })

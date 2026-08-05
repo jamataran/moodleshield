@@ -128,7 +128,14 @@ export const config = {
     concurrency: integer('TRANSCODE_CONCURRENCY', 1),
     /** Cada cuántos ms consulta el worker si hay trabajo nuevo. */
     pollIntervalMs: integer('TRANSCODE_POLL_MS', 5000),
-    maxAttempts: integer('TRANSCODE_MAX_ATTEMPTS', 3)
+    maxAttempts: integer('TRANSCODE_MAX_ATTEMPTS', 3),
+    /** Lease renovable: impide que un trabajo muera con su contenedor. */
+    leaseSeconds: integer('TRANSCODE_LEASE_SECONDS', 90),
+    heartbeatMs: integer('TRANSCODE_HEARTBEAT_MS', 20_000),
+    reaperMs: integer('TRANSCODE_REAPER_MS', 60_000),
+    reconcileMs: integer('STORAGE_RECONCILE_MS', 15 * 60 * 1000),
+    shutdownMs: integer('WORKER_SHUTDOWN_MS', 30_000),
+    childKillMs: integer('FFMPEG_KILL_GRACE_MS', 5_000)
   },
 
   lti: {
@@ -163,6 +170,9 @@ export function assertConfigValid () {
   }
   if (config.isProduction && !config.publicUrl.startsWith('https://')) {
     errors.push('PUBLIC_URL debe ser https:// en producción (Moodle lo exige para LTI 1.3)')
+  }
+  if (config.transcode.heartbeatMs >= config.transcode.leaseSeconds * 1000) {
+    errors.push('TRANSCODE_HEARTBEAT_MS debe ser menor que TRANSCODE_LEASE_SECONDS')
   }
   if (errors.length > 0) {
     const detail = errors.map((e) => `  - ${e}`).join('\n')

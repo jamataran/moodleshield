@@ -17,6 +17,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node --test --test-reporter=spec \"test/**/*.test.js\"",
+    "test:integration": "node --test --test-reporter=spec \"test/integration/*.integration.js\"",
     "test:coverage": "node --test --experimental-test-coverage \"test/**/*.test.js\"",
     "trace": "node tools/trace.mjs"
   },
