@@ -210,10 +210,133 @@ tira del repositorio (GitOps).
 
 ```bash
 git push origin main          # → test, automático
-git tag v0.1.0 && git push origin v0.1.0    # → prod, misma imagen
+# El tag debe apuntar al commit de código que cd-main construyó; ver la
+# instrucción exacta en «Publicar producción».
 ```
 
 Visión general y reparto de variables/secretos: [`infra/README.md`](infra/README.md).
+
+### Flujo Git / GitOps / CI/CD
+
+La regla sencilla es: **las ramas de trabajo entran en `main` mediante PR y
+`main` es la única rama que despliega**. Producción no se construye aparte: se
+promueve a partir de la imagen que ya ha pasado por test.
+
+```text
+feature/* ── PR ──▶ CI ──▶ merge a main
+                              │
+                              ├─ cd-main.yml: lint, tests, migraciones,
+                              │  validación Compose y build
+                              ├─ publica app/worker:sha-<commit> en GHCR
+                              ├─ actualiza infra/test/.env
+                              └─ Portainer detecta el commit y despliega TEST
+
+main ── tag vX.Y.Z ──▶ cd-promote.yml
+                       ├─ comprueba que existe :sha-<commit> en GHCR
+                       ├─ crea :vX.Y.Z y :latest con el mismo digest
+                       ├─ actualiza infra/prod/.env
+                       └─ Portainer detecta el commit y despliega PROD
+```
+
+#### Qué rama usar
+
+Para cada cambio, parte de la punta de `main` y crea una rama corta, por
+ejemplo `feature/lti-deep-linking`, `fix/player-403` o `chore/dependencias`.
+Haz commits pequeños, sube la rama y abre un PR contra `main`:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git switch -c feature/mi-cambio
+
+# editar, probar y hacer commits
+npm run lint
+npm test
+git add .
+git commit -m "feat: describe el cambio"
+git push -u origin feature/mi-cambio
+```
+
+El PR ejecuta `ci.yml`: lint, tests unitarios e integración con Postgres,
+migraciones idempotentes, validación de los tres Compose, comprobación de que
+no hay secretos y una construcción Docker sin publicar. Si todo está verde,
+se revisa y se hace merge a `main` (preferiblemente *squash merge*). No se
+trabaja directamente sobre `main`, salvo para operaciones automáticas o de
+emergencia.
+
+#### Qué ocurre después del merge
+
+Cada push de código a `main` ejecuta `cd-main.yml`. El workflow vuelve a
+verificar el commit, construye una vez las imágenes `app` y `worker`, las
+publica en GHCR como `sha-<commit corto>` y cambia sólo `IMAGE_TAG` en
+`infra/test/.env`. Ese cambio automático se commitea como
+`deploy(test): ... [skip ci]`.
+
+Portainer tiene el repositorio configurado con la rama `main` y el Compose del
+entorno correspondiente. Por eso Git es la fuente de verdad de la versión:
+Portainer lee el nuevo `IMAGE_TAG`, descarga las imágenes y recrea el stack.
+El webhook sólo acelera la detección; si no está configurado, funciona el
+polling de Portainer.
+
+Los cambios que sólo afectan a documentación, `LICENSE`, `.idea/` o
+`infra/local/` no publican imágenes ni despliegan test. Aun así, el CI puede
+lanzarse manualmente desde Actions si se quiere validar el cambio.
+
+#### Publicar producción
+
+Primero espera a que el commit esté desplegado y validado en test. La forma
+recomendada es usar el botón de GitHub: ve a **Actions → Release · test → prod
+→ Run workflow**, escribe la versión (`v0.1.0`) y pulsa **Run workflow**. El
+workflow localiza automáticamente la imagen que está en test, crea el tag
+correcto, promociona el mismo digest y actualiza producción.
+
+Si necesitas hacerlo desde la terminal, crea el tag sobre el commit de código
+que ya está en test y súbelo:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git log --oneline -5           # localiza el commit justo antes de deploy(test)
+git tag v0.1.0 <sha-del-commit-de-codigo>
+git push origin v0.1.0
+```
+
+El `sha-del-commit-de-codigo` es el SHA que aparece en el resumen de
+`cd-main.yml` como `sha-<commit>` (o el commit padre del `deploy(test): ...`
+automático). Debe existir la imagen correspondiente en GHCR. Por ejemplo, si
+el historial termina así:
+
+```bash
+abc1234 deploy(test): sha-abc1234 [skip ci]
+def5678 feat: nueva funcionalidad
+git tag v0.1.0 def5678
+git push origin v0.1.0
+```
+
+`cd-promote.yml` no ejecuta otro build. Busca `sha-<commit>` en GHCR, falla si
+ese commit nunca pasó por `main`, y crea las etiquetas de versión y `latest`
+para el mismo digest. Luego actualiza `infra/prod/.env`; Portainer despliega
+producción desde ese cambio. No crees el tag desde una rama de trabajo ni
+reutilices una versión ya publicada.
+
+#### Rollback
+
+El historial de `infra/test/.env` e `infra/prod/.env` es también el historial
+de despliegues. En producción, para volver a la versión anterior, revierte el
+commit automático de producción y sube el revert:
+
+```bash
+git log --oneline -- infra/prod/.env
+git revert <commit-deploy-prod>
+git push origin main
+```
+
+Portainer volverá a leer el `IMAGE_TAG` anterior. No borres ni edites a mano
+los commits `deploy(test): ...` o `deploy(prod): ...`: son los cambios que
+activan GitOps. Para deshacer código en test, revierte el commit de código (o
+abre un PR de rollback); `cd-main` construirá una nueva imagen `sha-*` con ese
+estado y la desplegará. Los secretos nunca van en Git; se mantienen en las variables
+del stack de Portainer, y `infra/<env>/.env.example` sólo sirve como plantilla.
 
 ---
 

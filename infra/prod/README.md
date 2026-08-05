@@ -55,12 +55,22 @@ Igual que test cambiando el entorno:
 
 ## Publicar una versión
 
+La forma recomendada es **GitHub → Actions → Release · test → prod → Run
+workflow**. Introduce una versión como `v0.1.0` y pulsa **Run workflow**. El
+workflow encuentra la imagen actualmente desplegada en test, crea el tag y
+promueve el mismo digest.
+
+Como alternativa, desde la terminal:
+
 ```bash
-git tag v0.1.0
+git log --oneline -5           # localiza el commit antes de deploy(test)
+git tag v0.1.0 <sha-del-commit-de-codigo>
 git push origin v0.1.0
 ```
 
-Eso es todo: en <1 minuto de Actions, la imagen que ya estaba en test queda
+El SHA debe ser el que aparece en el resumen de `cd-main.yml` como
+`sha-<commit>` (el commit padre del `deploy(test): ...` automático), no el
+`deploy(test)` más reciente. En <1 minuto de Actions, la imagen que ya estaba en test queda
 etiquetada `v0.1.0` + `latest` y `infra/prod/.env` apunta a ella.
 
 Sólo se pueden etiquetar commits que hayan pasado por `main` (su imagen
