@@ -1,0 +1,32 @@
+# Sólo la base de datos, para desarrollar con `npm run dev` en el host.
+#
+#   docker compose -f compose.dev.yml up -d
+#   npm run dev        # app en :3000
+#   npm run dev:worker # transcodificador (necesita ffmpeg instalado en el host)
+#
+# Para levantar el sistema COMPLETO en local (nginx + worker con ffmpeg, todo
+# construido desde el código fuente), usa el entorno local:
+#   cd infra/local && docker compose up -d --build
+
+name: moodleshield-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: moodleshield
+      POSTGRES_USER: moodleshield
+      POSTGRES_PASSWORD: moodleshield
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - dev-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moodleshield"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  dev-pgdata:

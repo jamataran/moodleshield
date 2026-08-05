@@ -1,0 +1,33 @@
+name: CodeQL
+
+# Análisis estático de seguridad. Fuera del CI de cada push porque tarda varios
+# minutos y aquí no aporta velocidad: semanal y en PR a main es suficiente.
+
+# Sin trigger de push: en PR y semanal basta, y ahorra 3-4 min por push a main.
+on:
+  pull_request:
+    branches: [main]
+    paths: ['src/**', 'tools/**']
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@v3

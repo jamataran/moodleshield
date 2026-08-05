@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reproductor · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div id="stage">
+    <video id="video" controls playsinline controlslist="nodownload" disablepictureinpicture></video>
+    <div id="watermark" aria-hidden="true"></div>
+  </div>
+
+  <div class="player-meta">
+    <div>
+      <h1 id="title"></h1>
+      <p class="muted" id="viewer"></p>
+    </div>
+    <p class="muted" id="status" role="status"></p>
+  </div>
+
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/vendor/hls.min.js"></script>
+  <script src="/assets/player.js"></script>
+</body>
+</html>

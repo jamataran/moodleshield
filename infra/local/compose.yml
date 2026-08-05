@@ -1,0 +1,159 @@
+# =============================================================================
+# MoodleShield · LOCAL
+#
+# Topología:  CLOUDFLARE ──▶ tu equipo ──▶ contenedores
+#
+# Stack completo construido DESDE EL CÓDIGO FUENTE (no tira de ghcr.io), para
+# probar y depurar en tu máquina con la misma forma que producción: nginx con
+# secure_link delante, worker con ffmpeg, Postgres.
+#
+#   cd infra/local
+#   docker compose up -d --build                 # sin túnel → http://localhost:8088
+#   docker compose --profile quick up -d         # + URL https efímera (trycloudflare)
+#   docker compose --profile cloudflare up -d    # + túnel con nombre (URL estable)
+#
+# Secretos: aquí son valores de desarrollo incrustados con `:-` (inseguros a
+# propósito y sobreescribibles por entorno). Ningún secreto real vive en este
+# fichero ni en el .env de esta carpeta.
+# =============================================================================
+
+name: moodleshield-local
+
+x-app-env: &app-env
+  # development: permite PUBLIC_URL http y secretos por defecto. La mecánica
+  # (firma de segmentos, cifrado, LTI) es idéntica a producción.
+  NODE_ENV: development
+  LOG_LEVEL: ${LOG_LEVEL:-debug}
+  PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8088}
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: moodleshield
+  DB_USER: moodleshield
+  DB_PASSWORD: ${DB_PASSWORD:-moodleshield-local}
+  SESSION_SECRET: ${SESSION_SECRET:-local-inseguro-session-00000000000000000000}
+  WATERMARK_SECRET: ${WATERMARK_SECRET:-local-inseguro-watermark-00000000000000000000}
+  MEDIA_KEY_SECRET: ${MEDIA_KEY_SECRET:-local-inseguro-mediakey-00000000000000000000}
+  # ⚠️ Debe coincidir con el MEDIA_LINK_SECRET del servicio proxy (abajo).
+  MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:-local-inseguro-medialink-00000000000000000000}
+  LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-local-admin}
+  LTI_IDENTITY_CUSTOM_PARAM: ${LTI_IDENTITY_CUSTOM_PARAM:-username}
+  MEDIA_ROOT: /data/media
+  UPLOAD_ROOT: /data/uploads
+  MEDIA_DELIVERY: signed
+  MEDIA_PUBLIC_PREFIX: /media
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
+  SEGMENT_SECONDS: ${SEGMENT_SECONDS:-4}
+  OUTPUT_FPS: ${OUTPUT_FPS:-24}
+  OUTPUT_CRF: ${OUTPUT_CRF:-23}
+  OUTPUT_PRESET: ${OUTPUT_PRESET:-veryfast}
+  # Marca A/B visible a simple vista: en local se quiere VER el patrón.
+  MARK_ALPHA: ${MARK_ALPHA:-0.5}
+  TRANSCODE_CONCURRENCY: "1"
+  FFMPEG_NICE: "10"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: moodleshield
+      POSTGRES_USER: moodleshield
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-moodleshield-local}
+    volumes:
+      - ./data/pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moodleshield"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+      target: app
+    image: moodleshield/app:local
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-env
+    volumes:
+      - ./data/media:/data/media
+      - ./data/uploads:/data/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+      target: worker
+    image: moodleshield/worker:local
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-env
+    volumes:
+      - ./data/media:/data/media
+      - ./data/uploads:/data/uploads
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      # ⚠️ Mismo valor que MEDIA_LINK_SECRET del app-env. Si difieren, todos
+      # los segmentos devuelven 403.
+      MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:-local-inseguro-medialink-00000000000000000000}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
+      NGINX_ENVSUBST_FILTER: "^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)$$"
+    volumes:
+      - ../nginx/templates:/etc/nginx/templates:ro
+      - ../nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
+      - ./data/media:/srv/media:ro
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8088}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # --- Túnel efímero: URL https aleatoria de trycloudflare.com, sin cuenta ---
+  # La URL cambia en cada arranque → hay que actualizar PUBLIC_URL (ver README).
+  cloudflared-quick:
+    image: cloudflare/cloudflared:latest
+    profiles: [quick]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://proxy:8080
+    depends_on:
+      proxy:
+        condition: service_started
+
+  # --- Túnel con nombre: URL estable, la buena para registrar en Moodle -------
+  # Requiere CLOUDFLARE_TUNNEL_TOKEN (ver .env.example → .env.local).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: [cloudflare]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # Si arrancas este perfil sin token, cloudflared falla y sus logs lo
+      # dicen. El token va en .env.local (gitignorado):
+      #   docker compose --env-file .env --env-file .env.local --profile cloudflare up -d
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      proxy:
+        condition: service_started

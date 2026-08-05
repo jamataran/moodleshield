@@ -1,0 +1,37 @@
+{
+  "name": "moodleshield",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Herramienta LTI 1.3 que sirve vídeo HLS cifrado con marca de agua forense A/B por alumno",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "start:worker": "node src/worker.js",
+    "dev": "node --env-file=.env --watch src/server.js",
+    "dev:worker": "node --env-file=.env --watch src/worker.js",
+    "migrate": "node src/db/migrate.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "node --test --test-reporter=spec \"test/**/*.test.js\"",
+    "test:coverage": "node --test --experimental-test-coverage \"test/**/*.test.js\"",
+    "trace": "node tools/trace.mjs"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "express": "^5.1.0",
+    "hls.js": "^1.6.15",
+    "jose": "^6.2.8",
+    "pg": "^8.16.3",
+    "pino": "^9.13.1",
+    "pino-http": "^10.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules
+.git
+.github
+.data
+coverage
+docs
+infra
+init.md
+test
+*.md
+!README.md
+.env
+.env.*

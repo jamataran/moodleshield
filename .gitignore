@@ -1,0 +1,35 @@
+node_modules/
+.env.local
+*.env
+*.log
+npm-debug.log*
+
+# Los .env de infra/ sí se versionan: sólo llevan la etiqueta de imagen y
+# rutas, que es lo que Portainer necesita leer del repositorio. Los secretos
+# se definen en el propio Portainer.
+!infra/*/.env
+
+# Datos locales de desarrollo (media, postgres, uploads)
+.data/
+infra/local/data/
+coverage/
+.DS_Store
+
+# Ficheros temporales de ffmpeg
+*.ts.tmp
+*.part
+
+# Editores
+.idea/
+.vscode/
+!.vscode/extensions.json
+
+# Claves generadas en local (las de producción viven en el gestor de secretos)
+secrets/
+*.pem
+!test/fixtures/*.pem
+
+# Notas de trabajo: init.md es el borrador con la necesidad original y el
+# volcado de la conversación que originó el proyecto. Se queda en tu disco.
+# Si prefieres publicarlo, borra esta línea.
+init.md

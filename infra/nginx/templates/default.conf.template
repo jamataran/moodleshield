@@ -1,0 +1,84 @@
+# Plantilla de nginx: la imagen oficial pasa envsubst sobre este fichero al
+# arrancar y escribe el resultado en /etc/nginx/conf.d/default.conf.
+# Sólo se sustituyen las variables listadas en NGINX_ENVSUBST_FILTER, así que
+# las variables propias de nginx ($uri, $arg_*, …) llegan intactas.
+
+upstream moodleshield_app {
+    server app:3000;
+    keepalive 16;
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    # El TLS lo termina el túnel (Cloudflare / Tailscale) o el proxy externo.
+    # Aquí sólo se habla HTTP dentro de la red de Docker.
+
+    client_max_body_size ${MAX_UPLOAD_SIZE};
+    client_body_timeout 300s;
+
+    access_log /var/log/nginx/access.log combined;
+    error_log  /var/log/nginx/error.log warn;
+
+    # ------------------------------------------------------------------
+    # Segmentos HLS: ficheros estáticos con sendfile, sin pasar por Node.
+    #
+    # secure_link es lo que sostiene la marca forense. Sin él, un alumno con
+    # acceso legítimo podría descargar la clave AES y luego pedir todos los
+    # segmentos de una misma variante, obteniendo una copia cuyo patrón A/B no
+    # apunta a nadie. Al exigir firma por URL, cada alumno sólo puede descargar
+    # los segmentos que aparecen en su propia playlist: exactamente su patrón.
+    # ------------------------------------------------------------------
+    # La expresión va entre comillas porque contiene llaves: nginx exige
+    # entrecomillar cualquier regex con `{` o `}`.
+    location ~ "^/media/(?<vid>[0-9a-fA-F-]{36})/(?<variant>[AB])/(?<seg>seg_\d{4,6}\.ts)$" {
+        secure_link $arg_md5,$arg_expires;
+        # Las llaves de ${uri} no son decorativas: sin ellas nginx leería
+        # "$uri" seguido del secreto como un único nombre de variable. envsubst
+        # las respeta porque NGINX_ENVSUBST_FILTER limita qué se sustituye.
+        secure_link_md5 "$secure_link_expires${uri}${MEDIA_LINK_SECRET}";
+
+        if ($secure_link = "")  { return 403; }  # firma ausente o incorrecta
+        if ($secure_link = "0") { return 410; }  # firma válida pero caducada
+
+        alias /srv/media/$vid/$variant/$seg;
+
+        default_type video/mp2t;
+        add_header Cache-Control "private, max-age=3600" always;
+        add_header X-Content-Type-Options "nosniff" always;
+
+        sendfile on;
+        tcp_nopush on;
+    }
+
+    # Todo lo demás bajo /media/ (index.m3u8 de variante, key.bin, meta.json,
+    # poster.jpg) no se sirve nunca de forma estática.
+    location /media/ {
+        return 403;
+    }
+
+    # Subida de vídeos: sin buffering, para que un MP4 de 3 GB no se escriba
+    # antes en el disco de nginx que en el del backend.
+    location = /videos {
+        proxy_pass http://moodleshield_app;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        include /etc/nginx/proxy_headers.conf;
+    }
+
+    location = /healthz {
+        proxy_pass http://moodleshield_app;
+        include /etc/nginx/proxy_headers.conf;
+        access_log off;
+    }
+
+    location / {
+        proxy_pass http://moodleshield_app;
+        proxy_http_version 1.1;
+        proxy_read_timeout 120s;
+        include /etc/nginx/proxy_headers.conf;
+    }
+}

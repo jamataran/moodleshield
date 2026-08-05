@@ -1,0 +1,180 @@
+name: CD · main → test
+
+# Cada push a main: verifica, construye UNA vez, publica :sha-<commit> y :edge,
+# y escribe la etiqueta en infra/test/.env. Portainer (GitOps) redespliega test.
+#
+# La promoción a prod NO pasa por aquí: cd-promote.yml re-etiqueta este mismo
+# digest cuando se crea un tag vX.Y.Z. Misma imagen hacia arriba.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md', 'LICENSE', 'infra/local/**', '.idea/**']
+  workflow_dispatch:
+
+# Los despliegues se encolan, no se cancelan: un deploy a medias es peor que
+# uno tardío.
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # Duplicado a propósito con ci.yml (que sólo corre en PRs): si crece, se
+  # extrae a un workflow reutilizable.
+  verify:
+    name: Verificar
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Lint y tests
+        run: |
+          npm run lint
+          npm test
+
+      - name: Verificar migraciones contra Postgres real
+        run: |
+          docker run -d --name pg \
+            -e POSTGRES_DB=moodleshield -e POSTGRES_USER=moodleshield \
+            -e POSTGRES_PASSWORD=moodleshield -p 5432:5432 postgres:16-alpine
+          for i in $(seq 1 30); do docker exec pg pg_isready -U moodleshield && break; sleep 2; done
+          DB_HOST=127.0.0.1 DB_PASSWORD=moodleshield npm run migrate
+          DB_HOST=127.0.0.1 DB_PASSWORD=moodleshield npm run migrate
+          docker rm -f pg
+
+      - name: Validar compose e higiene de secretos
+        run: |
+          set -euo pipefail
+          for env in test prod; do
+            docker compose --env-file "infra/$env/.env" --env-file "infra/$env/.env.ci" \
+              -f "infra/$env/compose.yml" config -q
+          done
+          docker compose -f infra/local/compose.yml config -q
+          fail=0
+          for f in infra/*/.env; do
+            while IFS= read -r line; do
+              case "$line" in \#*|'') continue ;; esac
+              key=${line%%=*}; value=${line#*=}
+              case "$key" in
+                *SECRET*|*PASSWORD*|*TOKEN*|*AUTHKEY*)
+                  [ -n "$value" ] && { echo "::error file=$f::$key tiene valor"; fail=1; } ;;
+              esac
+            done < "$f"
+          done
+          exit $fail
+
+  # Un solo job para publicar y desplegar: evita pagar el arranque de otra VM.
+  release:
+    name: Publicar sha y desplegar test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: verify
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Calcular etiquetas
+        id: meta
+        run: |
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Una invocación para las dos imágenes: worker reutiliza todas las capas
+      # de app, y la caché GHA hace que un push con package-lock intacto tarde
+      # 1-2 minutos.
+      - name: Bake y push (app + worker)
+        uses: docker/bake-action@v6
+        with:
+          files: docker/docker-bake.hcl
+          targets: default
+          push: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+            *.platform=linux/amd64
+        env:
+          REGISTRY: ghcr.io
+          REPO: ${{ steps.meta.outputs.repo }}
+          TAGS: ${{ steps.meta.outputs.sha_tag }},edge
+          APP_VERSION: ${{ steps.meta.outputs.sha_tag }}
+
+      - name: Desplegar en test (bump de infra/test/.env)
+        env:
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+          REPO: ${{ steps.meta.outputs.repo }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # El checkout está anclado al SHA del evento. Si mientras se construía
+          # aterrizó otro push, hacer el sed sobre esa base antigua y rebasar
+          # después provoca conflicto en la MISMA línea (IMAGE_TAG) y el deploy
+          # falla sin posibilidad de recuperarlo con un re-run. Por eso se parte
+          # siempre de la punta real de main, y se reintenta si nos adelantan.
+          for intento in 1 2 3; do
+            git fetch origin main
+            git checkout -B main origin/main
+
+            sed -i -E "s|^IMAGE_TAG=.*|IMAGE_TAG=${SHA_TAG}|"  infra/test/.env
+            sed -i -E "s|^IMAGE_REPO=.*|IMAGE_REPO=${REPO}|"   infra/test/.env
+
+            if git diff --quiet -- infra/test/.env; then
+              echo "Sin cambios (la etiqueta ya era ${SHA_TAG})"; exit 0
+            fi
+
+            git add infra/test/.env
+            # Los pushes con GITHUB_TOKEN no disparan workflows; el [skip ci] es
+            # el cinturón además de los tirantes.
+            git commit -m "deploy(test): ${SHA_TAG} [skip ci]"
+            if git push origin main; then
+              echo "Desplegado ${SHA_TAG} en test"; exit 0
+            fi
+            echo "main se movió durante el push; reintento $intento"
+            git reset --hard origin/main
+          done
+          echo "::error::No se pudo empujar el bump tras 3 intentos"; exit 1
+
+      - name: Avisar a Portainer (opcional)
+        env:
+          WEBHOOK: ${{ secrets.PORTAINER_WEBHOOK_TEST }}
+        run: |
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "Sin webhook: Portainer redesplegará en su próximo polling."; exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$WEBHOOK")
+          echo "Portainer respondió $code"; [ "$code" -lt 400 ]
+
+      - name: Resumen
+        env:
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          {
+            echo "### Test → \`${SHA_TAG}\`"
+            echo ""
+            echo "Para promocionar ESTA MISMA imagen a producción:"
+            echo '```'
+            echo "git tag v0.X.Y ${GITHUB_SHA::7} && git push origin v0.X.Y"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

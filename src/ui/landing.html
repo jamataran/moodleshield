@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div class="panel" style="max-width:44rem;margin:2rem auto">
+    <h1>MoodleShield</h1>
+    <p class="muted">Herramienta LTI 1.3. No se accede directamente: se abre desde una actividad de Moodle.</p>
+
+    <h2 style="margin-top:1.5rem">Datos para dar de alta la herramienta</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:.9rem">
+      <tr><td style="padding:.35rem 0">URL de la herramienta</td><td><code>{{PUBLIC_URL}}/lti/launch</code></td></tr>
+      <tr><td style="padding:.35rem 0">Initiate login URL</td><td><code>{{PUBLIC_URL}}/lti/login</code></td></tr>
+      <tr><td style="padding:.35rem 0">Redirection URI</td><td><code>{{PUBLIC_URL}}/lti/launch</code></td></tr>
+      <tr><td style="padding:.35rem 0">Public keyset URL</td><td><code>{{PUBLIC_URL}}/lti/keys</code></td></tr>
+    </table>
+    <p class="muted" style="margin-top:1rem">
+      Misma información en JSON: <a href="/lti/config">/lti/config</a>
+    </p>
+  </div>
+</body>
+</html>

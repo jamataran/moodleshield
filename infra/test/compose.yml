@@ -1,0 +1,174 @@
+# =============================================================================
+# MoodleShield · ENTORNO DE PRUEBAS
+#
+# Mismo diseño que producción, con tres diferencias deliberadas:
+#   - MARK_ALPHA por defecto a 0.5: la marca A/B se ve a simple vista, que es
+#     lo que hace demostrable el sistema sin tener que fiarse del script.
+#   - Postgres publicado en localhost para poder inspeccionar la base de datos.
+#   - Menos memoria y CPU reservadas: aquí no hay carga real.
+#
+# Se despliega igual que producción (Portainer + GitOps) o en local con:
+#   docker compose --env-file .env -f compose.yml up -d
+# =============================================================================
+
+name: moodleshield-test
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "2"
+
+x-app-env: &app-env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-debug}
+  PUBLIC_URL: ${PUBLIC_URL:?falta PUBLIC_URL}
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${DB_NAME:-moodleshield}
+  DB_USER: ${DB_USER:-moodleshield}
+  DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+  SESSION_SECRET: ${SESSION_SECRET:?falta SESSION_SECRET}
+  WATERMARK_SECRET: ${WATERMARK_SECRET:?falta WATERMARK_SECRET}
+  MEDIA_KEY_SECRET: ${MEDIA_KEY_SECRET:?falta MEDIA_KEY_SECRET}
+  MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
+  LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-}
+  LTI_IDENTITY_CUSTOM_PARAM: ${LTI_IDENTITY_CUSTOM_PARAM:-username}
+  MEDIA_ROOT: /data/media
+  UPLOAD_ROOT: /data/uploads
+  MEDIA_DELIVERY: signed
+  MEDIA_PUBLIC_PREFIX: /media
+  MEDIA_LINK_TTL_SECONDS: ${MEDIA_LINK_TTL_SECONDS:-14400}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
+  SEGMENT_SECONDS: ${SEGMENT_SECONDS:-4}
+  OUTPUT_FPS: ${OUTPUT_FPS:-24}
+  OUTPUT_CRF: ${OUTPUT_CRF:-23}
+  OUTPUT_PRESET: ${OUTPUT_PRESET:-veryfast}
+  # Marca visible: en pruebas interesa verla.
+  MARK_ALPHA: ${MARK_ALPHA:-0.5}
+  TRANSCODE_CONCURRENCY: ${TRANSCODE_CONCURRENCY:-1}
+  FFMPEG_NICE: ${FFMPEG_NICE:-10}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-moodleshield}
+      POSTGRES_USER: ${DB_USER:-moodleshield}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+    volumes:
+      - ${DATA_ROOT:?falta DATA_ROOT}/pgdata:/var/lib/postgresql/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${DB_PORT_HOST:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-moodleshield} -d ${DB_NAME:-moodleshield}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 256m
+    logging: *logging
+    networks: [internal]
+
+  app:
+    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/app:${IMAGE_TAG:?falta IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-env
+    volumes:
+      - ${DATA_ROOT}/media:/data/media
+      - ${DATA_ROOT}/uploads:/data/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    mem_limit: 384m
+    logging: *logging
+    networks: [internal]
+
+  worker:
+    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/worker:${IMAGE_TAG:?falta IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-env
+    volumes:
+      - ${DATA_ROOT}/media:/data/media
+      - ${DATA_ROOT}/uploads:/data/uploads
+    cpus: ${WORKER_CPUS:-1}
+    mem_limit: ${WORKER_MEMORY:-1024m}
+    logging: *logging
+    networks: [internal]
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
+      NGINX_ENVSUBST_FILTER: "^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)$$"
+    volumes:
+      - ${INFRA_ROOT:?falta INFRA_ROOT}/nginx/templates:/etc/nginx/templates:ro
+      - ${INFRA_ROOT}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
+      - ${DATA_ROOT}/media:/srv/media:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 128m
+    logging: *logging
+    networks: [internal, edge]
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: [cloudflare]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      proxy:
+        condition: service_started
+    mem_limit: 128m
+    logging: *logging
+    networks: [edge]
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    profiles: [tailscale]
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-moodleshield-test}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    volumes:
+      - ${DATA_ROOT}/tailscale:/var/lib/tailscale
+      - ${INFRA_ROOT}/tailscale/serve.json:/config/serve.json:ro
+    depends_on:
+      proxy:
+        condition: service_started
+    mem_limit: 128m
+    logging: *logging
+    networks: [edge]
+
+networks:
+  internal:
+    driver: bridge
+  edge:
+    driver: bridge

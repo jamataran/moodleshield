@@ -1,0 +1,191 @@
+# =============================================================================
+# MoodleShield · PRODUCCIÓN
+#
+# Pensado para desplegarse como stack de Portainer desde este repositorio
+# (GitOps). Ver infra/README.md para el alta paso a paso.
+#
+# Reglas de la casa:
+#   - Rutas de volumen absolutas: Portainer no ejecuta el compose desde una
+#     carpeta estable, así que las rutas relativas apuntan a cualquier sitio.
+#   - Los secretos se definen en las variables de entorno del stack en
+#     Portainer, NUNCA en este repositorio. El .env versionado sólo lleva la
+#     etiqueta de imagen, que es lo que mueve el CI.
+#   - Todo el estado vive bajo ${DATA_ROOT}; con eso y la base de datos hay
+#     copia de seguridad completa.
+# =============================================================================
+
+name: moodleshield
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-env: &app-env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  PUBLIC_URL: ${PUBLIC_URL:?falta PUBLIC_URL}
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${DB_NAME:-moodleshield}
+  DB_USER: ${DB_USER:-moodleshield}
+  DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+  SESSION_SECRET: ${SESSION_SECRET:?falta SESSION_SECRET}
+  WATERMARK_SECRET: ${WATERMARK_SECRET:?falta WATERMARK_SECRET}
+  MEDIA_KEY_SECRET: ${MEDIA_KEY_SECRET:?falta MEDIA_KEY_SECRET}
+  MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
+  LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-}
+  LTI_IDENTITY_CUSTOM_PARAM: ${LTI_IDENTITY_CUSTOM_PARAM:-username}
+  MEDIA_ROOT: /data/media
+  UPLOAD_ROOT: /data/uploads
+  MEDIA_DELIVERY: signed
+  MEDIA_PUBLIC_PREFIX: /media
+  MEDIA_LINK_TTL_SECONDS: ${MEDIA_LINK_TTL_SECONDS:-14400}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-4294967296}
+  SEGMENT_SECONDS: ${SEGMENT_SECONDS:-4}
+  OUTPUT_FPS: ${OUTPUT_FPS:-24}
+  OUTPUT_CRF: ${OUTPUT_CRF:-21}
+  OUTPUT_PRESET: ${OUTPUT_PRESET:-veryfast}
+  MARK_ALPHA: ${MARK_ALPHA:-0.06}
+  TRANSCODE_CONCURRENCY: ${TRANSCODE_CONCURRENCY:-1}
+  FFMPEG_NICE: ${FFMPEG_NICE:-10}
+
+services:
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-moodleshield}
+      POSTGRES_USER: ${DB_USER:-moodleshield}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+      # Acelera la escritura de segmentos sin afectar a la durabilidad del WAL.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - ${DATA_ROOT:?falta DATA_ROOT}/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-moodleshield} -d ${DB_NAME:-moodleshield}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    mem_limit: 512m
+    logging: *logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  app:
+    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/app:${IMAGE_TAG:?falta IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-env
+    volumes:
+      - ${DATA_ROOT}/media:/data/media
+      - ${DATA_ROOT}/uploads:/data/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    mem_limit: 512m
+    logging: *logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  # El transcodificador. Va aparte del `app` para que un pico de ffmpeg no
+  # tumbe el servicio web y para poder limitarle CPU de forma independiente.
+  worker:
+    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_REPO:?falta IMAGE_REPO}/worker:${IMAGE_TAG:?falta IMAGE_TAG}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-env
+    volumes:
+      - ${DATA_ROOT}/media:/data/media
+      - ${DATA_ROOT}/uploads:/data/uploads
+    # ffmpeg necesita margen. Ajusta WORKER_CPUS al número de núcleos que
+    # quieras cederle; el resto del host sigue respondiendo gracias al `nice`.
+    cpus: ${WORKER_CPUS:-2}
+    mem_limit: ${WORKER_MEMORY:-1536m}
+    logging: *logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4g}
+      NGINX_ENVSUBST_FILTER: "^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)$$"
+    volumes:
+      - ${INFRA_ROOT:?falta INFRA_ROOT}/nginx/templates:/etc/nginx/templates:ro
+      - ${INFRA_ROOT}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
+      - ${DATA_ROOT}/media:/srv/media:ro
+    ports:
+      # Sólo en loopback: quien expone al mundo es el túnel, no este puerto.
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 128m
+    logging: *logging
+    networks: [internal, edge]
+
+  # ---------------------------------------------------------------------------
+  # Túnel HTTPS. Se elige uno con perfiles:
+  #   docker compose --profile cloudflare up -d
+  #   docker compose --profile tailscale  up -d
+  # Ver docs/https-tunel.md
+  # ---------------------------------------------------------------------------
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: [cloudflare]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      proxy:
+        condition: service_started
+    mem_limit: 128m
+    logging: *logging
+    networks: [edge]
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    profiles: [tailscale]
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-moodleshield}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    volumes:
+      - ${DATA_ROOT}/tailscale:/var/lib/tailscale
+      - ${INFRA_ROOT}/tailscale/serve.json:/config/serve.json:ro
+    depends_on:
+      proxy:
+        condition: service_started
+    mem_limit: 128m
+    logging: *logging
+    networks: [edge]
+
+networks:
+  internal:
+    driver: bridge
+  edge:
+    driver: bridge

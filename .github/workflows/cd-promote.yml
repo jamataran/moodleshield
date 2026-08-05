@@ -1,0 +1,117 @@
+name: CD · tag → prod
+
+# Promoción a producción SIN reconstruir: `docker buildx imagetools create`
+# re-etiqueta el digest que ya rodó en test como vX.Y.Z + latest. Ni Node, ni
+# tests, ni build: el commit ya se verificó y construyó al entrar en main.
+# Coste total: menos de un minuto de Actions.
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: cd-promote
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  promote:
+    name: Promocionar y desplegar prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolver commit y etiquetas
+        id: meta
+        run: |
+          set -euo pipefail
+          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          # rev-parse del propio checkout: con tags anotados, GITHUB_SHA puede
+          # apuntar al objeto tag y no al commit.
+          commit=$(git rev-parse HEAD)
+          echo "repo=$repo"                    >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${commit::7}"      >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME}"    >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Re-etiquetar el mismo digest (app + worker)
+        env:
+          REPO: ${{ steps.meta.outputs.repo }}
+          SRC: ${{ steps.meta.outputs.sha_tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          for img in app worker; do
+            src="ghcr.io/${REPO}/${img}:${SRC}"
+            if ! docker buildx imagetools inspect "$src" >/dev/null 2>&1; then
+              echo "::error::No existe ${src}. Sólo se pueden etiquetar commits que hayan pasado por main (cd-main publica su imagen sha-*). Haz push a main primero."
+              exit 1
+            fi
+            docker buildx imagetools create \
+              -t "ghcr.io/${REPO}/${img}:${VERSION}" \
+              -t "ghcr.io/${REPO}/${img}:latest" \
+              "$src"
+            echo "✓ ${img}: ${SRC} → ${VERSION} (mismo digest)"
+          done
+
+      - name: Desplegar en prod (bump de infra/prod/.env)
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          REPO: ${{ steps.meta.outputs.repo }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Mismo patrón que cd-main: partir siempre de la punta real de main y
+          # reintentar, en vez de rebasar un cambio sobre la misma línea.
+          for intento in 1 2 3; do
+            git fetch origin main
+            git checkout -B main origin/main
+
+            sed -i -E "s|^IMAGE_TAG=.*|IMAGE_TAG=${VERSION}|" infra/prod/.env
+            sed -i -E "s|^IMAGE_REPO=.*|IMAGE_REPO=${REPO}|"  infra/prod/.env
+
+            if git diff --quiet -- infra/prod/.env; then
+              echo "Sin cambios (prod ya estaba en ${VERSION})"; exit 0
+            fi
+
+            git add infra/prod/.env
+            git commit -m "deploy(prod): ${VERSION} [skip ci]"
+            if git push origin main; then
+              echo "Desplegado ${VERSION} en prod"; exit 0
+            fi
+            echo "main se movió durante el push; reintento $intento"
+            git reset --hard origin/main
+          done
+          echo "::error::No se pudo empujar el bump tras 3 intentos"; exit 1
+
+      - name: Avisar a Portainer (opcional)
+        env:
+          WEBHOOK: ${{ secrets.PORTAINER_WEBHOOK_PROD }}
+        run: |
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "Sin webhook: Portainer redesplegará en su próximo polling."; exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$WEBHOOK")
+          echo "Portainer respondió $code"; [ "$code" -lt 400 ]
+
+      - name: Resumen
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SRC: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          {
+            echo "### Prod → \`${VERSION}\`"
+            echo ""
+            echo "Promocionado desde \`${SRC}\` **sin reconstruir** (mismo digest que test)."
+          } >> "$GITHUB_STEP_SUMMARY"

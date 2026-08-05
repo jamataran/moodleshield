@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Catálogo · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header class="bar">
+    <div>
+      <h1>Catálogo de vídeos</h1>
+      <p class="muted" id="subtitle"></p>
+    </div>
+    <button id="refresh">Actualizar</button>
+  </header>
+
+  <div id="notice" hidden></div>
+
+  <div id="manage-hint" class="notice" hidden>
+    <strong>Esta actividad todavía no tiene ningún vídeo asignado.</strong>
+    Aquí puedes subirlo y ver cómo se procesa, pero el vínculo con la actividad
+    lo crea Moodle: cuando el vídeo esté <em>listo</em>, vuelve al formulario de
+    la actividad y pulsa <strong>Seleccionar contenido</strong> para elegirlo.
+    Hasta entonces los alumnos verán un error al abrirla.
+    <br>
+    <span class="muted">Si no ves ese botón, al dar de alta la herramienta
+    falta marcar <em>Supports Deep Linking</em>.</span>
+  </div>
+
+  <section class="panel">
+    <h2>Subir un vídeo nuevo</h2>
+    <form id="upload">
+      <p><input type="text" name="title" placeholder="Título (si lo dejas vacío se usa el nombre del fichero)"></p>
+      <p><input type="file" name="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm" required></p>
+      <p>
+        <button type="submit" class="primary" id="upload-btn">Subir y procesar</button>
+        <span class="muted" id="upload-status"></span>
+      </p>
+    </form>
+  </section>
+
+  <section id="catalog" class="grid"></section>
+
+  <form id="deeplink-form" method="post" action="/lti/deeplink/response" hidden>
+    <input type="hidden" name="deepLinkToken" id="dl-token">
+    <div id="dl-selection"></div>
+  </form>
+
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/assets/catalog.js"></script>
+</body>
+</html>
