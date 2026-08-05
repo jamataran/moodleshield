@@ -3,7 +3,6 @@ import https from 'node:https'
 import net from 'node:net'
 import config from '../config.js'
 
-const EDGE_JUNK = /^[\s\p{Cf}]+|[\s\p{Cf}]+$/gu
 const MAX_JWKS_BYTES = 256 * 1024
 const TIMEOUT_MS = 8_000
 
@@ -18,7 +17,13 @@ export class PlatformValidationError extends Error {
 }
 
 export function cleanAdminText (value) {
-  return String(value ?? '').replace(EDGE_JUNK, '')
+  const characters = Array.from(String(value ?? ''))
+  const isJunk = (character) => character.trim() === '' || /\p{Cf}/u.test(character)
+  let start = 0
+  let end = characters.length
+  while (start < end && isJunk(characters[start])) start++
+  while (end > start && isJunk(characters[end - 1])) end--
+  return characters.slice(start, end).join('')
 }
 
 function parseUrl (value, field, { issuer = false } = {}) {

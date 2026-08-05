@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { rateLimit } from 'express-rate-limit'
 import config from '../config.js'
 import { query } from '../db/index.js'
 import { renderPage } from '../ui/render.js'
@@ -33,6 +34,17 @@ import {
 } from '../services/platforms.js'
 
 export const adminRouter = Router()
+
+// Cinturón adicional para toda la superficie admin. El límite de login que
+// decide el sexto intento sigue en Postgres (y por tanto funciona entre
+// réplicas); éste acota ráfagas generales y pruebas de conectividad costosas.
+adminRouter.use(rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).type('text').send('Demasiadas peticiones')
+}))
 
 function headers (_req, res, next) {
   res.set('Cache-Control', 'no-store')
