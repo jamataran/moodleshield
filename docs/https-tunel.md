@@ -111,12 +111,14 @@ curl -sS https://video.tudominio.com/lti/keys | head -c 200
 
 ---
 
-## Opción B · Tailscale Funnel (pruebas)
+## Opción B · Tailscale Funnel (perfil opcional de producción)
 
 > Para **desarrollo en tu Mac** con el entorno local, Tailscale corre como app
 > nativa y no hace falta contenedor: los comandos exactos están en
 > [`../infra/local/README.md`](../infra/local/README.md#modo-a-bis--tailscale-funnel-si-ya-usas-tailscale).
-> Lo de aquí abajo es para el stack en el servidor.
+> Lo de aquí abajo es sólo para el perfil opcional de `infra/prod`. El entorno
+> `infra/test` vive en Internet detrás del edge del host y no incorpora
+> contenedores de túnel.
 
 ⚠️ Tiene que ser **Funnel**, no **Serve**. `serve` publica sólo dentro de tu
 tailnet; ni el navegador del alumno ni el servidor de Moodle llegarían. La
@@ -157,14 +159,14 @@ Variables de entorno del stack en Portainer:
 
 ```
 TS_AUTHKEY=tskey-auth-...
-TS_HOSTNAME=moodleshield-test
+TS_HOSTNAME=moodleshield
 COMPOSE_PROFILES=tailscale
 ```
 
-En `infra/test/.env`:
+En `infra/prod/.env`:
 
 ```
-PUBLIC_URL=https://moodleshield-test.<tu-tailnet>.ts.net
+PUBLIC_URL=https://moodleshield.<tu-tailnet>.ts.net
 ```
 
 El nombre exacto del tailnet aparece en la consola de Tailscale (algo como
@@ -176,13 +178,13 @@ Con `COMPOSE_PROFILES=tailscale` en las variables del stack, *Update the stack*
 en Portainer. Después, en el servidor:
 
 ```bash
-docker compose -p moodleshield-test logs -f tailscale
+docker compose -p moodleshield logs -f tailscale
 ```
 
 En los logs aparece la URL pública. Después:
 
 ```bash
-curl -sS https://moodleshield-test.<tailnet>.ts.net/healthz
+curl -sS https://moodleshield.<tailnet>.ts.net/healthz
 ```
 
 ---

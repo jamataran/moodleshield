@@ -36,10 +36,11 @@ directorio estable, así que un `./datos` acaba en cualquier sitio. De ahí
 
 **Incluye**
 
-- `infra/{test,prod}/compose.yml` con los cinco servicios.
+- `infra/test/compose.yml` con cuatro servicios y `infra/prod/compose.yml` con
+  esos cuatro servicios más dos alternativas de túnel opcionales.
 - Límites de memoria y CPU por servicio.
 - Healthchecks y dependencias.
-- Perfiles para elegir túnel.
+- Perfiles para elegir túnel en producción; test usa el edge público del host.
 - Script de preparación del host.
 
 **No incluye**
@@ -55,7 +56,7 @@ directorio estable, así que un `./datos` acaba en cualquier sitio. De ahí
 | `app` | `<repo>/app` | 512 MB | LTI, API, playlists |
 | `worker` | `<repo>/worker` | 1,5 GB / 2 CPU | ffmpeg |
 | `proxy` | nginx:1.27-alpine | 128 MB | Segmentos firmados y proxy |
-| `cloudflared` o `tailscale` | | 128 MB | HTTPS público (perfil) |
+| `cloudflared` o `tailscale` (sólo prod) | | 128 MB | HTTPS público (perfil opcional) |
 
 Total en reposo, unos 2,7 GB de límite; el consumo real en reposo ronda los
 400 MB, y el resto es margen para ffmpeg.
@@ -85,7 +86,8 @@ Detalle completo en el README del entorno:
 
 - [ ] El stack levanta desde Portainer sin tocar nada por SSH después del
       `bootstrap-host.sh`.
-- [ ] `docker compose ps` muestra los cinco servicios en `healthy`.
+- [ ] `docker compose ps` muestra los cuatro servicios base y, en producción,
+      el túnel opcional si se ha activado.
 - [ ] `https://<dominio>/readyz` devuelve `{"status":"ready"}`.
 - [ ] Reiniciar el servidor entero deja el sistema funcionando solo.
 - [ ] Borrar el contenedor `app` y dejar que Docker lo recree no pierde datos.

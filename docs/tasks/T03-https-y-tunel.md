@@ -34,7 +34,8 @@ funcione y el Deep Linking falle con un error críptico.
 **Incluye**
 
 - Elegir mecanismo de exposición: Cloudflare Tunnel o Tailscale Funnel.
-- Levantarlo como servicio del compose, con perfiles.
+- Levantarlo como servicio del compose de producción, con perfiles. Test usa
+  el edge público del host y no incorpora túneles.
 - Fijar `PUBLIC_URL` y comprobar que la app genera URLs coherentes.
 
 **No incluye**
@@ -61,9 +62,9 @@ desde la red local) o usar Tailscale. Está desarrollado en
 ## Ficheros implicados
 
 ```
-infra/{test,prod}/compose.yml    servicios cloudflared y tailscale, con perfiles
+infra/prod/compose.yml           servicios cloudflared y tailscale, con perfiles
 infra/tailscale/serve.json       configuración de Funnel
-infra/{test,prod}/.env           PUBLIC_URL
+infra/{test,prod}/.env           PUBLIC_URL del edge elegido
 docs/https-tunel.md              guía completa de las dos opciones
 ```
 

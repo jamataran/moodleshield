@@ -21,7 +21,9 @@ Diferencias deliberadas respecto a prod:
 ## El edge: tu nginx
 
 El stack **no** termina TLS: expone HTTP en `127.0.0.1:8081` (configurable con
-`BIND_ADDRESS`/`HTTP_PORT`) y espera un proxy delante. Requisitos del edge:
+`BIND_ADDRESS`/`HTTP_PORT`) y espera un proxy delante. El entorno de test vive
+en un servidor público y por diseño no incluye `cloudflared` ni `tailscale`.
+Requisitos del edge:
 
 ```nginx
 server {
@@ -44,9 +46,6 @@ server {
 Con Nginx Proxy Manager: mismo destino, y las tres cabeceras/ajustes en la
 pestaña *Advanced*. Si tu proxy corre en Docker en el mismo host, pon
 `BIND_ADDRESS=0.0.0.0` y restringe por firewall, o conéctalo a la red del stack.
-
-¿Sin edge propio? Los perfiles `cloudflare` y `tailscale` del compose levantan
-un túnel como alternativa: [`../../docs/https-tunel.md`](../../docs/https-tunel.md).
 
 ## Alta en Portainer (una vez)
 
@@ -83,7 +82,7 @@ un túnel como alternativa: [`../../docs/https-tunel.md`](../../docs/https-tunel
 
 ```bash
 P="docker compose -p moodleshield-test"
-$P ps                                   # los cuatro/cinco en healthy
+$P ps                                   # db, app, worker y proxy
 $P logs -f app worker
 $P exec db psql -U moodleshield -c "SELECT status, count(*) FROM transcode_job GROUP BY status"
 ```

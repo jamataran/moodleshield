@@ -11,10 +11,10 @@ Tres entornos, cada uno con su carpeta, su `compose.yml` y su README:
 ```
 infra/
 ├── nginx/          configuración compartida (plantilla con secure_link)
-├── tailscale/      serve.json para el perfil tailscale
+├── tailscale/      serve.json para el perfil tailscale opcional de prod
 ├── local/          compose + .env + README
 ├── test/           compose + .env + .env.example + .env.ci + README
-└── prod/           idéntico a test
+└── prod/           base de test + perfiles de túnel opcionales
 ```
 
 ## Flujo de promoción
