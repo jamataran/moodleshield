@@ -154,19 +154,23 @@ export function validateJwksPayload (payload) {
 
 function downloadJson (url, allowedAddresses) {
   return new Promise((resolve, reject) => {
-    const allowed = new Set(allowedAddresses.map(({ address }) => address))
-    const req = https.request(url, {
+    const destination = allowedAddresses[0]
+    const req = https.request({
+      // La conexión queda fijada a la IP que resolvimos y validamos nosotros.
+      // `servername` y Host conservan el nombre original para SNI/certificado,
+      // pero no pueden provocar una segunda resolución DNS (DNS rebinding).
+      hostname: destination.address,
+      family: destination.family,
+      port: url.port ? Number(url.port) : 443,
+      path: `${url.pathname}${url.search}`,
+      servername: url.hostname,
       method: 'GET',
-      headers: { accept: 'application/json', 'user-agent': 'MoodleShield-admin/1' },
-      timeout: TIMEOUT_MS,
-      lookup: (_hostname, options, callback) => {
-        const family = typeof options === 'object' ? options.family : 0
-        const candidates = allowedAddresses.filter((item) => !family || item.family === family)
-        const selected = candidates[0] ?? allowedAddresses[0]
-        if (!selected || !allowed.has(selected.address)) return callback(new Error('Dirección DNS no autorizada'))
-        if (typeof options === 'object' && options.all) return callback(null, candidates.length ? candidates : allowedAddresses)
-        callback(null, selected.address, selected.family)
-      }
+      headers: {
+        accept: 'application/json',
+        host: url.host,
+        'user-agent': 'MoodleShield-admin/1'
+      },
+      timeout: TIMEOUT_MS
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400) {
         res.resume()
