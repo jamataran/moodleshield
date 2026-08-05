@@ -92,7 +92,7 @@ Los `lti_oidc_state` caducados los purga la propia aplicación cada 15 minutos.
 - [ ] La CSP no bloquea nada en la consola del navegador dentro de Moodle.
 - [ ] Existe una copia de la base de datos de menos de 24 horas.
 - [ ] `WATERMARK_SECRET` está guardado fuera del servidor.
-- [ ] Sólo el túnel está expuesto al exterior; el resto escucha en `127.0.0.1`.
+- [ ] Sólo el nginx externo está expuesto; el stack escucha en `127.0.0.1`.
 
 ## Cómo se prueba
 
@@ -103,8 +103,8 @@ docker compose logs app | grep -E 'st=[A-Za-z0-9]|kt=[A-Za-z0-9]|Bearer [A-Za-z0
 
 # Comportamiento sin base de datos
 docker compose stop db
-curl -s localhost:8080/healthz    # 200
-curl -s localhost:8080/readyz     # 503
+curl -s localhost:43127/healthz    # 200
+curl -s localhost:43127/readyz     # 503
 docker compose start db
 
 # Superficie expuesta

@@ -33,7 +33,7 @@ sólo desde el navegador del administrador.
 
 - DNS público para cada entorno.
 - Certificado TLS válido en el reverse proxy del host.
-- Proxy hacia `127.0.0.1:8081` en test y `127.0.0.1:8080` en producción.
+- Proxy hacia `127.0.0.1:43128` en test y `127.0.0.1:43127` en producción.
 - Cabeceras `Host`, `X-Forwarded-Proto` y `X-Forwarded-For`.
 - Límites y tiempos de espera compatibles con subidas de varios GB.
 - `PUBLIC_URL` coherente con el dominio publicado.
@@ -68,7 +68,7 @@ docs/https-tunel.md              guía de HTTPS y desarrollo local
 - [ ] El certificado es válido sin usar `curl -k`.
 - [ ] `/lti/config` devuelve únicamente URLs HTTPS del dominio correcto.
 - [ ] Desde la máquina Moodle, `/lti/keys` es accesible.
-- [ ] Los puertos HTTP 8080/8081 no están expuestos públicamente.
+- [ ] Los puertos HTTP 43127/43128 no están expuestos públicamente.
 - [ ] Una subida del tamaño máximo configurado atraviesa el reverse proxy.
 
 ## Cómo se prueba

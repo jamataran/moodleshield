@@ -126,7 +126,7 @@ services:
       - ${INFRA_ROOT}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
       - ${DATA_ROOT}/media:/srv/media:ro
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8081}:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-43128}:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
       interval: 30s

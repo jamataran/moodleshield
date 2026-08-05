@@ -2,7 +2,7 @@
 
 ```
 INTERNET ──▶ nginx proxy (tu edge, TLS) ──▶ proxy del stack ──▶ contenedores
-              video-test.tudominio.com       127.0.0.1:8081      app · worker · db
+              video-test.tudominio.com       127.0.0.1:43128     app · worker · db
 ```
 
 Réplica de producción donde aterriza **cada push a `main`**: el CI publica
@@ -20,7 +20,7 @@ Diferencias deliberadas respecto a prod:
 
 ## El edge: tu nginx
 
-El stack **no** termina TLS: expone HTTP en `127.0.0.1:8081` (configurable con
+El stack **no** termina TLS: expone HTTP en `127.0.0.1:43128` (configurable con
 `BIND_ADDRESS`/`HTTP_PORT`) y espera un proxy delante. El entorno de test vive
 en un servidor público y por diseño no incluye `cloudflared` ni `tailscale`.
 Requisitos del edge:
@@ -32,7 +32,7 @@ server {
     # ... certificados ...
 
     location / {
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:43128;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;   # imprescindible: la app genera URLs https con esto
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

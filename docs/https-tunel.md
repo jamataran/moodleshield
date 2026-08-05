@@ -26,7 +26,7 @@ profesor. La comprobación final debe hacerse también desde el servidor Moodle.
 ## Test y producción: reverse proxy público
 
 ```text
-INTERNET ──HTTPS──▶ nginx/Nginx Proxy Manager ──HTTP──▶ 127.0.0.1:8080/8081
+INTERNET ──HTTPS──▶ nginx/Nginx Proxy Manager ──HTTP──▶ 127.0.0.1:43127/43128
                          TLS del host                         proxy del stack
 ```
 
@@ -45,7 +45,7 @@ server {
     # ssl_certificate / ...
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:43127;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -56,7 +56,7 @@ server {
 }
 ```
 
-Test usa por defecto el puerto `8081` y producción el `8080`. Ambos se ligan a
+Test usa por defecto el puerto `43128` y producción el `43127`. Ambos se ligan a
 `127.0.0.1`, de forma que el HTTP interno no queda publicado directamente. Si
 el reverse proxy corre en otro contenedor, conéctalo a la red adecuada o usa
 `BIND_ADDRESS=0.0.0.0` restringiendo el puerto con firewall.

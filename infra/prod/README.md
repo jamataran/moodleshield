@@ -2,7 +2,7 @@
 
 ```
 INTERNET ──▶ nginx proxy (tu edge, TLS) ──▶ proxy del stack ──▶ contenedores
-              video.tudominio.com            127.0.0.1:8080      app · worker · db
+              video.tudominio.com            127.0.0.1:43127     app · worker · db
 ```
 
 Aquí sólo llegan **versiones etiquetadas**. Al crear un tag `vX.Y.Z`, el CI
@@ -21,7 +21,7 @@ la versión anterior.
 
 ## El edge: tu nginx
 
-Idéntico a test pero apuntando a `127.0.0.1:8080`. Producción vive en un
+Idéntico a test pero apuntando a `127.0.0.1:43127`. Producción vive en un
 servidor público y por diseño no incluye `cloudflared` ni `tailscale`. Lo
 crítico:
 
