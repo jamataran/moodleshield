@@ -124,8 +124,8 @@ jobs:
           set -euo pipefail
           git fetch origin main
           git checkout -B main origin/main
-          sed -i -E "s|^    image: ghcr.io/.*/app:.*$|    image: ghcr.io/${REPO}/app:${VERSION}|"       infra/prod/compose.yml
-          sed -i -E "s|^    image: ghcr.io/.*/worker:.*$|    image: ghcr.io/${REPO}/worker:${VERSION}|" infra/prod/compose.yml
+          sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
+          sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
           git add infra/prod/compose.yml
           git commit -m "deploy(prod): ${VERSION} [skip ci]"
           git push origin main

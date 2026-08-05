@@ -78,8 +78,8 @@ jobs:
             git fetch origin main
             git checkout -B main origin/main
 
-            sed -i -E "s|^    image: ghcr.io/.*/app:.*$|    image: ghcr.io/${REPO}/app:${VERSION}|"       infra/prod/compose.yml
-            sed -i -E "s|^    image: ghcr.io/.*/worker:.*$|    image: ghcr.io/${REPO}/worker:${VERSION}|" infra/prod/compose.yml
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
 
             if git diff --quiet -- infra/prod/compose.yml; then
               echo "Sin cambios (prod ya estaba en ${VERSION})"; exit 0

@@ -141,8 +141,8 @@ jobs:
             git fetch origin main
             git checkout -B main origin/main
 
-            sed -i -E "s|^    image: ghcr.io/.*/app:.*$|    image: ghcr.io/${REPO}/app:${SHA_TAG}|"       infra/test/compose.yml
-            sed -i -E "s|^    image: ghcr.io/.*/worker:.*$|    image: ghcr.io/${REPO}/worker:${SHA_TAG}|" infra/test/compose.yml
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${SHA_TAG}|"       infra/test/compose.yml
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${SHA_TAG}|" infra/test/compose.yml
 
             if git diff --quiet -- infra/test/compose.yml; then
               echo "Sin cambios (la etiqueta ya era ${SHA_TAG})"; exit 0
