@@ -134,7 +134,6 @@ function renderForm () {
 
 if (document.body.classList.contains('login-page')) {
   showNotice('#notice', data.error, 'error')
-  setValue('username', data.username)
   setValue('_csrf', data.csrf)
 } else if (document.body.dataset.page === 'platforms') {
   renderPlatforms()

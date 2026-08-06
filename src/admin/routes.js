@@ -65,9 +65,12 @@ function headers (_req, res, next) {
 
 adminRouter.use(headers)
 
+// El bootstrap del login lo lee cualquiera sin autenticar: no lleva el usuario.
+// Además de no regalar la mitad de la credencial, evita que un tercero sepa qué
+// nombre repetir para agotar los cinco intentos y dejar fuera al administrador.
 async function renderLogin (res, { error = '' } = {}) {
   res.type('html').send(await renderPage('admin/login.html', {
-    bootstrap: { error, username: config.admin.username, csrf: issueLoginCsrf(res) }
+    bootstrap: { error, csrf: issueLoginCsrf(res) }
   }))
 }
 

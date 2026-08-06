@@ -88,7 +88,13 @@ export async function createApp () {
     })
   )
 
+  // La raíz es lo primero que encuentra quien llega por casualidad al dominio.
+  // Con la consola activa lleva a ella —y por tanto al login— en vez de servir
+  // una ficha que anuncia qué hay detrás. No es ocultación: `/lti/keys` y el
+  // handshake OIDC siguen siendo públicos porque Moodle los pide sin
+  // autenticar. Sólo evita el anuncio gratuito a quien pasaba por ahí.
   app.get('/', async (_req, res) => {
+    if (config.admin.enabled) return res.redirect(303, '/admin/platforms')
     res.type('html').send(await renderPage('landing.html', { PUBLIC_URL: config.publicUrl }))
   })
 
