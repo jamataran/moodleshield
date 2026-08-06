@@ -88,7 +88,7 @@ services:
     networks: [internal]
 
   app:
-    image: ghcr.io/jamataran/moodleshield/app:sha-bf178a9
+    image: ghcr.io/jamataran/moodleshield/app:sha-1db4a89
     restart: unless-stopped
     init: true
     depends_on:
@@ -109,7 +109,7 @@ services:
     networks: [internal]
 
   worker:
-    image: ghcr.io/jamataran/moodleshield/worker:sha-bf178a9
+    image: ghcr.io/jamataran/moodleshield/worker:sha-1db4a89
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
