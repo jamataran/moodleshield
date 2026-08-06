@@ -24,6 +24,7 @@
   "dependencies": {
     "busboy": "^1.6.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.6.2",
     "hls.js": "^1.6.15",
     "jose": "^6.2.8",
     "pdfjs-dist": "^5.7.284",

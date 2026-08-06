@@ -11,7 +11,15 @@ llamaremos `https://video.tudominio.com`.
 
 ## 1. Reunir los datos
 
-Todo lo que Moodle va a pedir está en un solo sitio:
+Todo lo que Moodle va a pedir aparece, listo para copiar, en la consola:
+
+1. Abre `https://video.tudominio.com/admin` como sitio de primer nivel.
+2. Inicia sesión con `ADMIN_USERNAME` y la contraseña cuyo hash está en
+   `ADMIN_PASSWORD_HASH`.
+3. Pulsa **Nueva instancia**. En la columna derecha están las URLs de la
+   herramienta que se copian en Moodle.
+
+La misma configuración pública sigue disponible en JSON para automatización:
 
 ```bash
 curl -s https://video.tudominio.com/lti/config | jq
@@ -147,6 +155,23 @@ Los tres hacen falta en el siguiente paso.
 
 ## 5. Registrar el Moodle en MoodleShield
 
+Vuelve a la consola de MoodleShield, completa **Nueva instancia** con los datos
+del paso 4 y guarda. Los endpoints estándar son:
+
+| Campo | Valor habitual |
+|---|---|
+| Issuer | `https://aula.tudominio.com` |
+| URL de autorización | `https://aula.tudominio.com/mod/lti/auth.php` |
+| URL de token | `https://aula.tudominio.com/mod/lti/token.php` |
+| URL de JWKS | `https://aula.tudominio.com/mod/lti/certs.php` |
+
+Pulsa **Probar conexión**. Debe mostrar un JWKS válido antes de hacer el primer
+launch. Una diferencia de host se muestra como advertencia y exige confirmación
+explícita; los destinos privados se bloquean salvo que el despliegue habilite
+`ADMIN_ALLOW_PRIVATE_LTI_HOSTS=true`.
+
+### Alternativa por terminal
+
 Desde el servidor o desde tu portátil con acceso a la base de datos:
 
 ```bash
@@ -178,7 +203,7 @@ instalación los tiene en otra ruta.
 > se puede es poner uno equivocado — todos los launches darían
 > `unknown_deployment_id`.
 
-### Alternativa: por API
+### Alternativa por API
 
 Si prefieres automatizarlo, con `LTI_ADMIN_TOKEN` configurado:
 
@@ -230,7 +255,9 @@ la secuencia de `/A/` y `/B/` tiene que ser diferente entre ambos.
 | **No aparece «Herramienta externa» ni MoodleShield al añadir actividad** | *Uso de la configuración de la herramienta* en «no mostrar» | Ponlo en «Mostrar en el selector de actividades…» (ver paso 2) |
 | Sigue sin aparecer tras cambiarlo | El módulo LTI está deshabilitado en el sitio | *Extensiones → Módulos de actividad → Gestionar actividades*: el ojo de «Herramienta externa» debe estar abierto |
 | **El profesor sube el vídeo, y el alumno ve `no_video`** | La actividad se creó sin *Seleccionar contenido*: subir el vídeo al catálogo **no** lo asocia a la actividad | Editar la actividad → *Seleccionar contenido* → *Insertar*. Si no está el botón, falta *Supports Deep Linking* (paso 3) |
-| `Plataforma no registrada: https://…` | Falta el paso 5 | `register-platform.mjs` |
+| `Plataforma no registrada: https://…` | Falta el paso 5 | Darla de alta en `/admin` |
+| `ambiguous_platform` | Hay varios client ID activos para el issuer y Moodle omitió `client_id` | Revisar la configuración de la herramienta en Moodle |
+| `platform_disabled` | La instancia está deshabilitada en la consola | Reactivarla en `/admin` si procede |
 | `invalid_state` | `redirect_uri` mal en Moodle | Debe ser `<PUBLIC_URL>/lti/launch` exacto |
 | `unknown_deployment_id` | El deployment_id registrado no coincide | Corregirlo o borrar la plataforma y volver a registrarla sin él |
 | Al pulsar *Insertar*: `fix_jwks_alg(): Argument #1 ($jwks) must be of type array, null given` | Moodle no consiguió descargar **nuestro** keyset: campo *Keyset URL* vacío, con una URL antigua, o su servidor sin salida a internet | Ver *Cuando Moodle no puede descargar el keyset* |

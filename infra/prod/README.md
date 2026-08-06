@@ -41,6 +41,9 @@ Igual que test cambiando el entorno:
    sudo /docker-apps/moodleshield-pro/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield-pro prod
    ```
 2. Secretos: `./scripts/generate-secrets.sh` → variables del stack en Portainer.
+   Añade `ADMIN_USERNAME` y genera `ADMIN_PASSWORD_HASH` de forma interactiva
+   con `node scripts/hash-admin-password.mjs`. La salida de
+   `generate-secrets.sh` ya incluye `ADMIN_SESSION_SECRET`.
 
    > ⚠️ **`WATERMARK_SECRET` es permanente.** Guárdalo en el gestor de
    > contraseñas ANTES del primer despliegue: si se pierde o se cambia, todas

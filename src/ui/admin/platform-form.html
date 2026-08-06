@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Plataforma Moodle · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="admin" data-page="platform-form">
+  <header class="bar admin-bar"><div><p class="eyebrow">MoodleShield</p><h1 id="pageTitle">Plataforma Moodle</h1></div><a class="btn" href="/admin/platforms">Volver al listado</a></header>
+  <main class="admin-main form-layout">
+    <section>
+      <div id="notice" class="notice error" hidden></div>
+      <div id="testResult" class="notice" hidden></div>
+      <div id="conflict" class="notice error" hidden></div>
+      <form id="platformForm" class="panel field-grid" method="post">
+        <input type="hidden" name="_csrf">
+        <label class="wide">Nombre descriptivo<input name="name" type="text" required maxlength="200"></label>
+        <label class="wide">Issuer<input name="issuer" type="url" inputmode="url" placeholder="https://aula.example.org" required></label>
+        <label>Client ID<input name="clientId" type="text" required></label>
+        <label>Estado<input id="enabled" type="text" disabled></label>
+        <label class="wide">Deployment ID <span class="muted">(uno por línea)</span><textarea name="deploymentIds" rows="4"></textarea></label>
+        <label class="wide">URL de autorización<input name="authLoginUrl" type="url" required></label>
+        <label class="wide">URL de token<input name="authTokenUrl" type="url" required></label>
+        <label class="wide">URL de JWKS<input name="jwksUrl" type="url" required></label>
+        <label class="wide confirm"><input type="checkbox" name="confirmWarnings" value="yes"> Confirmo que he revisado cualquier diferencia de host entre issuer y endpoints.</label>
+        <div class="form-actions wide"><button class="primary" type="submit">Guardar cambios</button><button id="testButton" type="submit" hidden>Probar conexión</button></div>
+      </form>
+      <section id="usagePanel" class="panel" hidden><h2>Dependencias</h2><p id="usage"></p>
+        <form id="toggleForm" method="post"><input type="hidden" name="_csrf"><input type="hidden" name="confirm" value="yes"><button id="toggleButton" class="danger" type="submit"></button></form>
+      </section>
+    </section>
+    <aside class="panel"><h2>Datos para copiar en Moodle</h2><p class="muted">Estos valores son de sólo lectura y pertenecen a MoodleShield.</p><dl id="toolConfig"></dl><p id="privateWarning" class="notice warning" hidden>Los destinos privados están permitidos en este despliegue. Verifica con especial cuidado cada URL.</p></aside>
+  </main>
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/assets/admin.js" defer></script>
+</body>
+</html>

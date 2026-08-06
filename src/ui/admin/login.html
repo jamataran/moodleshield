@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Administración · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="admin login-page">
+  <main class="login-card panel">
+    <p class="eyebrow">MoodleShield</p>
+    <h1>Administración</h1>
+    <p class="muted">Accede para gestionar las instancias Moodle.</p>
+    <div id="notice" class="notice error" hidden></div>
+    <form method="post" action="/admin/login" autocomplete="on">
+      <input type="hidden" name="_csrf">
+      <label>Usuario<input name="username" autocomplete="username" required autofocus></label>
+      <label>Contraseña<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">Entrar</button>
+    </form>
+  </main>
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/assets/admin.js" defer></script>
+</body>
+</html>

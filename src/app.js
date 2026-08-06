@@ -12,26 +12,11 @@ import { foldersRouter } from './routes/folders.js'
 import { materialsRouter } from './routes/materials.js'
 import { hlsRouter, mediaRouter } from './routes/hls.js'
 import { healthRouter } from './routes/health.js'
-import { listPlatforms } from './lti/platform.js'
 import { renderPage, uiDir } from './ui/render.js'
+import { adminRouter } from './admin/routes.js'
+import { getFrameAncestors, refreshFrameAncestors } from './security/frame-ancestors.js'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-
-/**
- * Orígenes autorizados a embebernos en un iframe. Se calculan a partir de las
- * plataformas registradas: mientras haya al menos una, `frame-ancestors` deja
- * de ser un comodín. Se refresca en segundo plano cada minuto.
- */
-let frameAncestors = "'self'"
-async function refreshFrameAncestors () {
-  try {
-    const platforms = await listPlatforms()
-    const origins = [...new Set(platforms.map((p) => new URL(p.issuer).origin))]
-    frameAncestors = origins.length ? `'self' ${origins.join(' ')}` : "'self' https:"
-  } catch (err) {
-    logger.warn({ err }, 'No se pudo refrescar frame-ancestors; se mantiene el valor anterior')
-  }
-}
 
 export async function createApp () {
   const app = express()
@@ -74,7 +59,7 @@ export async function createApp () {
       // ejecutaría el JavaScript del propio documento.
       "object-src 'none'",
       "base-uri 'none'",
-      `frame-ancestors ${frameAncestors}`
+      `frame-ancestors ${getFrameAncestors()}`
     ].join('; '))
     res.set('X-Content-Type-Options', 'nosniff')
     res.set('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -89,6 +74,7 @@ export async function createApp () {
   app.use(express.json({ limit: config.http.bodyLimit }))
 
   app.use(healthRouter)
+  app.use('/admin', adminRouter)
   app.use('/lti', ltiRouter)
   app.use('/materials', materialsRouter)
   app.use('/folders', foldersRouter)
@@ -119,7 +105,13 @@ export async function createApp () {
     express.static(path.join(rootDir, 'node_modules/hls.js/dist'), vendorOptions)
   )
 
+  // La raíz es lo primero que encuentra quien llega por casualidad al dominio.
+  // Con la consola activa lleva a ella —y por tanto al login— en vez de servir
+  // una ficha que anuncia qué hay detrás. No es ocultación: `/lti/keys` y el
+  // handshake OIDC siguen siendo públicos porque Moodle los pide sin
+  // autenticar. Sólo evita el anuncio gratuito a quien pasaba por ahí.
   app.get('/', async (_req, res) => {
+    if (config.admin.enabled) return res.redirect(303, '/admin/platforms')
     res.type('html').send(await renderPage('landing.html', { PUBLIC_URL: config.publicUrl }))
   })
 
