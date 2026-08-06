@@ -21,6 +21,7 @@ import {
   heartbeatJob,
   reapExpiredJobs
 } from '../../src/queue/postgres.js'
+import { getActiveRevision } from '../../src/services/revisions.js'
 
 const PLATFORM_A = randomUUID()
 const PLATFORM_B = randomUUID()
@@ -57,7 +58,7 @@ async function createQueued ({
 
 test.before(async () => {
   await runMigrations()
-  await query('TRUNCATE view_event, transcode_job, video, lti_platform CASCADE')
+  await query('TRUNCATE view_event, transcode_job, video, catalog_folder, lti_platform CASCADE')
   await seedPlatform(PLATFORM_A, 'a')
   await seedPlatform(PLATFORM_B, 'b')
 })
@@ -100,7 +101,7 @@ test('un lease expirado se recupera y el worker antiguo queda cercado', async ()
     LostLeaseError
   )
   await assert.rejects(
-    completeJob({ jobId: first.id, videoId, workerId: oldWorker, meta: {} }),
+    completeJob({ jobId: first.id, materialId: videoId, revisionId: first.revision_id, workerId: oldWorker, meta: {} }),
     LostLeaseError
   )
 })
@@ -141,9 +142,19 @@ test('catálogo y detalle aíslan plataforma y propietario', async () => {
   assert.equal((await getVideoForPlatform(own, PLATFORM_A)).id, own)
   assert.equal(await getVideoForPlatform(own, PLATFORM_B), null)
 
-  await query("UPDATE video SET status = 'ready' WHERE id = ANY($1::uuid[])", [
-    [own, otherOwner, otherPlatform]
-  ])
+  // El Deep Linking exige revisión activa, no sólo `status='ready'`: publicar
+  // es lo que hace insertable un material.
+  await query(
+    `UPDATE video v SET status = 'ready', active_revision_id = r.id
+       FROM video_revision r
+      WHERE r.video_id = v.id AND v.id = ANY($1::uuid[])`,
+    [[own, otherOwner, otherPlatform]]
+  )
+  await query(
+    `UPDATE video_revision SET status = 'ready'
+      WHERE video_id = ANY($1::uuid[])`,
+    [[own, otherOwner, otherPlatform]]
+  )
   const deepLinkRows = await listReadyVideosForDeepLink({
     ids: [own, otherOwner, otherPlatform],
     platformId: PLATFORM_A,
@@ -187,16 +198,79 @@ test('una cancelación concurrente impide confirmar ready', async () => {
   })
   assert.equal(cancellation.status, 'cancelling')
   await assert.rejects(
-    completeJob({ jobId: job.id, videoId, workerId, meta: {} }),
+    completeJob({ jobId: job.id, materialId: videoId, revisionId: job.revision_id, workerId, meta: {} }),
     CancellationRequestedError
   )
   const outcome = await failJob({
     jobId: job.id,
-    videoId,
+    materialId: videoId,
+    revisionId: job.revision_id,
     workerId,
     error: new Error('cancelado'),
     maxAttempts: 3
   })
   assert.equal(outcome.status, 'cancelled')
   assert.equal((await one('SELECT status FROM video WHERE id = $1', [videoId])).status, 'cancelled')
+})
+
+test('el trabajo procesa una revisión concreta, nunca el material lógico', async () => {
+  const videoId = await createQueued()
+  const job = await claimJob({ workerId: randomUUID(), leaseSeconds: 90 })
+  assert.ok(job.revision_id, 'todo trabajo tiene que apuntar a una revisión')
+  const revision = await one(
+    'SELECT video_id, revision_number, status FROM video_revision WHERE id = $1',
+    [job.revision_id]
+  )
+  assert.equal(revision.video_id, videoId)
+  assert.equal(revision.revision_number, 1)
+  assert.equal(revision.status, 'processing')
+})
+
+test('confirmar el trabajo publica la revisión en la misma transacción', async () => {
+  const videoId = await createQueued()
+  const workerId = randomUUID()
+  const job = await claimJob({ workerId, leaseSeconds: 90 })
+
+  const outcome = await completeJob({
+    jobId: job.id,
+    materialId: videoId,
+    revisionId: job.revision_id,
+    workerId,
+    meta: { segmentCount: 7, durationSeconds: 30.5, segmentSeconds: 4, width: 1920, height: 1080 }
+  })
+  assert.equal(outcome.status, 'activated')
+
+  const video = await one(
+    'SELECT status, active_revision_id, segment_count, width FROM video WHERE id = $1',
+    [videoId]
+  )
+  assert.equal(video.status, 'ready')
+  assert.equal(video.active_revision_id, job.revision_id)
+  // La proyección física sobre `video` sale de la revisión, no del worker.
+  assert.equal(video.segment_count, 7)
+  assert.equal(video.width, 1920)
+
+  const active = await getActiveRevision({ kind: 'video', materialId: videoId })
+  assert.equal(active.id, job.revision_id)
+  assert.ok(active.ready_at)
+  assert.ok(active.activated_at)
+})
+
+test('un fallo permanente no gasta los reintentos restantes', async () => {
+  const videoId = await createQueued()
+  const workerId = randomUUID()
+  const job = await claimJob({ workerId, leaseSeconds: 90 })
+
+  // Un PDF corrupto o un ZIP renombrado no mejoran reintentándolos tres veces.
+  const outcome = await failJob({
+    jobId: job.id,
+    materialId: videoId,
+    revisionId: job.revision_id,
+    workerId,
+    error: new Error('fichero corrupto'),
+    maxAttempts: 3,
+    permanent: true
+  })
+  assert.equal(outcome.status, 'failed')
+  assert.equal((await one('SELECT status FROM video WHERE id = $1', [videoId])).status, 'failed')
 })

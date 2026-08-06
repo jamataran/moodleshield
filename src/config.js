@@ -108,6 +108,42 @@ export const config = {
     linkTtlSeconds: integer('MEDIA_LINK_TTL_SECONDS', 4 * 60 * 60)
   },
 
+  pdf: {
+    /** Límite propio: un PDF de 100 MB ya es enorme; un vídeo de 100 MB, corto. */
+    maxUploadBytes: integer('MAX_PDF_BYTES', 100 * 1024 * 1024),
+    maxPages: integer('MAX_PDF_PAGES', 500),
+    /** Corta qpdf/Ghostscript/pdftoppm si un fichero hostil los deja colgados. */
+    processTimeoutSeconds: integer('PDF_PROCESS_TIMEOUT_SECONDS', 180),
+    qpdfPath: optional('QPDF_PATH', 'qpdf'),
+    pdfinfoPath: optional('PDFINFO_PATH', 'pdfinfo'),
+    ghostscriptPath: optional('GHOSTSCRIPT_PATH', 'gs'),
+    pdftoppmPath: optional('PDFTOPPM_PATH', 'pdftoppm')
+  },
+
+  catalog: {
+    /** Techo por profesor: la barra lateral deja de ser navegable mucho antes. */
+    maxFoldersPerOwner: integer('MAX_FOLDERS_PER_OWNER', 100),
+    /** Materiales por colección. El `position` de la tabla es 0..49. */
+    maxCollectionItems: integer('MAX_COLLECTION_ITEMS', 50),
+    /** Página por defecto y techo duro del listado del catálogo. */
+    defaultPageSize: integer('CATALOG_PAGE_SIZE', 200),
+    maxPageSize: integer('CATALOG_MAX_PAGE_SIZE', 500)
+  },
+
+  revisions: {
+    /**
+     * 'auto'   → la revisión se publica en cuanto queda lista (por defecto).
+     * 'manual' → queda esperando a que el profesor pulse «Publicar revisión».
+     */
+    activation: optional('MATERIAL_REVISION_ACTIVATION', 'auto'),
+    retentionDays: integer('MATERIAL_REVISION_RETENTION_DAYS', 30),
+    /** Revisiones listas que siempre se conservan, aunque venza la retención. */
+    keepMin: integer('MATERIAL_REVISION_KEEP_MIN', 2),
+    archiveRetentionDays: integer('MATERIAL_ARCHIVE_RETENTION_DAYS', 90),
+    /** Cada cuánto busca el worker revisiones retiradas que ya puede purgar. */
+    purgeIntervalMs: integer('MATERIAL_PURGE_INTERVAL_MS', 60 * 60 * 1000)
+  },
+
   transcode: {
     /** Duración objetivo de cada segmento HLS, en segundos. */
     segmentSeconds: integer('SEGMENT_SECONDS', 4),
@@ -173,6 +209,15 @@ export function assertConfigValid () {
   }
   if (config.transcode.heartbeatMs >= config.transcode.leaseSeconds * 1000) {
     errors.push('TRANSCODE_HEARTBEAT_MS debe ser menor que TRANSCODE_LEASE_SECONDS')
+  }
+  if (!['auto', 'manual'].includes(config.revisions.activation)) {
+    errors.push("MATERIAL_REVISION_ACTIVATION debe ser 'auto' o 'manual'")
+  }
+  if (config.revisions.keepMin < 1) {
+    errors.push('MATERIAL_REVISION_KEEP_MIN debe ser al menos 1: purgar la última revisión lista dejaría el material sin contenido')
+  }
+  if (config.catalog.maxCollectionItems < 1 || config.catalog.maxCollectionItems > 50) {
+    errors.push('MAX_COLLECTION_ITEMS debe estar entre 1 y 50 (lo limita el CHECK de content_collection_item.position)')
   }
   if (errors.length > 0) {
     const detail = errors.map((e) => `  - ${e}`).join('\n')

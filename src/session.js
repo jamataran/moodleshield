@@ -61,7 +61,15 @@ export function verifyToken (token, { secret }) {
   return payload
 }
 
-/** Token de sesión emitido tras un launch LTI válido. */
+/**
+ * Token de sesión emitido tras un launch LTI válido.
+ *
+ * `resource` es el alcance: qué puede pedir esta sesión y nada más. Para un
+ * vídeo o un PDF directos incluye además la revisión resuelta durante el
+ * launch, de modo que una activación concurrente no cambie el contenido bajo un
+ * player ya abierto. Una colección no fija revisiones: se resuelven al abrir
+ * cada elemento y la playlist las congela para esa reproducción.
+ */
 export function issueSession (context) {
   return issueToken(
     {
@@ -71,11 +79,13 @@ export function issueSession (context) {
       name: context.name,
       idn: context.identity ?? null,
       ctx: context.contextId,
+      rl: context.resourceLinkId ?? null,
       ins: context.isInstructor ? 1 : 0,
       dl: context.deepLinkingSettings ? 1 : 0,
       mode: context.mode ?? 'launch',
       rk: context.resource?.kind ?? null,
-      rid: context.resource?.id ?? null
+      rid: context.resource?.id ?? null,
+      rrv: context.resource?.revisionId ?? null
     },
     { secret: config.secrets.session, ttlSeconds: config.session.ttlSeconds }
   )
@@ -85,23 +95,33 @@ export function verifySession (token) {
   const payload = verifyToken(token, { secret: config.secrets.session })
   if (!payload || payload.typ !== 'session') return null
   return {
+    // El `jti` desduplica el registro de acceso: recargar el player no inventa
+    // visionados, y abrir dos materiales de una colección registra dos.
+    jti: payload.jti ?? null,
     sub: payload.sub,
     platformId: payload.pid,
     name: payload.name,
     identity: payload.idn,
     contextId: payload.ctx,
+    resourceLinkId: payload.rl ?? null,
     isInstructor: payload.ins === 1,
     canDeepLink: payload.dl === 1,
     mode: payload.mode ?? 'launch',
-    resource: payload.rk && payload.rid ? { kind: payload.rk, id: payload.rid } : null,
+    resource: payload.rk && payload.rid
+      ? { kind: payload.rk, id: payload.rid, revisionId: payload.rrv ?? null }
+      : null,
     expiresAt: payload.exp
   }
 }
 
-/** Token de un solo propósito: descargar la clave AES de un vídeo concreto. */
-export function issueKeyToken ({ videoId, sub, platformId }) {
+/**
+ * Token de un solo propósito: descargar la clave AES de una revisión concreta.
+ * La clave es por revisión, así que el token la lleva: sin ella, una revisión
+ * retirada y otra activa compartirían token y devolverían la clave equivocada.
+ */
+export function issueKeyToken ({ videoId, revisionId = null, sub, platformId }) {
   return issueToken(
-    { typ: 'key', v: videoId, sub, pid: platformId },
+    { typ: 'key', v: videoId, rv: revisionId, sub, pid: platformId },
     { secret: config.secrets.mediaKey, ttlSeconds: config.media.linkTtlSeconds }
   )
 }

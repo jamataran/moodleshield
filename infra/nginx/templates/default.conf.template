@@ -30,9 +30,14 @@ server {
     # apunta a nadie. Al exigir firma por URL, cada alumno sólo puede descargar
     # los segmentos que aparecen en su propia playlist: exactamente su patrón.
     # ------------------------------------------------------------------
+    # Desde T21 los artefactos viven por revisión:
+    #     /media/videos/<videoId>/<revisionId>/<A|B>/seg_NNNN.ts
+    # Un directorio de revisión publicado es inmutable, así que una activación
+    # no puede cambiar los bytes que hay detrás de una URL ya firmada.
+    #
     # La expresión va entre comillas porque contiene llaves: nginx exige
     # entrecomillar cualquier regex con `{` o `}`.
-    location ~ "^/media/(?<vid>[0-9a-fA-F-]{36})/(?<variant>[AB])/(?<seg>seg_\d{4,6}\.ts)$" {
+    location ~ "^/media/videos/(?<vid>[0-9a-fA-F-]{36})/(?<rev>[0-9a-fA-F-]{36})/(?<variant>[AB])/(?<seg>seg_\d{4,6}\.ts)$" {
         secure_link $arg_md5,$arg_expires;
         # Las llaves de ${uri} no son decorativas: sin ellas nginx leería
         # "$uri" seguido del secreto como un único nombre de variable. envsubst
@@ -41,6 +46,27 @@ server {
 
         if ($secure_link = "")  { return 403; }  # firma ausente o incorrecta
         if ($secure_link = "0") { return 410; }  # firma válida pero caducada
+
+        alias /srv/media/videos/$vid/$rev/$variant/$seg;
+
+        default_type video/mp2t;
+        add_header Cache-Control "private, max-age=3600" always;
+        add_header X-Content-Type-Options "nosniff" always;
+
+        sendfile on;
+        tcp_nopush on;
+    }
+
+    # Árbol anterior a T21. El worker traslada los artefactos al arrancar, pero
+    # esta location tiene que seguir aquí mientras alguna revisión declare
+    # `storage_layout = 'legacy'`. Se puede retirar cuando esa consulta no
+    # devuelva ninguna fila en ningún entorno.
+    location ~ "^/media/(?<vid>[0-9a-fA-F-]{36})/(?<variant>[AB])/(?<seg>seg_\d{4,6}\.ts)$" {
+        secure_link $arg_md5,$arg_expires;
+        secure_link_md5 "$secure_link_expires${uri}${MEDIA_LINK_SECRET}";
+
+        if ($secure_link = "")  { return 403; }
+        if ($secure_link = "0") { return 410; }
 
         alias /srv/media/$vid/$variant/$seg;
 
@@ -53,14 +79,16 @@ server {
     }
 
     # Todo lo demás bajo /media/ (index.m3u8 de variante, key.bin, meta.json,
-    # poster.jpg) no se sirve nunca de forma estática.
+    # poster.jpg y el árbol entero de /media/documents/) no se sirve nunca de
+    # forma estática: los PDF pasan siempre por la autorización de la app.
     location /media/ {
         return 403;
     }
 
-    # Subida de vídeos: sin buffering, para que un MP4 de 3 GB no se escriba
-    # antes en el disco de nginx que en el del backend.
-    location = /videos {
+    # Subidas: sin buffering, para que un MP4 de 3 GB no se escriba antes en el
+    # disco de nginx que en el del backend. Cubre también las sustituciones
+    # (POST /videos/<id>/revisions) y los PDF.
+    location ~ "^/(videos|documents)(/[0-9a-fA-F-]{36}/revisions)?$" {
         proxy_pass http://moodleshield_app;
         proxy_request_buffering off;
         proxy_http_version 1.1;

@@ -62,8 +62,8 @@ Total en reposo, unos 2,7 GB de límite; el consumo real en reposo ronda los
 ## Pasos
 
 Detalle completo en el README del entorno:
-[`infra/prod/README.md`](../../infra/prod/README.md) /
-[`infra/test/README.md`](../../infra/test/README.md).
+[`infra/prod/README.md`](../../../infra/prod/README.md) /
+[`infra/test/README.md`](../../../infra/test/README.md).
 
 1. **Preparar el host** (una vez, por SSH):
    ```bash

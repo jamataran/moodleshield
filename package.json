@@ -17,7 +17,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node --test --test-reporter=spec \"test/**/*.test.js\"",
-    "test:integration": "node --test --test-reporter=spec \"test/integration/*.integration.js\"",
+    "test:integration": "node --test --test-concurrency=1 --test-reporter=spec \"test/integration/*.integration.js\"",
     "test:coverage": "node --test --experimental-test-coverage \"test/**/*.test.js\"",
     "trace": "node tools/trace.mjs"
   },
@@ -26,6 +26,7 @@
     "express": "^5.1.0",
     "hls.js": "^1.6.15",
     "jose": "^6.2.8",
+    "pdfjs-dist": "^5.7.284",
     "pg": "^8.16.3",
     "pino": "^9.13.1",
     "pino-http": "^10.5.0"

@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Catálogo · MoodleShield</title>
+  <title>Biblioteca · MoodleShield</title>
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
   <header class="bar">
     <div>
-      <h1>Catálogo de vídeos</h1>
+      <h1>Biblioteca</h1>
       <p class="muted" id="subtitle"></p>
     </div>
     <button id="refresh">Actualizar</button>
@@ -18,36 +18,175 @@
   <div id="notice" hidden></div>
 
   <div id="manage-hint" class="notice" hidden>
-    <strong>Esta actividad todavía no tiene ningún vídeo asignado.</strong>
+    <strong>Esta actividad todavía no tiene ningún material asignado.</strong>
     Aquí puedes subirlo y ver cómo se procesa, pero el vínculo con la actividad
-    lo crea Moodle: cuando el vídeo esté <em>listo</em>, vuelve al formulario de
-    la actividad y pulsa <strong>Seleccionar contenido</strong> para elegirlo.
+    lo crea Moodle: cuando el material esté <em>listo</em>, vuelve al formulario
+    de la actividad y pulsa <strong>Seleccionar contenido</strong> para elegirlo.
     Hasta entonces los alumnos verán un error al abrirla.
     <br>
     <span class="muted">Si no ves ese botón, al dar de alta la herramienta
     falta marcar <em>Supports Deep Linking</em>.</span>
   </div>
 
-  <section class="panel">
-    <h2>Subir un vídeo nuevo</h2>
-    <form id="upload">
-      <p><input type="text" name="title" placeholder="Título (si lo dejas vacío se usa el nombre del fichero)"></p>
-      <p><input type="file" name="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm" required></p>
+  <div class="catalog-layout">
+    <nav class="folders panel" aria-label="Carpetas">
+      <div class="folders-head">
+        <h2>Carpetas</h2>
+        <button id="new-folder" type="button">Nueva</button>
+      </div>
+      <label class="only-mobile" for="folder-select">Carpeta</label>
+      <select id="folder-select" class="only-mobile"></select>
+      <ul id="folder-list" class="only-desktop"></ul>
+    </nav>
+
+    <main class="catalog-main">
+      <div class="toolbar">
+        <div class="tabs" role="tablist" aria-label="Tipo de contenido">
+          <button id="tab-materials" type="button" role="tab" aria-selected="true">Materiales</button>
+          <button id="tab-collections" type="button" role="tab" aria-selected="false">Colecciones</button>
+        </div>
+        <input type="search" id="search" placeholder="Buscar por título" aria-label="Buscar por título">
+        <button id="new-collection" type="button">Nueva colección</button>
+      </div>
+
+      <section class="panel" id="upload-panel">
+        <h2>Subir material</h2>
+        <form id="upload">
+          <p><input type="text" name="title" placeholder="Título (si lo dejas vacío se usa el nombre del fichero)"></p>
+          <p>
+            <input type="file" name="file" required
+                   accept="video/mp4,video/quicktime,video/x-matroska,video/webm,application/pdf,.mp4,.mov,.mkv,.m4v,.webm,.avi,.pdf">
+          </p>
+          <p class="muted" id="upload-target"></p>
+          <p>
+            <button type="submit" class="primary" id="upload-btn">Subir y procesar</button>
+            <span class="muted" id="upload-status"></span>
+          </p>
+          <p class="muted">
+            Los PDF se normalizan al subirlos: se descartan formularios, adjuntos
+            y acciones automáticas. Si el documento lleva firma digital, la
+            perderá. Esta protección disuade y controla el acceso, pero
+            <strong>no impide</strong> que quien puede leerlo recupere el fichero.
+          </p>
+        </form>
+      </section>
+
+      <section class="panel" id="tray" hidden>
+        <h2 id="tray-heading">Nueva colección</h2>
+        <p class="muted">
+          Los materiales de esta lista se insertan como <strong>una sola
+          actividad</strong> por la que el alumno navega. Añade material con
+          «Añadir a colección» desde la pestaña <strong>Materiales</strong>.
+        </p>
+        <ol id="tray-list"></ol>
+        <p class="muted" id="tray-empty" hidden>
+          Todavía no has añadido ningún material.
+        </p>
+        <p>
+          <label for="tray-title">Título</label>
+          <input type="text" id="tray-title" placeholder="Título de la colección" maxlength="300">
+        </p>
+        <p>
+          <label for="tray-description">Descripción</label>
+          <textarea id="tray-description" rows="2" maxlength="2000"></textarea>
+        </p>
+        <p>
+          <label for="tray-folder">Carpeta</label>
+          <select id="tray-folder"></select>
+        </p>
+        <p>
+          <button type="button" class="primary" id="tray-save">Guardar colección</button>
+          <button type="button" id="tray-save-insert" hidden>Guardar e insertar</button>
+          <button type="button" id="tray-cancel">Cancelar</button>
+        </p>
+      </section>
+
+      <section id="catalog" class="grid" aria-live="polite"></section>
+      <p class="muted" id="empty" hidden></p>
+      <p><button id="load-more" type="button" hidden>Cargar más</button></p>
+    </main>
+  </div>
+
+  <!--
+    Chrome y Edge retiraron alert/confirm/prompt de los iframes cross-origin, y
+    MoodleShield se sirve siempre desde otro origen dentro de Moodle: ahí
+    `prompt()` devuelve null y `confirm()` devuelve false sin avisar de nada.
+    Estos dos diálogos los sustituyen.
+  -->
+  <dialog id="prompt-dialog">
+    <form method="dialog" id="prompt-form">
+      <h2 id="prompt-heading"></h2>
       <p>
-        <button type="submit" class="primary" id="upload-btn">Subir y procesar</button>
-        <span class="muted" id="upload-status"></span>
+        <label for="prompt-input" id="prompt-label"></label>
+        <input type="text" id="prompt-input" maxlength="100" required>
+      </p>
+      <p>
+        <button value="ok" class="primary" id="prompt-ok">Aceptar</button>
+        <!--
+          formnovalidate no es opcional: un form method="dialog" ejecuta la
+          validación al enviarse, así que sin esto «Cancelar» con el campo vacío
+          —justo el caso de «Nueva carpeta»— dispara el globo de «rellena este
+          campo» y deja al profesor encerrado en el diálogo.
+        -->
+        <button value="cancel" formnovalidate>Cancelar</button>
       </p>
     </form>
-  </section>
+  </dialog>
 
-  <section id="catalog" class="grid"></section>
+  <dialog id="confirm-dialog">
+    <form method="dialog" id="confirm-form">
+      <h2 id="confirm-heading"></h2>
+      <p id="confirm-message"></p>
+      <p>
+        <button value="ok" class="primary" id="confirm-ok">Continuar</button>
+        <button value="cancel" formnovalidate>Cancelar</button>
+      </p>
+    </form>
+  </dialog>
+
+  <dialog id="edit-dialog">
+    <form method="dialog" id="edit-form">
+      <h2 id="edit-heading">Editar material</h2>
+      <p><label for="edit-title">Título</label>
+         <input type="text" id="edit-title" maxlength="300" required></p>
+      <p><label for="edit-description">Descripción</label>
+         <textarea id="edit-description" rows="3" maxlength="2000"></textarea></p>
+      <p><label for="edit-folder">Mover a</label>
+         <select id="edit-folder"></select></p>
+      <p>
+        <button value="save" class="primary">Guardar</button>
+        <button value="cancel" formnovalidate>Cancelar</button>
+      </p>
+    </form>
+  </dialog>
+
+  <dialog id="revisions-dialog">
+    <div>
+      <h2 id="revisions-heading">Versiones</h2>
+      <p class="muted">
+        Sustituir el fichero <strong>no cambia</strong> el identificador que usa
+        Moodle: las actividades ya creadas siguen funcionando y muestran la
+        versión publicada.
+      </p>
+      <form id="revision-upload">
+        <p><input type="file" id="revision-file" required></p>
+        <p>
+          <button type="submit" class="primary">Subir nueva versión</button>
+          <span class="muted" id="revision-status"></span>
+        </p>
+      </form>
+      <ul id="revision-list"></ul>
+      <p><button type="button" id="revisions-close">Cerrar</button></p>
+    </div>
+  </dialog>
 
   <form id="deeplink-form" method="post" action="/lti/deeplink/response" hidden>
     <input type="hidden" name="deepLinkToken" id="dl-token">
+    <input type="hidden" name="resourceKind" id="dl-kind" value="video">
     <div id="dl-selection"></div>
   </form>
 
   <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
-  <script src="/assets/catalog.js"></script>
+  <script type="module" src="/assets/catalog.js"></script>
 </body>
 </html>

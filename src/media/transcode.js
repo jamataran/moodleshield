@@ -1,11 +1,15 @@
-import { spawn } from 'node:child_process'
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import config from '../config.js'
 import logger from '../logger.js'
-import { mediaFingerprint, videoDir } from './storage.js'
+import { mediaFingerprint } from './storage.js'
+import { runProcess } from './run.js'
 import { parseVariantPlaylist, assertVariantsAligned } from './playlist.js'
+
+// Se reexporta porque el resto del código de vídeo (y sus pruebas) lo conocen
+// aquí desde antes de que la cadena de PDF lo compartiera.
+export { runProcess }
 
 /**
  * Geometría de la marca A/B, en fracciones del tamaño del fotograma.
@@ -30,53 +34,6 @@ export function markFilter (variant, alpha = config.transcode.markAlpha) {
   const y = `ih-ih*${BH}-ih*${MY}`
   const x = variant === 'A' ? `iw-iw*${BW}-iw*${MX}` : `iw*${MX}`
   return `drawbox=x=${x}:y=${y}:w=iw*${BW}:h=ih*${BH}:color=white@${alpha}:t=fill`
-}
-
-export function runProcess (command, args, { cwd, onLine, signal } = {}) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason ?? new Error('Proceso cancelado'))
-    const useNice = config.transcode.niceness > 0 && process.platform !== 'win32'
-    const bin = useNice ? 'nice' : command
-    const argv = useNice ? ['-n', String(config.transcode.niceness), command, ...args] : args
-
-    const child = spawn(bin, argv, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    let abortTimer = null
-    let aborted = false
-
-    const onAbort = () => {
-      aborted = true
-      child.kill('SIGTERM')
-      abortTimer = setTimeout(() => child.kill('SIGKILL'), config.transcode.childKillMs)
-      abortTimer.unref?.()
-    }
-    signal?.addEventListener('abort', onAbort, { once: true })
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk
-      if (stdout.length > 1_000_000) stdout = stdout.slice(-500_000)
-    })
-    child.stderr.on('data', (chunk) => {
-      const text = String(chunk)
-      stderr += text
-      if (stderr.length > 1_000_000) stderr = stderr.slice(-500_000)
-      onLine?.(text)
-    })
-
-    child.on('error', (err) => {
-      signal?.removeEventListener('abort', onAbort)
-      if (abortTimer) clearTimeout(abortTimer)
-      reject(err)
-    })
-    child.on('close', (code) => {
-      signal?.removeEventListener('abort', onAbort)
-      if (abortTimer) clearTimeout(abortTimer)
-      if (aborted) return reject(signal?.reason ?? new Error('Proceso cancelado'))
-      if (code === 0) return resolve({ stdout, stderr })
-      reject(new Error(`${command} terminó con código ${code}:\n${stderr.slice(-2000)}`))
-    })
-  })
 }
 
 export async function probe (input, { signal } = {}) {
@@ -139,17 +96,21 @@ function encodeArgs ({ input, variant, outDir, keyInfo, hasAudio }) {
 
 /**
  * Transcodifica un vídeo a las dos variantes HLS cifradas con AES-128.
- * Se ejecuta una sola vez por vídeo, nunca por alumno.
+ * Se ejecuta una sola vez por revisión, nunca por alumno.
  *
- * @param {string} videoId
+ * @param {string} videoId    UUID lógico, el que conoce Moodle
  * @param {string} inputPath
- * @param {{onProgress?: (line:string)=>void}} [hooks]
+ * @param {object} opts
+ * @param {string} opts.outputDir   staging de la revisión
+ * @param {string} [opts.revisionId]
  */
 export async function transcodeVideo (videoId, inputPath, {
   onProgress,
   signal,
-  outputDir = videoDir(videoId)
+  revisionId = null,
+  outputDir
 } = {}) {
+  if (!outputDir) throw new Error('transcodeVideo necesita un directorio de salida')
   const dir = outputDir
   const log = logger.child({ videoId })
   const variantDir = (variant) => path.join(dir, variant)
@@ -204,6 +165,7 @@ export async function transcodeVideo (videoId, inputPath, {
 
   const meta = {
     videoId,
+    revisionId,
     createdAt: new Date().toISOString(),
     segmentCount: playlistA.segments.length,
     segmentSeconds: config.transcode.segmentSeconds,

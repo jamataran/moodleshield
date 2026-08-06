@@ -37,6 +37,18 @@ jobs:
       - name: Tests unitarios
         run: npm test
 
+      # qpdf, poppler-utils y Ghostscript sólo existen en la imagen del worker:
+      # el runner no los tiene, así que ahí esas pruebas se saltan solas. Este
+      # paso las ejecuta donde de verdad se van a ejecutar en producción.
+      - name: Pruebas de PDF con las herramientas del worker
+        run: |
+          docker run --rm -v "$PWD":/src:ro -w /work node:22-alpine sh -c '
+            apk add --no-cache -q qpdf poppler-utils ghostscript
+            cp -r /src/src /src/test /src/package.json /work/
+            mkdir -p /work/node_modules && cp -r /src/node_modules/. /work/node_modules/
+            node --test --test-reporter=spec test/pdf-processing.test.js
+          '
+
       - name: Verificar migraciones contra Postgres real
         run: |
           trap 'docker rm -f pg >/dev/null 2>&1 || true' EXIT

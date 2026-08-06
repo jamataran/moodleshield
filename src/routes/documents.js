@@ -1,0 +1,336 @@
+import { Router } from 'express'
+import { createReadStream } from 'node:fs'
+import { rm, stat } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import logger from '../logger.js'
+import { requireSession, requireCatalogInstructor } from './auth.js'
+import {
+  createDocumentAndJob,
+  createDocumentRevisionAndJob,
+  deleteOwnedDocument,
+  getDocumentForOwner,
+  listDocumentViewers,
+  recordDocumentView,
+  requestDocumentCancellation,
+  updateDocumentMetadata
+} from '../services/documents.js'
+import { listMaterials, toMaterialDto } from '../services/materials.js'
+import { authorizeResource } from '../services/authorization.js'
+import { getActiveRevision, getCandidateRevision, publicRevision } from '../services/revisions.js'
+import {
+  assertDocumentId,
+  documentPath,
+  exists,
+  posterPath,
+  removeMaterialFiles,
+  revisionDir
+} from '../media/storage.js'
+import { receiveDocumentUpload } from '../media/upload.js'
+import { parseRangeHeader } from '../media/range.js'
+
+export const documentsRouter = Router()
+
+function publicDocument (document) {
+  return toMaterialDto({ ...document, kind: 'pdf' })
+}
+
+/**
+ * Nombre para `Content-Disposition`. Se sanea a conciencia porque el original
+ * lo eligió quien subió el fichero: una comilla o un salto de línea ahí es una
+ * inyección de cabecera.
+ */
+function safeFilename (title) {
+  const base = String(title ?? 'documento')
+    .normalize('NFKD')
+    .replace(/[^\w\s.-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .slice(0, 80)
+  return `${base || 'documento'}.pdf`
+}
+
+documentsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const page = await listMaterials({
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      kind: 'pdf',
+      folderId: req.query.folderId,
+      q: req.query.q,
+      cursor: req.query.cursor,
+      limit: req.query.limit,
+      includeArchived: req.query.archived === '1'
+    })
+    res.json({ documents: page.materials, nextCursor: page.nextCursor })
+  } catch (err) {
+    next(err)
+  }
+})
+
+documentsRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
+  const documentId = randomUUID()
+  const revisionId = randomUUID()
+  let destination = null
+  try {
+    const upload = await receiveDocumentUpload(req, { revisionId })
+    destination = upload.destination
+    const { jobId, revision } = await createDocumentAndJob({
+      id: documentId,
+      title: upload.title,
+      description: upload.description,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      ownerName: req.session.name,
+      folderId: upload.folderId ?? req.query.folderId,
+      sourcePath: upload.destination,
+      sizeBytes: upload.size,
+      sha256: upload.sha256,
+      originalFilename: upload.originalFilename
+    })
+    logger.info({ documentId, revisionId: revision.id, jobId, bytes: upload.size },
+      'PDF subido y encolado')
+    res.status(202).json({ id: documentId, revisionId: revision.id, status: 'queued' })
+  } catch (err) {
+    if (destination) await rm(destination, { force: true }).catch(() => {})
+    next(err)
+  }
+})
+
+documentsRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res, next) => {
+  const documentId = assertDocumentId(req.params.id)
+  const revisionId = randomUUID()
+  let destination = null
+  try {
+    const owned = await getDocumentForOwner(documentId, req.session.platformId, req.session.sub)
+    if (!owned) return res.status(404).json({ error: 'Documento no encontrado' })
+
+    const upload = await receiveDocumentUpload(req, { revisionId })
+    destination = upload.destination
+    const result = await createDocumentRevisionAndJob({
+      documentId,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      sourcePath: upload.destination,
+      sizeBytes: upload.size,
+      sha256: upload.sha256,
+      originalFilename: upload.originalFilename
+    })
+    if (result.status === 'not_found') {
+      await rm(destination, { force: true }).catch(() => {})
+      return res.status(404).json({ error: 'Documento no encontrado' })
+    }
+    res.status(202).json({ id: documentId, revision: publicRevision(result.revision), status: 'queued' })
+  } catch (err) {
+    if (destination) await rm(destination, { force: true }).catch(() => {})
+    next(err)
+  }
+})
+
+documentsRouter.get('/:id', requireSession, async (req, res, next) => {
+  try {
+    const id = assertDocumentId(req.params.id)
+    const scope = await authorizeResource(req.session, 'pdf', id)
+    if (!scope.ok) return res.status(404).json({ error: 'Documento no encontrado' })
+    res.json({ document: publicDocument(scope.material) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+documentsRouter.patch('/:id', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const result = await updateDocumentMetadata({
+      documentId: assertDocumentId(req.params.id),
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      title: req.body?.title,
+      description: req.body?.description,
+      folderId: req.body?.folderId
+    })
+    if (result.status === 'not_found') return res.status(404).json({ error: 'Documento no encontrado' })
+    if (result.status === 'unchanged') return res.status(400).json({ error: 'No hay nada que cambiar' })
+    res.json({ document: publicDocument(result.document) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+documentsRouter.delete('/:id', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const id = assertDocumentId(req.params.id)
+    const result = await deleteOwnedDocument({
+      documentId: id,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub
+    })
+    if (result.status === 'not_found') return res.status(404).json({ error: 'Documento no encontrado' })
+    if (result.status === 'active') {
+      return res.status(409).json({
+        error: 'El documento se está procesando. Cancélalo antes de borrarlo.',
+        code: 'document_active'
+      })
+    }
+    if (result.status === 'referenced') {
+      return res.status(409).json({
+        error: `Este documento forma parte de ${result.collections.length} colección(es). ` +
+          'Quítalo de ellas o archívalo en vez de borrarlo.',
+        code: 'material_referenced',
+        collections: result.collections.map((row) => ({ id: row.id, title: row.title }))
+      })
+    }
+    await removeMaterialFiles('pdf', id).catch((err) => {
+      logger.warn({ err, documentId: id }, 'Documento borrado de DB; quedan ficheros para reconciliar')
+    })
+    await Promise.all(result.sourcePaths.map((sourcePath) =>
+      rm(sourcePath, { force: true }).catch(() => {})
+    ))
+    res.sendStatus(204)
+  } catch (err) {
+    next(err)
+  }
+})
+
+documentsRouter.post('/:id/cancel', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const result = await requestDocumentCancellation({
+      documentId: assertDocumentId(req.params.id),
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub
+    })
+    if (result.status === 'not_found') return res.status(404).json({ error: 'Documento no encontrado' })
+    if (result.status === 'not_active') {
+      return res.status(409).json({ error: `El documento está en estado "${result.documentStatus}"` })
+    }
+    res.status(202).json(result)
+  } catch (err) {
+    next(err)
+  }
+})
+
+documentsRouter.get('/:id/viewers', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const id = assertDocumentId(req.params.id)
+    const document = await getDocumentForOwner(id, req.session.platformId, req.session.sub)
+    if (!document) return res.status(404).json({ error: 'Documento no encontrado' })
+    res.json({ viewers: await listDocumentViewers(id) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+documentsRouter.get('/:id/status', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const id = assertDocumentId(req.params.id)
+    const document = await getDocumentForOwner(id, req.session.platformId, req.session.sub)
+    if (!document) return res.status(404).json({ error: 'Documento no encontrado' })
+    const [active, candidate] = await Promise.all([
+      getActiveRevision({ kind: 'pdf', materialId: id }),
+      getCandidateRevision({ kind: 'pdf', materialId: id })
+    ])
+    res.json({
+      document: publicDocument(document),
+      active: active ? publicRevision({ ...active, is_active: true }) : null,
+      candidate: candidate && candidate.id !== active?.id ? publicRevision(candidate) : null
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * Portada de la primera página. Sólo para el catálogo autenticado: NO se
+ * publica en el content item de Deep Linking, donde va un icono genérico,
+ * porque la primera página puede ser justo el material sensible.
+ */
+documentsRouter.get('/:id/poster.jpg', requireSession, async (req, res, next) => {
+  try {
+    const id = assertDocumentId(req.params.id)
+    const scope = await authorizeResource(req.session, 'pdf', id)
+    if (!scope.ok) return res.status(404).json({ error: 'Documento no encontrado' })
+    const revision = scope.revision ?? await getActiveRevision({ kind: 'pdf', materialId: id })
+    if (!revision) return res.redirect(302, '/assets/pdf-placeholder.svg')
+    const file = posterPath(revisionDir('pdf', id, revision.id, revision.storage_layout))
+    if (!(await exists(file))) return res.redirect(302, '/assets/pdf-placeholder.svg')
+    res.set('Cache-Control', 'private, max-age=3600')
+    res.sendFile(file)
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * Entrega del PDF normalizado.
+ *
+ * Nunca se sirve como fichero estático desde nginx: eso saltaría toda la
+ * autorización. Aquí se comprueba el alcance de la sesión ANTES de abrir el
+ * fichero, y sólo entonces se streamea, con soporte de `Range` para que PDF.js
+ * pueda pedir el documento por trozos en vez de entero.
+ */
+async function deliverDocument (req, res, next, { headOnly = false } = {}) {
+  try {
+    const id = assertDocumentId(req.params.id)
+    const scope = await authorizeResource(req.session, 'pdf', id)
+    if (!scope.ok) return res.status(404).json({ error: 'Documento no encontrado' })
+
+    const revision = scope.revision ?? await getActiveRevision({ kind: 'pdf', materialId: id })
+    if (!revision || !['ready', 'retired'].includes(revision.status)) {
+      return res.status(409).json({ error: 'El documento todavía no está disponible' })
+    }
+
+    const file = documentPath(revisionDir('pdf', id, revision.id, revision.storage_layout))
+    const info = await stat(file).catch(() => null)
+    if (!info) return res.status(404).json({ error: 'Documento no encontrado' })
+
+    if (!scope.viaOwner) {
+      await recordDocumentView({
+        documentId: id,
+        revisionId: revision.id,
+        platformId: req.session.platformId,
+        collectionId: scope.collectionId,
+        sessionJti: req.session.jti,
+        context: {
+          sub: req.session.sub,
+          name: req.session.name,
+          contextId: req.session.contextId,
+          resourceLinkId: req.session.resourceLinkId
+        },
+        identity: req.session.identity,
+        ip: req.ip,
+        userAgent: req.get('user-agent')
+      }).catch((err) => req.log?.warn({ err, documentId: id }, 'No se pudo registrar la apertura'))
+    }
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${safeFilename(scope.material.title)}"`,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff'
+    })
+
+    const range = parseRangeHeader(req.headers.range, info.size)
+    if (range.type === 'invalid') {
+      res.set('Content-Range', `bytes */${info.size}`)
+      return res.sendStatus(416)
+    }
+    if (range.type === 'full') {
+      res.set('Content-Length', String(info.size))
+      if (headOnly) return res.status(200).end()
+      return createReadStream(file).pipe(res)
+    }
+
+    res.status(206).set({
+      'Content-Range': `bytes ${range.start}-${range.end}/${info.size}`,
+      'Content-Length': String(range.end - range.start + 1)
+    })
+    if (headOnly) return res.end()
+    createReadStream(file, { start: range.start, end: range.end }).pipe(res)
+  } catch (err) {
+    next(err)
+  }
+}
+
+documentsRouter.get('/:id/content', requireSession, (req, res, next) =>
+  deliverDocument(req, res, next))
+documentsRouter.head('/:id/content', requireSession, (req, res, next) =>
+  deliverDocument(req, res, next, { headOnly: true }))

@@ -50,9 +50,10 @@ test('la sesión conserva rol, identidad visible y contexto del launch', () => {
     name: 'Ana García',
     identity: 'agarcia',
     contextId: 'curso-9',
+    resourceLinkId: 'actividad-77',
     isInstructor: true,
     mode: 'launch',
-    resource: { kind: 'video', id: 'video-9' },
+    resource: { kind: 'video', id: 'video-9', revisionId: 'rev-3' },
     deepLinkingSettings: { deep_link_return_url: 'https://moodle/x' }
   })
   const session = verifySession(token)
@@ -60,10 +61,37 @@ test('la sesión conserva rol, identidad visible y contexto del launch', () => {
   assert.equal(session.name, 'Ana García')
   assert.equal(session.identity, 'agarcia')
   assert.equal(session.contextId, 'curso-9')
+  assert.equal(session.resourceLinkId, 'actividad-77')
   assert.equal(session.isInstructor, true)
   assert.equal(session.canDeepLink, true)
   assert.equal(session.mode, 'launch')
-  assert.deepEqual(session.resource, { kind: 'video', id: 'video-9' })
+  assert.deepEqual(session.resource, { kind: 'video', id: 'video-9', revisionId: 'rev-3' })
+})
+
+test('la sesión fija la revisión resuelta en el launch', () => {
+  // Sin esto, una activación a mitad de reproducción cambiaría el contenido
+  // bajo un player ya abierto.
+  const session = verifySession(issueSession({
+    sub: 'u', platformId: 'p', mode: 'launch',
+    resource: { kind: 'pdf', id: 'doc-1', revisionId: 'rev-9' }
+  }))
+  assert.equal(session.resource.revisionId, 'rev-9')
+})
+
+test('una sesión de colección no fija revisión: se resuelve al abrir cada material', () => {
+  const session = verifySession(issueSession({
+    sub: 'u', platformId: 'p', mode: 'launch',
+    resource: { kind: 'collection', id: 'col-1' }
+  }))
+  assert.deepEqual(session.resource, { kind: 'collection', id: 'col-1', revisionId: null })
+})
+
+test('cada sesión lleva un jti distinto para desduplicar el registro de acceso', () => {
+  const context = { sub: 'u', platformId: 'p', mode: 'launch' }
+  const a = verifySession(issueSession(context))
+  const b = verifySession(issueSession(context))
+  assert.ok(a.jti)
+  assert.notEqual(a.jti, b.jti)
 })
 
 test('una sesión de catálogo no adquiere acceso implícito a ningún vídeo', () => {

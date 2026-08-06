@@ -34,27 +34,61 @@ alternativas descartadas están en [`decisiones.md`](decisiones.md).
                     ▼
         ┌───────────────────────┐   ┌──────────────────────┐
         │ PostgreSQL 16         │   │ ${DATA_ROOT}/media   │
-        │ 7 tablas              │   │ segmentos y claves   │
+        │ 14 tablas             │   │ segmentos y claves   │
         └───────────────────────┘   └──────────────────────┘
 ```
+
+## Identidad lógica y revisión física
+
+Es la distinción de la que cuelga casi todo lo demás:
+
+| | **Material lógico** | **Revisión** |
+|---|---|---|
+| Qué es | El UUID que Moodle lleva incrustado en cada actividad | El fichero concreto y sus artefactos |
+| Quién lo referencia | Actividades, carpetas, colecciones | Sesiones, playlists, eventos de visionado |
+| Cambia | Nunca | Cada vez que el profesor sustituye el fichero |
+| Se borra | Se archiva, no se recicla | Se purga cuando la retención lo permite |
+
+Sustituir un vídeo o un PDF crea una revisión nueva; la anterior sigue
+sirviéndose hasta que la nueva está **completamente validada**. Un fallo durante
+la subida o el procesado no cambia nada de lo que ven los alumnos.
 
 ## Árbol de medios
 
 ```
-${MEDIA_ROOT}/<videoId>/
-├── A/
-│   ├── index.m3u8        playlist de la variante (nunca se sirve tal cual)
-│   ├── seg_0000.ts       cifrado AES-128
-│   └── …
-├── B/                    idéntica en cortes, distinta en la marca
-│   └── …
-├── key.bin               16 bytes; sólo se sirve por /hls/:id/key con token
-├── poster.jpg            miniatura para el catálogo y para Moodle
-└── meta.json             segmentos, duración, geometría de la marca
+${MEDIA_ROOT}/
+├── videos/<videoId>/<revisionId>/
+│   ├── A/
+│   │   ├── index.m3u8        playlist de la variante (nunca se sirve tal cual)
+│   │   ├── seg_0000.ts       cifrado AES-128
+│   │   └── …
+│   ├── B/                    idéntica en cortes, distinta en la marca
+│   ├── key.bin               16 bytes; sólo por /hls/:id/key con token
+│   ├── poster.jpg            miniatura para el catálogo autenticado
+│   └── meta.json             segmentos, duración, geometría de la marca
+├── documents/<documentId>/<revisionId>/
+│   ├── document.pdf          normalizado; nunca se expone como estático
+│   ├── poster.jpg            primera página; sólo catálogo autenticado
+│   └── meta.json             páginas, hash, herramienta de normalización
+├── .staging/<revisionId>/    en construcción; se publica con un `rename`
+└── .quarantine/              restos de publicaciones que no validaron
 ```
+
+Un directorio de revisión publicado es **inmutable**: nunca se reescribe, sólo
+puede purgarse. Ahí está la garantía de que un player abierto no reciba una
+mezcla de dos versiones. No hay symlink `current`: la revisión activa se
+resuelve en Postgres y viaja explícita en rutas y tokens, para no depender de
+una carrera entre caché y filesystem.
 
 `key.info` (que contiene la ruta absoluta de la clave) se borra al terminar el
 procesado.
+
+**Árbol anterior a T21.** Los despliegues que vienen de la versión previa tienen
+los artefactos en `${MEDIA_ROOT}/<videoId>/`. El worker los traslada al arrancar
+(`src/media/layout-migration.js`), de forma idempotente y comprobando la huella
+antes y después. Mientras queden revisiones con `storage_layout = 'legacy'`,
+nginx sirve las dos ubicaciones. El traslado invalida las URLs de segmento ya
+firmadas: conviene desplegarlo en una ventana sin visionados activos.
 
 ## El camino de un visionado
 
@@ -107,16 +141,44 @@ una hora) y una reescritura de texto. El resto es E/S de disco.
 ## Modelo de datos
 
 ```
-tool_key         kid, alg, public_jwk, private_pkcs8, active
-lti_platform     issuer + client_id (único), deployment_ids[], endpoints
-lti_oidc_state   state (PK), nonce, platform_id, expires_at, consumed_at
-video            estado, metadatos, propietario
-transcode_job    cola: status, attempts, run_after, last_error
-view_event       quién abrió qué → candidatos del trazado forense
-schema_migration control de migraciones
+tool_key                 kid, alg, public_jwk, private_pkcs8, active
+lti_platform             issuer + client_id (único), deployment_ids[], endpoints
+lti_oidc_state           state (PK), nonce, platform_id, expires_at, consumed_at
+
+catalog_folder           carpeta personal por (platform_id, owner_sub)
+video                    identidad lógica, propietario, carpeta, revisión activa
+video_revision           fichero físico: estado, duración, segmentos, patrón
+pdf_document             identidad lógica de un PDF
+pdf_revision             fichero físico: páginas, hash
+content_collection       colección propia, archivable
+content_collection_item  (colección, posición) → vídeo o PDF, con CHECK
+
+transcode_job            cola de vídeo: revisión, lease, intentos, cancelación
+pdf_job                  cola de PDF, con la misma semántica
+view_event               quién cargó qué vídeo, de qué revisión
+document_view_event      lo mismo para documentos
+schema_migration         control de migraciones
 ```
 
-Detalle y motivos en [`tasks/T02`](tasks/done/T02-esquema-base-datos.md).
+Tres decisiones que conviene tener presentes al leer el esquema:
+
+- **`video` y `pdf_document` siguen separadas.** El catálogo unificado es una
+  proyección de servicio (`UNION ALL` en `src/services/materials.js`), no una
+  tabla polimórfica con la mitad de columnas nulas.
+- **`content_collection_item` usa dos FK nullable con un `CHECK`**, no una
+  referencia `kind + uuid` sin integridad: así Postgres impide referencias
+  huérfanas. `ON DELETE RESTRICT` convierte «borrar material referenciado» en un
+  409 accionable en vez de una colección rota en silencio.
+- **Las columnas físicas de `video`/`pdf_document` son una proyección** de la
+  revisión activa, mantenida en la misma transacción que la activación. La
+  fuente de verdad es la tabla de revisiones; la proyección existe para que el
+  catálogo y las consultas anteriores sigan funcionando sin reescribirse.
+
+Detalle y motivos en [`tasks/T02`](tasks/done/T02-esquema-base-datos.md) y en las
+fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
+[T18](tasks/done/T18-colecciones-una-actividad.md),
+[T20](tasks/done/T20-materiales-pdf.md) y
+[T21](tasks/done/T21-versionado-sustitucion-materiales.md).
 
 ## Endpoints
 
@@ -128,16 +190,69 @@ Detalle y motivos en [`tasks/T02`](tasks/done/T02-esquema-base-datos.md).
 | GET | `/lti/config` | — | Datos de alta en Moodle |
 | POST | `/lti/deeplink/response` | token de Deep Linking | Devuelve la selección a Moodle |
 | GET/POST | `/lti/platforms` | `LTI_ADMIN_TOKEN` | Gestión de plataformas |
-| GET | `/videos` | sesión | Catálogo |
-| POST | `/videos` | sesión + profesor | Subida en streaming |
-| DELETE | `/videos/:id` | sesión + profesor | Borrado con ficheros |
-| GET | `/videos/:id/viewers` | sesión + profesor | Candidatos del trazado |
-| GET | `/videos/:id/poster.jpg` | — | Miniatura (la pide Moodle) |
-| GET | `/hls/:id/index.m3u8` | sesión | **Playlist personalizada** |
-| GET | `/hls/:id/key` | token de clave | Clave AES-128 |
-| GET | `/media/:id/:variant/:seg` | URL firmada | Segmento (en producción, nginx) |
+| GET | `/materials` | catálogo | **Catálogo unificado** (vídeos + PDFs), filtros y cursor |
+| GET | `/materials/:kind/:id/revisions` | catálogo | Historial de revisiones |
+| POST | `/materials/:kind/:id/revisions/:rid/activate` | catálogo | Publicar o volver a una versión |
+| POST | `/materials/:kind/:id/revisions/:rid/discard` | catálogo | Descartar una candidata |
+| DELETE | `/materials/:kind/:id/revisions/:rid` | catálogo | Purgar si la retención lo permite |
+| DELETE | `/materials/:kind/:id` | catálogo | Archivar el material lógico |
+| POST | `/materials/:kind/:id/restore` | catálogo | Restaurar del archivo |
+| GET/POST | `/folders` | catálogo | Carpetas del profesor |
+| PATCH/DELETE | `/folders/:id` | catálogo | Renombrar / vaciar y borrar |
+| GET | `/videos` | catálogo | Catálogo de vídeo (compatibilidad) |
+| POST | `/videos` | catálogo | Subida en streaming |
+| POST | `/videos/:id/revisions` | catálogo | Sustituir el fichero sin cambiar el UUID |
+| PATCH | `/videos/:id` | catálogo | Título, descripción y carpeta |
+| DELETE | `/videos/:id` | catálogo | Borrado con ficheros (409 si está en una colección) |
+| GET | `/videos/:id/viewers` | catálogo | Candidatos del trazado |
+| GET | `/videos/:id/poster.jpg` | sesión con alcance | Miniatura |
+| POST | `/documents` | catálogo | Subida de PDF |
+| POST | `/documents/:id/revisions` | catálogo | Sustituir el PDF |
+| GET/HEAD | `/documents/:id/content` | sesión con alcance | **PDF con `Range`**; nunca estático |
+| GET | `/documents/:id/poster.jpg` | sesión con alcance | Portada (no va al content item) |
+| GET/POST | `/collections` | catálogo | Colecciones propias |
+| PATCH | `/collections/:id` | catálogo | Metadatos y lista, con control optimista |
+| POST | `/collections/:id/duplicate` | catálogo | Copia lógica |
+| DELETE | `/collections/:id` | catálogo | Archivar (no borra) |
+| GET | `/collections/:id/manifest` | sesión con alcance | Índice para el visor del alumno |
+| GET | `/hls/:id/index.m3u8` | sesión con alcance | **Playlist personalizada** |
+| GET | `/hls/:id/key` | token de clave | Clave AES-128 de esa revisión |
+| GET | `/media/videos/:id/:rev/:variant/:seg` | URL firmada | Segmento (en producción, nginx) |
 | GET | `/healthz` | — | Liveness |
 | GET | `/readyz` | — | Readiness (toca la base de datos) |
+
+«catálogo» = sesión de profesor abierta desde **Seleccionar contenido** o desde
+una actividad sin material. «sesión con alcance» = el token autoriza ese recurso
+concreto, o la colección que lo contiene, o pertenece a su propietario.
+
+## Alcance de una sesión
+
+Conocer un UUID no da acceso a nada. Todo pasa por
+`authorizeResource(session, kind, id)` en `src/services/authorization.js`:
+
+| Sesión | Puede abrir |
+|---|---|
+| Vídeo directo | Sólo ese vídeo, y sólo la revisión fijada en el launch |
+| PDF directo | Sólo ese documento, y sólo su revisión |
+| Colección | Sólo los elementos que pertenezcan a ella **en ese momento** |
+| Profesor en catálogo | Sólo material propio (`platform_id` + `owner_sub`) |
+| Cualquier otro UUID | 404 — nunca 403, que confirmaría que existe |
+
+La pertenencia a la colección se comprueba contra la base de datos en cada
+petición, no contra una lista congelada en el token: quitar un material de la
+colección le cierra la puerta también a las sesiones ya emitidas.
+
+## Cuándo se registra un visionado
+
+No al abrir la actividad, sino en la **primera petición real de bytes**: la
+playlist para vídeo, el contenido para PDF. Con colecciones, registrar en el
+launch produciría un candidato forense por cada material aunque el alumno sólo
+abriera uno, contaminando justo el dato que tiene que ser preciso.
+
+El `jti` del token de sesión desduplica (índice único parcial por recurso +
+`session_jti`), así que recargar el player no inventa visionados. Cada evento
+guarda además la **revisión exacta** que se sirvió, que es contra la que el
+trazado tiene que comparar.
 
 ## Modelo de seguridad
 
@@ -148,6 +263,8 @@ Qué protege qué, y contra quién:
 | Cifrado AES-128 de los segmentos | Descarga directa del `.ts` | Quien tiene acceso legítimo |
 | Token de clave con caducidad | Compartir un enlace al vídeo | Compartir la clave descargada |
 | URLs de segmento firmadas | Descargar una variante completa y anular la traza | — |
+| Alcance de sesión por recurso | Acceso lateral con un UUID conocido o un token de otra actividad | — |
+| Aislamiento por propietario | Que un profesor vea o toque la biblioteca de otro | — |
 | Overlay del DNI | Grabación de pantalla y reenvío | Quien borra el `div` |
 | Marca A/B (forense) | Quien borra el overlay; recompresión; reescalado | Recorte de bordes; colusión |
 | `view_event` | — | Da la lista de candidatos del trazado |
@@ -157,6 +274,29 @@ reenvía un enlace hasta el que graba la pantalla y edita el vídeo.
 
 **Lo que no se protege, dicho claro**: no hay DRM. Quien tenga acceso legítimo
 puede capturar el vídeo. El sistema no lo impide — lo hace atribuible.
+
+### El PDF protege menos que el vídeo, y hay que decirlo
+
+Un PDF no tiene marca forense. El visor muestra un overlay con la identidad del
+alumno y el documento sólo se entrega tras comprobar el alcance de la sesión,
+pero **el PDF autorizado viaja completo al navegador** para que PDF.js lo
+renderice. Un alumno con conocimientos puede recuperar esos bytes desde las
+herramientas de desarrollo y quitar el overlay.
+
+| | Vídeo | PDF |
+|---|---|---|
+| Control de acceso | Sí | Sí |
+| Disuasión visible | Overlay | Overlay |
+| Atribución de una filtración | **Sí** (patrón A/B por alumno) | **No** |
+| Impide recuperar el fichero | No | No |
+
+Marcar un PDF por alumno exigiría generar y custodiar una copia distinta por
+usuario, con su coste de proceso y su gestión de datos personales. No entra en
+este alcance y no debe presentarse como si entrara. Lo que sí se hace al subir
+es **normalizar** el documento con Ghostscript, descartando JavaScript
+embebido, acciones automáticas, adjuntos y formularios: el visor no ejecutará
+nada que traiga el fichero. Esa normalización también elimina las firmas
+digitales, y el catálogo lo avisa antes de subir.
 
 ## Presupuesto de recursos
 

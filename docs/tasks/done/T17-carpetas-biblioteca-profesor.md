@@ -5,7 +5,7 @@
 | **Fase** | 10 · Biblioteca |
 | **Depende de** | T02, T04, T06, T12, T22 |
 | **Bloquea a** | T18, T20, T21 |
-| **Estado** | ⬜ pendiente |
+| **Estado** | ✅ done · verificado 2026-08-06 |
 | **Esfuerzo** | 1–2 días |
 
 ## Objetivo
@@ -215,19 +215,19 @@ docs/arquitectura.md
 
 ## Criterio de aceptación
 
-- [ ] El profesor crea, renombra y elimina carpetas sin salir del iframe de
+- [x] El profesor crea, renombra y elimina carpetas sin salir del iframe de
       Moodle.
-- [ ] Sólo existe un nivel de carpetas.
-- [ ] Puede mover un material a otra carpeta o a **Sin carpeta**.
-- [ ] Eliminar una carpeta conserva todo su contenido en la raíz.
-- [ ] La subida desde una carpeta queda clasificada en ella.
-- [ ] La búsqueda funciona combinada con el filtro de carpeta.
-- [ ] Otro profesor no puede listar, mover, editar, borrar ni seleccionar esos
+- [x] Sólo existe un nivel de carpetas.
+- [x] Puede mover un material a otra carpeta o a **Sin carpeta**.
+- [x] Eliminar una carpeta conserva todo su contenido en la raíz.
+- [x] La subida desde una carpeta queda clasificada en ella.
+- [x] La búsqueda funciona combinada con el filtro de carpeta.
+- [x] Otro profesor no puede listar, mover, editar, borrar ni seleccionar esos
       materiales introduciendo sus UUID manualmente.
-- [ ] Dos Moodle con el mismo `sub` permanecen aislados.
-- [ ] Un vídeo movido conserva su UUID y todas las actividades Moodle existentes
+- [x] Dos Moodle con el mismo `sub` permanecen aislados.
+- [x] Un vídeo movido conserva su UUID y todas las actividades Moodle existentes
       siguen reproduciéndolo.
-- [ ] Los vídeos históricos sin carpeta siguen visibles para su propietario.
+- [x] Los vídeos históricos sin carpeta siguen visibles para su propietario.
 
 ## Cómo se prueba
 
@@ -259,3 +259,111 @@ Prueba de integración mínima:
   propietario.
 - **Cambiar el UUID al mover.** Rompería enlaces LTI ya desplegados y queda
   expresamente prohibido.
+
+## Cierre
+
+**Fecha**: 6 de agosto de 2026. Cerrada en la segunda pasada de la auditoría: la
+primera dejó el criterio 1 sin cumplir y bloqueó el cierre.
+
+### Lo que estaba mal y se corrigió
+
+**Primera pasada** · el ciclo de vida de las carpetas usaba `prompt()` y
+`confirm()`. Chrome y Edge los retiraron de los iframes cross-origin y
+MoodleShield se sirve siempre desde otro origen con
+`presentation.documentTarget: iframe`: dentro de la actividad `prompt()` devuelve
+`null` y `confirm()` devuelve `false` sin abrir nada, así que «Nueva»,
+«Renombrar» y «Eliminar» no hacían absolutamente nada. Sustituidos por dos
+`<dialog>` (`#prompt-dialog`, `#confirm-dialog`) con los helpers `askText()` y
+`askConfirm()`.
+
+**Segunda pasada** · esa corrección traía dos fallos propios, encontrados
+condujendo Chrome de verdad:
+
+1. **`returnValue` sobrevive entre aperturas y Escape no lo toca.** La
+   especificación cierra «sin resultado», no con cadena vacía, y este Chrome
+   tampoco lo limpia en `showModal()`. Como `askConfirm` resuelve mirando
+   `returnValue === 'ok'`, un «Aceptar» anterior convertía el siguiente Escape en
+   una confirmación. **Se reprodujo en vivo: pulsar Escape en el diálogo de
+   «Borrar» eliminó un material del catálogo y sus ficheros.** Corregido con
+   `abrirDialogo()`, que limpia `returnValue` antes de `showModal()`.
+2. **Cancelar no cerraba el diálogo con el campo vacío.** Un
+   `<form method="dialog">` valida al enviarse y «Cancelar» es un submit: sin
+   `formnovalidate`, cancelar «Nueva carpeta» —donde el campo `required` empieza
+   vacío— sólo enseñaba el globo de validación y dejaba al profesor encerrado.
+   Añadido `formnovalidate` a los tres botones de cancelar.
+
+Ambos quedan fijados por `test/ui-iframe.test.js` («un diálogo no arrastra el
+returnValue de la vez anterior» y «el botón de cancelar de un diálogo cierra
+aunque el formulario no valide»), y se comprobó que las dos pruebas fallan si se
+revierte el arreglo.
+
+### Cómo se verificó el criterio del iframe
+
+Sin extensión de navegador: se levantó un servidor que sirve la página padre en
+`http://127.0.0.1:9099` y el catálogo en `http://localhost:9099` —mismo servidor,
+**orígenes distintos**— y se condujo Chrome 150 headless por CDP. Que Chrome
+creara un target `iframe` aparte (OOPIF) es la prueba de que el marco es
+cross-origin de verdad; `parent.location` lanzaba, como en Moodle.
+
+Sobre esa página, pulsando los botones reales:
+
+| Acción | Resultado |
+|---|---|
+| «Nueva» → diálogo → Aceptar | `Carpeta creada`; `GET /folders` devuelve la carpeta nueva |
+| «Nueva» → Cancelar con el campo vacío | el diálogo cierra (antes se quedaba atrapado) |
+| ✎ Renombrar | el diálogo llega con el nombre precargado; tras aceptar, `Carpeta renombrada` y el nombre nuevo en la barra |
+| Editar → «Mover a» | opciones `["Sin carpeta", "<carpeta>"]`; `Material actualizado` |
+| 🗑 Eliminar | confirmación con el recuento; `Carpeta eliminada; su contenido está en «Sin carpeta»` y el material sigue existiendo |
+| «Borrar» material → Escape | **ninguna acción** (antes borraba el material) |
+| «Borrar» material → Aceptar | sí lanza el borrado (la protección no se pasó de frenada) |
+
+### Evidencia del resto de criterios
+
+Contra el stack `infra/local` con datos reales —dos instancias Moodle que
+comparten el `sub` `2`, más un tercer profesor de prueba—:
+
+| Criterio | Evidencia |
+|---|---|
+| Un solo nivel | No hay `parent_id` en `migrations/003_catalog_folders.sql`; integración «T17: sólo hay un nivel de carpetas» |
+| Mover a carpeta o a raíz | `PATCH /videos/:id` con `folderId` y con `null`; el UUID no cambia y la playlist sigue a 200 |
+| Eliminar conserva el contenido | `DELETE /folders/<id>` → `{"moved":{"videos":1,"documents":1,"collections":0}}`; los materiales reaparecen con `folderId: null` y el vídeo se reproduce |
+| La subida hereda la carpeta | `POST /documents` con `folderId` en el multipart → `pdf_document.folder_id` correcto |
+| Búsqueda + filtro | `?folderId=<uuid>&q=TEMA` → `['TEMA3']`; `?folderId=root&q=TEMA` → `[]`; `?q=%` → `[]` (comodines escapados) |
+| Otro profesor: 404 | Con la sesión del profesor B: `PATCH`/`DELETE /videos`, `PATCH`/`DELETE /folders`, `DELETE /materials/video/:id`, `GET …/revisions` y `POST /videos/:id/revisions` responden 404 |
+| Dos Moodle, mismo `sub` | `sub=2` en `aef61802-…` ve dos vídeos; el mismo `sub=2` en `407f1c03-…` ve un catálogo distinto |
+| Mover no cambia el UUID | Comprobado antes y después de mover y tras borrar la carpeta; integración «T17: mover un material no cambia su UUID» |
+| Históricos sin carpeta | Aparecen en `GET /materials?folderId=root` con `folderId: null` |
+
+### Regresión
+
+lint limpio · 117 unitarias (109 pasan, 8 saltadas: las de PDF, que necesitan las
+herramientas del worker) · 62 de integración sobre base limpia · 8/8 de PDF
+dentro de la imagen con qpdf, poppler-utils y ghostscript · migraciones aplicadas
+dos veces (`applied:6` → `applied:0`) · compose de test, prod y local validados.
+
+### Desviaciones respecto a la ficha
+
+1. **Deep Linking con un UUID ajeno responde 400, no 404.**
+   `listReadyVideosForDeepLink` filtra por `platform_id + owner_sub`, la selección
+   queda vacía y `/lti/deeplink/response` lanza `LtiError` con el estado por
+   defecto. No es 403 y no confirma que el material exista —la propiedad que
+   importa se conserva—, pero la ficha pide 404 literal.
+2. **`materialCount` suma también las colecciones** (`src/routes/folders.js`), así
+   que el contador de la barra lateral puede ser mayor que el número de
+   materiales. La respuesta de `DELETE /folders/:id` sí desglosa `videos`,
+   `documents` y `collections`.
+3. **El foco sólo vuelve tras crear y eliminar carpeta** (`state.focusAfterReload`);
+   tras renombrar, mover o borrar material no se restaura. El §4 lo pedía para
+   las tres operaciones.
+4. **«Mover a» no está en la tarjeta** sino dentro del diálogo «Editar». El
+   Alcance sólo exige «un selector *Mover a* y botones accesibles», y lo hay.
+5. **El aviso de despliegue de la migración 003 sólo cuenta `owner_sub IS NULL`**,
+   que es lo que la ficha pedía. El caso real del entorno local es distinto
+   —`platform_id IS NULL` con dueño— y lo cubre `warnOrphanedMaterials()` en
+   `src/media/reconcile.js`, añadido después: verificado, detecta los 5 vídeos.
+6. **Las pruebas se agruparon** en `test/catalog.test.js`,
+   `test/integration/catalog.integration.js` y `test/ui-iframe.test.js` en vez de
+   `test/folders.test.js` y `test/catalog-isolation.test.js`.
+7. **Sin verificar**: el recorrido dentro de un Moodle real. Se reprodujo la
+   condición que rompía —iframe cross-origin en Chrome— pero no hay una instancia
+   Moodle en esta auditoría.

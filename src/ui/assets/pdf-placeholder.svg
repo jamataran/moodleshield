@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360" role="img" aria-label="Documento PDF">
+  <rect width="640" height="360" fill="#1f232c"/>
+  <g transform="translate(320 168)">
+    <path d="M-52 -70 h68 l36 36 v104 a10 10 0 0 1 -10 10 h-94 a10 10 0 0 1 -10 -10 v-130 a10 10 0 0 1 10 -10 z"
+          fill="none" stroke="#4a5261" stroke-width="4"/>
+    <path d="M16 -70 v36 h36" fill="none" stroke="#4a5261" stroke-width="4"/>
+    <text x="0" y="42" fill="#4a5261" font-family="system-ui, sans-serif" font-size="30" font-weight="600" text-anchor="middle">PDF</text>
+  </g>
+  <text x="320" y="290" fill="#6b7280" font-family="system-ui, sans-serif" font-size="18" text-anchor="middle">documento</text>
+</svg>

@@ -15,6 +15,10 @@ final **Cierre** con la evidencia usada para moverla.
 | [T09](T09-playlist-por-alumno.md) | Playlist por alumno | 2026-08-05 |
 | [T10](T10-entrega-segmentos-firmada.md) | Segmentos firmados | 2026-08-05 |
 | [T12](T12-deep-linking-catalogo.md) | Deep Linking y catálogo | 2026-08-05 |
+| [T17](T17-carpetas-biblioteca-profesor.md) | Carpetas personales de un nivel | 2026-08-06 |
+| [T18](T18-colecciones-una-actividad.md) | Colecciones en una sola actividad | 2026-08-06 |
+| [T20](T20-materiales-pdf.md) | Materiales PDF protegidos | 2026-08-06 |
+| [T21](T21-versionado-sustitucion-materiales.md) | Revisiones y sustitución atómica | 2026-08-06 |
 
 El backlog activo y el orden recomendado están en [`../README.md`](../README.md).
 Si una regresión invalida el cierre, la tarea vuelve al backlog o se enlaza a una

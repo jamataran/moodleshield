@@ -2,32 +2,32 @@ import { rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import config, { assertConfigValid } from './config.js'
 import logger from './logger.js'
-import { closeDatabase } from './db/index.js'
+import { closeDatabase, one } from './db/index.js'
 import { runMigrations } from './db/migrate.js'
 import {
   ensureDirs,
   prepareStaging,
   publishStaging,
   readPublishedMeta,
-  removeJobStaging,
-  removeVideoFiles
+  removeStaging,
+  removeRevisionFiles
 } from './media/storage.js'
 import { transcodeVideo } from './media/transcode.js'
+import { processDocumentRevision, PdfValidationError } from './media/pdf.js'
 import { reconcileStorage } from './media/reconcile.js'
-import {
-  LostLeaseError,
-  claimJob,
-  completeJob,
-  failJob,
-  heartbeatJob,
-  reapExpiredJobs,
-  releaseJob
-} from './queue/postgres.js'
+import { migrateLegacyMediaLayout } from './media/layout-migration.js'
+import { purgeRetiredRevisions, reportArchivedMaterials } from './services/revisions.js'
+import { LostLeaseError, videoQueue, pdfQueue } from './queue/postgres.js'
 
 assertConfigValid()
 
 await runMigrations()
 await ensureDirs()
+// El traslado del árbol antiguo al árbol por revisión (T21) va aquí y no en un
+// script suelto: un despliegue que se olvidara de ejecutarlo dejaría el
+// catálogo sirviendo 404.
+await migrateLegacyMediaLayout().catch((err) =>
+  logger.error({ err }, 'Fallo trasladando el árbol de medios; se reintenta en el próximo arranque'))
 
 const workerId = randomUUID()
 const active = new Map()
@@ -48,29 +48,65 @@ class JobCancellationError extends Error {
   }
 }
 
-async function processJob (job) {
+/**
+ * Cada cola sabe transformar un fichero de origen en un directorio publicable.
+ * Todo lo demás —lease, heartbeat, publicación atómica, reintentos, limpieza—
+ * es idéntico y vive una sola vez, más abajo.
+ */
+const PIPELINES = {
+  video: {
+    queue: videoQueue,
+    kind: 'video',
+    async process (job, { outputDir, signal }) {
+      return transcodeVideo(job.material_id, job.source_path, {
+        outputDir,
+        revisionId: job.revision_id,
+        signal
+      })
+    }
+  },
+  pdf: {
+    queue: pdfQueue,
+    kind: 'pdf',
+    async process (job, { outputDir, signal }) {
+      return processDocumentRevision({
+        documentId: job.material_id,
+        revisionId: job.revision_id,
+        sourcePath: job.source_path,
+        outputDir,
+        signal
+      })
+    }
+  }
+}
+
+async function processJob (pipeline, job) {
+  const { queue, kind } = pipeline
   const controller = new AbortController()
   const log = logger.child({
+    queue: kind,
     jobId: job.id,
-    materialId: job.video_id,
+    materialId: job.material_id,
+    revisionId: job.revision_id,
     workerId,
     attempt: job.attempts
   })
-  active.set(job.id, controller)
+  const key = `${kind}:${job.id}`
+  active.set(key, controller)
   let heartbeatRunning = false
 
   const heartbeat = setInterval(async () => {
     if (heartbeatRunning || controller.signal.aborted) return
     heartbeatRunning = true
     try {
-      const state = await heartbeatJob({
+      const state = await queue.heartbeatJob({
         jobId: job.id,
         workerId,
         leaseSeconds: config.transcode.leaseSeconds
       })
       if (state.cancelRequested) controller.abort(new JobCancellationError())
     } catch (err) {
-      log.warn({ err }, 'No se pudo renovar el lease; se detiene ffmpeg')
+      log.warn({ err }, 'No se pudo renovar el lease; se detiene el proceso')
       controller.abort(err)
     } finally {
       heartbeatRunning = false
@@ -78,32 +114,30 @@ async function processJob (job) {
   }, config.transcode.heartbeatMs)
   heartbeat.unref()
 
-  log.info('Iniciando transcodificación')
+  log.info('Iniciando procesamiento')
   try {
-    let meta = await readPublishedMeta(job.video_id)
+    let meta = await readPublishedMeta(kind, job.material_id, job.revision_id)
     if (meta) {
       log.warn('Se adopta una publicación completa de un intento anterior')
     } else {
-      const outputDir = await prepareStaging(job.id, job.video_id)
-      meta = await transcodeVideo(job.video_id, job.source_path, {
-        outputDir,
-        signal: controller.signal
-      })
-      meta = await publishStaging(job.id, job.video_id)
+      const outputDir = await prepareStaging(job.revision_id)
+      await pipeline.process(job, { outputDir, signal: controller.signal })
+      meta = await publishStaging(kind, job.material_id, job.revision_id)
     }
 
-    await completeJob({
+    const outcome = await queue.completeJob({
       jobId: job.id,
-      videoId: job.video_id,
+      materialId: job.material_id,
+      revisionId: job.revision_id,
       workerId,
       meta
     })
 
     // La publicación y la transacción son el éxito. La limpieza no lo revierte.
     await rm(job.source_path, { force: true }).catch((err) => {
-      log.warn({ err }, 'Vídeo listo, pero no se pudo borrar el original')
+      log.warn({ err }, 'Material listo, pero no se pudo borrar el original')
     })
-    log.info({ segments: meta.segmentCount }, 'Vídeo listo')
+    log.info({ outcome: outcome.status }, 'Revisión lista')
   } catch (err) {
     if (err instanceof LostLeaseError) {
       log.warn({ err }, 'Trabajo abandonado porque otro worker posee el lease')
@@ -111,47 +145,70 @@ async function processJob (job) {
     }
 
     if (err instanceof WorkerShutdownError) {
-      await releaseJob({
+      await queue.releaseJob({
         jobId: job.id,
-        videoId: job.video_id,
+        materialId: job.material_id,
+        revisionId: job.revision_id,
         workerId,
         reason: err.message
       }).catch((releaseError) => log.warn({ err: releaseError }, 'No se pudo liberar el lease'))
-      await removeJobStaging(job.id, job.video_id).catch(() => {})
+      await removeStaging(job.revision_id).catch(() => {})
       return
     }
 
     try {
-      const outcome = await failJob({
+      const outcome = await queue.failJob({
         jobId: job.id,
-        videoId: job.video_id,
+        materialId: job.material_id,
+        revisionId: job.revision_id,
         workerId,
         error: err,
-        maxAttempts: config.transcode.maxAttempts
+        maxAttempts: config.transcode.maxAttempts,
+        permanent: err instanceof PdfValidationError && err.permanent
       })
-      log.error({ err, outcome: outcome.status }, 'Transcodificación interrumpida')
-      await removeJobStaging(job.id, job.video_id).catch(() => {})
+      log.error({ err, outcome: outcome.status }, 'Procesamiento interrumpido')
+      await removeStaging(job.revision_id).catch(() => {})
       if (outcome.status === 'cancelled') {
         await rm(job.source_path, { force: true }).catch(() => {})
-        await removeVideoFiles(job.video_id).catch(() => {})
+        // Sólo los artefactos de ESTA revisión: la activa, si la hay, sigue
+        // sirviéndose a los alumnos aunque se cancele una sustitución.
+        await removeRevisionFiles(kind, job.material_id, job.revision_id).catch(() => {})
       }
     } catch (stateError) {
       log.error({ err: stateError, cause: err }, 'No se pudo persistir el fallo del trabajo')
     }
   } finally {
     clearInterval(heartbeat)
-    active.delete(job.id)
+    active.delete(key)
   }
 }
 
 async function maintenance () {
-  try {
-    const result = await reapExpiredJobs({ maxAttempts: config.transcode.maxAttempts })
-    if (result.requeued || result.cancelled || result.failed) {
-      logger.warn({ workerId, ...result }, 'Leases expirados reconciliados')
+  for (const { queue, kind } of Object.values(PIPELINES)) {
+    try {
+      const result = await queue.reapExpiredJobs({ maxAttempts: config.transcode.maxAttempts })
+      if (result.requeued || result.cancelled || result.failed) {
+        logger.warn({ workerId, queue: kind, ...result }, 'Leases expirados reconciliados')
+      }
+    } catch (err) {
+      logger.error({ err, workerId, queue: kind }, 'Fallo recuperando leases expirados')
     }
+  }
+}
+
+/**
+ * Purga de revisiones retiradas. Va en el worker y no en la aplicación porque
+ * borra ficheros y puede tardar: el proceso web no debe hacer ninguna de las
+ * dos cosas.
+ */
+async function purge () {
+  try {
+    await purgeRetiredRevisions()
+    // El material archivado no se purga solo: sólo se informa de cuál lleva ya
+    // más de la retención, para que alguien decida.
+    await reportArchivedMaterials()
   } catch (err) {
-    logger.error({ err, workerId }, 'Fallo recuperando leases expirados')
+    logger.error({ err, workerId }, 'Fallo purgando revisiones retiradas')
   }
 }
 
@@ -164,15 +221,18 @@ async function loop () {
     reconcileStorage().catch((err) => logger.warn({ err }, 'Fallo reconciliando almacenamiento'))
   }, config.transcode.reconcileMs)
   reconcile.unref()
+  const purger = setInterval(() => { void purge() }, config.revisions.purgeIntervalMs)
+  purger.unref()
 
   logger.info(
     {
       workerId,
       concurrency: config.transcode.concurrency,
       pollMs: config.transcode.pollIntervalMs,
-      leaseSeconds: config.transcode.leaseSeconds
+      leaseSeconds: config.transcode.leaseSeconds,
+      colas: Object.keys(PIPELINES)
     },
-    'Worker de transcodificación en marcha'
+    'Worker en marcha'
   )
 
   while (running) {
@@ -181,12 +241,22 @@ async function loop () {
       continue
     }
     try {
-      const job = await claimJob({ workerId, leaseSeconds: config.transcode.leaseSeconds })
-      if (!job) {
-        await sleep(config.transcode.pollIntervalMs)
-        continue
+      // Se consultan las dos colas por turno. Un PDF tarda segundos y un vídeo
+      // minutos: si compartieran cola, una tanda de vídeos dejaría los PDFs
+      // esperando media tarde para una validación de tres segundos.
+      let claimed = false
+      for (const pipeline of Object.values(PIPELINES)) {
+        if (active.size >= config.transcode.concurrency) break
+        const job = await pipeline.queue.claimJob({
+          workerId,
+          leaseSeconds: config.transcode.leaseSeconds
+        })
+        if (job) {
+          claimed = true
+          void processJob(pipeline, job)
+        }
       }
-      void processJob(job)
+      if (!claimed) await sleep(config.transcode.pollIntervalMs)
     } catch (err) {
       logger.error({ err, workerId }, 'Fallo reclamando trabajo')
       await sleep(config.transcode.pollIntervalMs)
@@ -194,6 +264,7 @@ async function loop () {
   }
   clearInterval(reaper)
   clearInterval(reconcile)
+  clearInterval(purger)
 }
 
 function sleep (ms) {
@@ -218,4 +289,7 @@ process.on('SIGTERM', () => { void shutdown('SIGTERM') })
 process.on('SIGINT', () => { void shutdown('SIGINT') })
 process.on('unhandledRejection', (err) => logger.error({ err }, 'Promesa rechazada sin capturar'))
 
+// `one` se importa para que un fallo de conexión temprano se note aquí y no en
+// mitad del primer trabajo.
+await one('SELECT 1 AS ok')
 await loop()

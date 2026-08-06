@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import config from '../config.js'
 import { patternFor } from './watermark.js'
 import { signedMediaUrl } from './signing.js'
-import { variantPlaylistPath } from './storage.js'
+import { revisionDir, revisionPublicPrefix, variantPlaylistPath } from './storage.js'
 
 const SEGMENT_RE = /^seg_(\d{4,6})\.ts$/
 
@@ -75,24 +75,46 @@ export function assertVariantsAligned (a, b, { toleranceSeconds = 0.05 } = {}) {
 /**
  * Genera la playlist personalizada de un alumno.
  *
+ * Todas las URLs que salen de aquí apuntan a UNA revisión concreta. Es lo que
+ * garantiza que un player abierto termine la reproducción con una sola versión
+ * aunque el profesor active otra a mitad: la playlist ya está congelada.
+ *
  * @param {object}   opts
- * @param {string}   opts.videoId
+ * @param {string}   opts.videoId       UUID lógico, el que conoce Moodle
+ * @param {string}   opts.revisionId
+ * @param {string}   [opts.layout]      'revision' | 'legacy'
+ * @param {string}   [opts.patternScope] cadena que entra en el HMAC de la marca
  * @param {string}   opts.userSub
- * @param {string}   opts.keyToken   token que autoriza la descarga de la clave AES
+ * @param {string}   opts.keyToken      autoriza la descarga de la clave AES
  * @param {string}   [opts.basePlaylist] contenido del index.m3u8 de la variante A
- * @param {number}   [opts.expires]  epoch en segundos de caducidad de las URLs
+ * @param {number}   [opts.expires]     epoch en segundos de caducidad de las URLs
  * @returns {Promise<{body:string, pattern:Uint8Array}>}
  */
-export async function buildUserPlaylist ({ videoId, userSub, keyToken, basePlaylist, expires }) {
-  const text = basePlaylist ?? (await readFile(variantPlaylistPath(videoId, 'A'), 'utf8'))
+export async function buildUserPlaylist ({
+  videoId,
+  revisionId = null,
+  layout = 'revision',
+  patternScope,
+  userSub,
+  keyToken,
+  basePlaylist,
+  expires
+}) {
+  const dir = revisionDir('video', videoId, revisionId, layout)
+  const text = basePlaylist ?? (await readFile(variantPlaylistPath(dir, 'A'), 'utf8'))
   const parsed = parseVariantPlaylist(text)
 
   if (parsed.segments.length === 0) {
     throw new Error(`La playlist base de ${videoId} no tiene segmentos`)
   }
 
-  const pattern = patternFor(userSub, videoId, parsed.segments.length)
+  // El ámbito lo dicta la revisión (`pattern_scope`), no esta función: las
+  // revisiones anteriores a T21 se derivaban sólo del UUID del vídeo y sus
+  // trazas tienen que seguir siendo reproducibles.
+  const scope = patternScope ?? videoId
+  const pattern = patternFor(userSub, scope, parsed.segments.length)
   const exp = expires ?? Math.floor(Date.now() / 1000) + config.media.linkTtlSeconds
+  const prefix = revisionPublicPrefix(videoId, revisionId, layout)
   const out = [...parsed.lines]
 
   if (parsed.keyLine) {
@@ -105,7 +127,7 @@ export async function buildUserPlaylist ({ videoId, userSub, keyToken, basePlayl
 
   parsed.segments.forEach((segment, i) => {
     const variant = pattern[i] ? 'B' : 'A'
-    const uri = `${config.media.publicPrefix}/${videoId}/${variant}/${segment.name}`
+    const uri = `${prefix}/${variant}/${segment.name}`
     out[segment.index] =
       config.media.delivery === 'signed'
         ? `${config.publicUrl}${signedMediaUrl(uri, { expires: exp })}`

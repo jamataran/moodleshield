@@ -5,7 +5,7 @@
 | **Fase** | 11 · Experiencia de aprendizaje |
 | **Depende de** | T12, T17, T20 |
 | **Bloquea a** | — |
-| **Estado** | ⬜ pendiente |
+| **Estado** | ✅ done · verificado 2026-08-06 |
 | **Esfuerzo** | 2–3 días |
 
 ## Objetivo
@@ -307,18 +307,18 @@ docs/arquitectura.md
 
 ## Criterio de aceptación
 
-- [ ] Una colección con dos vídeos crea una sola actividad Moodle.
-- [ ] La actividad muestra ambos en el orden configurado.
-- [ ] Una colección puede mezclar vídeo y PDF.
-- [ ] Añadir, quitar o reordenar se refleja al reabrir todas sus inserciones.
-- [ ] No se duplica almacenamiento al usar un material en varias colecciones.
-- [ ] Archivar la colección la oculta del catálogo sin romper actividades ya
+- [x] Una colección con dos vídeos crea una sola actividad Moodle.
+- [x] La actividad muestra ambos en el orden configurado.
+- [x] Una colección puede mezclar vídeo y PDF.
+- [x] Añadir, quitar o reordenar se refleja al reabrir todas sus inserciones.
+- [x] No se duplica almacenamiento al usar un material en varias colecciones.
+- [x] Archivar la colección la oculta del catálogo sin romper actividades ya
       insertadas.
-- [ ] Un alumno no accede a materiales fuera del recurso lanzado.
-- [ ] Un profesor no selecciona material de otro profesor o Moodle.
-- [ ] La lista forense sólo incluye alumnos que cargaron ese vídeo.
-- [ ] Actividades legacy con `custom.videoId` siguen funcionando.
-- [ ] Borrar un material referenciado devuelve 409 con un mensaje accionable.
+- [x] Un alumno no accede a materiales fuera del recurso lanzado.
+- [x] Un profesor no selecciona material de otro profesor o Moodle.
+- [x] La lista forense sólo incluye alumnos que cargaron ese vídeo.
+- [x] Actividades legacy con `custom.videoId` siguen funcionando.
+- [x] Borrar un material referenciado devuelve 409 con un mensaje accionable.
 
 ## Cómo se prueba
 
@@ -354,3 +354,93 @@ Recorrido real:
   de vuelta sin otro servicio/API.
 - **Precargar todo.** Varias instancias Hls.js y PDFs grandes agotan memoria del
   navegador.
+
+## Cierre
+
+**Fecha**: 6 de agosto de 2026. Cerrada en la segunda pasada de la auditoría: la
+primera encontró el backend completo y correcto, pero la interfaz del profesor
+sólo permitía **crear** colecciones, nunca editarlas.
+
+### Lo que estaba mal y se corrigió
+
+`PATCH /collections/:id` existía, tenía control optimista y estaba probado, pero
+ninguna parte de la interfaz lo llamaba: un profesor que componía una colección
+no podía después añadir, quitar ni reordenar nada. El criterio «añadir, quitar o
+reordenar se refleja al reabrir» describía una capacidad que sólo era alcanzable
+con `curl`. Faltaban además el botón **Nueva colección**, los campos de
+descripción y carpeta, y componer fuera del selector de contenido.
+
+Añadidos: `#new-collection`, botón **Editar** en cada tarjeta →
+`openCollectionEditor()`, `#tray-description`, `#tray-folder`, y «Añadir a
+colección» disponible también en modo `manage`.
+
+Se arrastraba también el problema de T17 (`confirm()` para archivar): resuelto
+allí, con la corrección de `returnValue` que impide que un Escape se lea como una
+confirmación.
+
+### Verificación en un iframe cross-origin real
+
+Chrome 150 headless conducido por CDP sobre una página padre en
+`http://127.0.0.1:9099` que embebe el catálogo en `http://localhost:9099`.
+Pulsando los botones reales, en modo `manage` (actividad sin material, que es
+donde antes no se podía componer nada):
+
+| Paso | Resultado |
+|---|---|
+| «Nueva colección» | la bandeja se abre; tiene descripción y selector de carpeta con opciones |
+| «Añadir a colección» disponible fuera de Deep Linking | sí, 3 materiales añadibles |
+| Añadir dos materiales | `["PDF · PDF válido T20", "Vídeo · TEMA3"]` |
+| Botón accesible «Bajar» del primero | `["Vídeo · TEMA3", "PDF · PDF válido T20"]` — el orden cambia |
+| Guardar | `Colección guardada` |
+| «Editar» en la tarjeta | bandeja con encabezado `Editar «…»`, botón `Guardar cambios`, 2 elementos y el título cargado |
+| Quitar un elemento y guardar | queda 1; `Colección actualizada. Las actividades que la usan lo verán al reabrirse.` |
+| Editar otra colección y escribir descripción | `GET /collections` devuelve `description: 'Descripción escrita desde el iframe'` |
+
+### Evidencia del resto de criterios
+
+| Criterio | Evidencia |
+|---|---|
+| Dos vídeos → **una** actividad | El JWT firmado por `/lti/deeplink/response` contiene **1** `content_items` con `{"resourcekind":"collection","resourceid":…}`. Con `accept_multiple = 1` sigue siendo **1** (ADR-013). `test/deeplink.test.js` «una colección se anuncia como un único recurso» |
+| Orden configurado | `GET /collections/:id/manifest` devuelve `position 0,1,2` en el orden persistido; integración «T18: una colección conserva el orden explícito y mezcla tipos» |
+| Mezcla vídeo y PDF | Colección real con 1 PDF + 2 vídeos: `itemCount 3 / videoCount 2 / documentCount 1` |
+| Propagación al reabrir | Tras un `PATCH`, la sesión de colección **ya emitida** ve la nueva composición en el manifest; integración «T18: reordenar y quitar se refleja al releer la colección» |
+| Sin duplicar almacenamiento | `content_collection_item` guarda referencias; integración «T18: usar un material en dos colecciones no duplica almacenamiento» |
+| Archivar sin romper | `DELETE /collections/:id` → desaparece de `GET /collections`, el manifest de la sesión existente sigue a **200**, Deep Linking la rechaza y `POST …/restore` la devuelve |
+| Alumno no sale del recurso | Sesión de colección: manifest 200, vídeo de dentro 200, PDF de otra plataforma **404**, manifest de otra colección **404**. Al quitar el PDF de la colección, el **mismo token ya emitido** pasa a recibir **404** para él y sigue con 200 para el vídeo |
+| Profesor no ve material ajeno | `assertItemsUsable` filtra por `platform_id + owner_sub`; integración «T18: no se admite material de otro profesor ni material no listo» |
+| Lista forense precisa | Un alumno abrió sólo el segundo vídeo de una colección de dos: `view_event` registra **una** fila y `GET /videos/<el otro>/viewers` no lo incluye. Integración «registro: sólo aparece el vídeo que el alumno cargó, no toda la colección» |
+| Legacy `custom.videoId` | `test/deeplink.test.js`: «las actividades antiguas con videoId siguen resolviéndose», «el formato nuevo tiene prioridad sobre el legacy», «el launch acepta las claves custom en cualquier caja» |
+| Borrar material referenciado → 409 | `DELETE /videos/<id>` → 409 `material_referenced` con la lista de colecciones (id y título) |
+| Control optimista | Reenviar un `updatedAt` viejo → 409 `stale_collection`; la interfaz lo trata preguntando y recargando (`test/ui-iframe.test.js`) |
+
+El visor del alumno (`src/ui/collection.html` + `collection.js`) estaba completo
+desde la primera pasada: índice lateral y selector móvil, icono/título/duración o
+páginas, navegación anterior/siguiente con «N de M», `destroy()` de Hls.js y
+PDF.js antes de montar el siguiente elemento, overlay de identidad, estados de no
+disponible y atajos de teclado.
+
+### Regresión
+
+lint limpio · 117 unitarias (109 pasan, 8 saltadas) · 62 de integración sobre
+base limpia · 8/8 de PDF con las herramientas reales · migraciones idempotentes ·
+los tres compose validan.
+
+### Desviaciones respecto a la ficha
+
+1. **La bandeja es un panel sobre el listado, no lateral.** El §7 pedía «bandeja
+   lateral». Funcionalmente equivalente; cambia la colocación.
+2. **No hay aviso en la bandeja para un elemento que deje de estar listo.** Sólo
+   se avisa al guardar, cuando el servidor responde 409 `items_unavailable`
+   (tratado y contando cuántos afecta). El §7 pedía avisarlo antes.
+3. **La carpeta de una colección nueva ya no se hereda del filtro abierto**: se
+   elige en `#tray-folder`. Es lo que pedía el §7 («título, descripción y
+   carpeta»), pero cambia el comportamiento anterior.
+4. **Deep Linking con un UUID ajeno responde 400, no 404** (mismo caso que T17).
+   No es 403 y no confirma la existencia del recurso.
+5. **Las pruebas se agruparon** en `test/catalog.test.js`,
+   `test/integration/catalog.integration.js`, `test/deeplink.test.js` y
+   `test/ui-iframe.test.js` en vez de `test/collections.test.js` y
+   `test/resource-authorization.test.js`.
+6. **Sin verificar**: el recorrido con un Moodle real (pasos 1–7 de «Cómo se
+   prueba»). Se comprobó que la respuesta de Deep Linking lleva exactamente un
+   `content_items` correctamente firmado, pero no su llegada al curso.

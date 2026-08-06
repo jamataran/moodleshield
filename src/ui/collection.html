@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Colección · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="viewer">
+  <header class="bar">
+    <div>
+      <h1 id="title"></h1>
+      <p class="muted" id="description"></p>
+    </div>
+    <p class="muted" id="viewer"></p>
+  </header>
+
+  <div class="collection-layout">
+    <nav class="collection-index" aria-label="Materiales de esta actividad">
+      <label class="only-mobile" for="item-select">Material</label>
+      <select id="item-select" class="only-mobile"></select>
+      <ol id="item-list" class="only-desktop"></ol>
+    </nav>
+
+    <main class="collection-main">
+      <div id="content" class="viewer-content"></div>
+      <div class="collection-nav">
+        <button id="prev" type="button">← Anterior</button>
+        <span class="muted" id="position" role="status"></span>
+        <button id="next" type="button">Siguiente →</button>
+      </div>
+      <p class="muted" id="status" role="status"></p>
+    </main>
+  </div>
+
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/vendor/hls.min.js"></script>
+  <script type="module" src="/assets/collection.js"></script>
+</body>
+</html>

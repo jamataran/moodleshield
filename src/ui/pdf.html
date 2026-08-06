@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Documento · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="viewer">
+  <div id="content" class="viewer-content"></div>
+
+  <div class="player-meta">
+    <div>
+      <h1 id="title"></h1>
+      <p class="muted" id="viewer"></p>
+    </div>
+    <p class="muted" id="status" role="status"></p>
+  </div>
+
+  <p class="muted" id="notice" hidden></p>
+  <p class="muted" id="accessibility-note" hidden>
+    Este documento no tiene estructura de texto accesible. No se realiza
+    reconocimiento óptico de caracteres: si necesitas una versión accesible,
+    pídesela a tu profesor.
+  </p>
+
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script type="module" src="/assets/pdf.js"></script>
+</body>
+</html>

@@ -60,8 +60,15 @@ CMD ["node", "src/server.js"]
 # ---------------------------------------------------------------------------
 FROM base AS worker
 
+# Las herramientas que tocan ficheros que llegan de fuera viven SÓLO aquí: la
+# imagen de la aplicación no incorpora ni ffmpeg ni ningún parser de PDF, así
+# que un fichero hostil no comparte proceso con los launches LTI.
+#   ffmpeg        → transcodificación A/B (T07)
+#   qpdf          → comprobación de estructura del PDF
+#   poppler-utils → pdfinfo (cifrado y páginas) y pdftoppm (portada)
+#   ghostscript   → normalización con -dSAFER
 USER root
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg qpdf poppler-utils ghostscript
 USER node
 
 ENV NODE_OPTIONS="--max-old-space-size=192"

@@ -6,11 +6,8 @@
   <title>Reproductor · MoodleShield</title>
   <link rel="stylesheet" href="/assets/app.css">
 </head>
-<body>
-  <div id="stage">
-    <video id="video" controls playsinline controlslist="nodownload" disablepictureinpicture></video>
-    <div id="watermark" aria-hidden="true"></div>
-  </div>
+<body class="viewer">
+  <div id="content" class="viewer-content"></div>
 
   <div class="player-meta">
     <div>
@@ -20,8 +17,10 @@
     <p class="muted" id="status" role="status"></p>
   </div>
 
+  <p class="muted" id="notice" hidden></p>
+
   <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
   <script src="/vendor/hls.min.js"></script>
-  <script src="/assets/player.js"></script>
+  <script type="module" src="/assets/player.js"></script>
 </body>
 </html>

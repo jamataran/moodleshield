@@ -2,11 +2,14 @@ import Busboy from 'busboy'
 import { createWriteStream } from 'node:fs'
 import { mkdir, rename, rm, stat } from 'node:fs/promises'
 import { pipeline } from 'node:stream/promises'
+import { Transform } from 'node:stream'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import config from '../config.js'
 import { uploadPath, uploadTempPath } from './storage.js'
 
-const ALLOWED_EXTENSIONS = new Set(['.mp4', '.mov', '.mkv', '.m4v', '.webm', '.avi'])
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.mkv', '.m4v', '.webm', '.avi'])
+const PDF_EXTENSIONS = new Set(['.pdf'])
 
 export class UploadError extends Error {
   constructor (message, { status = 400, code = 'invalid_upload' } = {}) {
@@ -29,19 +32,76 @@ function mapWriteError (err) {
 }
 
 /**
- * Recibe un único vídeo y sólo resuelve después de que Busboy y el writer hayan
- * cerrado. El fichero visible para la cola aparece al final mediante rename.
+ * Calcula el SHA-256 sobre la marcha y, si se le pide, comprueba los primeros
+ * bytes del fichero.
+ *
+ * Los magic bytes se miran aquí y no después de escribir: un ZIP renombrado a
+ * `.pdf` se corta en el primer chunk en vez de ocupar 100 MB de disco y un
+ * turno de worker para que Ghostscript lo rechace.
  */
-export async function receiveVideoUpload (req, { videoId }) {
+function inspectingStream (magic, hash) {
+  let checked = !magic
+  let head = Buffer.alloc(0)
+  return new Transform({
+    transform (chunk, _encoding, callback) {
+      hash.update(chunk)
+      if (!checked) {
+        head = head.length ? Buffer.concat([head, chunk]) : chunk
+        if (head.length >= magic.length) {
+          checked = true
+          if (!head.subarray(0, magic.length).equals(magic)) {
+            return callback(new UploadError(
+              'El contenido del fichero no corresponde al tipo declarado',
+              { status: 415, code: 'unsupported_media_type' }
+            ))
+          }
+        }
+      }
+      callback(null, chunk)
+    },
+    flush (callback) {
+      if (!checked) {
+        return callback(new UploadError('El fichero es demasiado corto para ser válido', {
+          status: 415,
+          code: 'unsupported_media_type'
+        }))
+      }
+      callback()
+    }
+  })
+}
+
+/**
+ * Recibe un único fichero en streaming y sólo resuelve después de que Busboy y
+ * el writer hayan cerrado. El fichero visible para la cola aparece al final
+ * mediante `rename`: la cola nunca ve un `.part`.
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @param {object} options
+ * @param {string} options.revisionId  nombra el fichero de origen
+ * @param {Set<string>} options.allowedExtensions
+ * @param {number} options.maxBytes
+ * @param {Buffer}  [options.magic]     primeros bytes obligatorios
+ * @param {string}  [options.fallbackExt]
+ */
+export async function receiveUpload (req, {
+  revisionId,
+  allowedExtensions,
+  maxBytes,
+  magic = null,
+  fallbackExt = '.bin'
+}) {
   const tempPath = uploadTempPath()
   await mkdir(path.dirname(tempPath), { recursive: true })
 
   let title = ''
   let description = ''
+  let folderId = ''
   let originalFilename = ''
   let fileSeen = false
   let limitExceeded = false
   let validationError = null
+  const hash = createHash('sha256')
   const writes = []
   const abort = new AbortController()
   let busboy = null
@@ -50,7 +110,7 @@ export async function receiveVideoUpload (req, { videoId }) {
     try {
       busboy = Busboy({
         headers: req.headers,
-        limits: { files: 1, fileSize: config.media.maxUploadBytes, fields: 20, parts: 21 }
+        limits: { files: 1, fileSize: maxBytes, fields: 20, parts: 21 }
       })
     } catch (err) {
       throw new UploadError(`Petición multipart inválida: ${err.message}`)
@@ -60,6 +120,7 @@ export async function receiveVideoUpload (req, { videoId }) {
       busboy.on('field', (name, value) => {
         if (name === 'title') title = value.slice(0, 300)
         if (name === 'description') description = value.slice(0, 2000)
+        if (name === 'folderId') folderId = value.slice(0, 64)
       })
       busboy.on('file', (_field, stream, info) => {
         if (fileSeen) {
@@ -69,7 +130,7 @@ export async function receiveVideoUpload (req, { videoId }) {
         fileSeen = true
         originalFilename = info.filename ?? ''
         const ext = path.extname(originalFilename).toLowerCase()
-        if (!ALLOWED_EXTENSIONS.has(ext)) {
+        if (!allowedExtensions.has(ext)) {
           stream.resume()
           validationError = new UploadError(`Extensión no admitida: ${ext || '(ninguna)'}`, {
             status: 415,
@@ -80,6 +141,7 @@ export async function receiveVideoUpload (req, { videoId }) {
         stream.on('limit', () => { limitExceeded = true })
         const writing = pipeline(
           stream,
+          inspectingStream(magic, hash),
           createWriteStream(tempPath, { flags: 'wx' }),
           { signal: abort.signal }
         )
@@ -109,22 +171,24 @@ export async function receiveVideoUpload (req, { videoId }) {
 
     if (validationError) throw validationError
     if (limitExceeded) {
-      throw new UploadError(`El fichero supera el límite de ${config.media.maxUploadBytes} bytes`, {
+      throw new UploadError(`El fichero supera el límite de ${maxBytes} bytes`, {
         status: 413,
         code: 'upload_too_large'
       })
     }
-    if (!fileSeen || writes.length === 0) throw new UploadError('Falta el fichero de vídeo')
+    if (!fileSeen || writes.length === 0) throw new UploadError('Falta el fichero')
 
     const { size } = await stat(tempPath)
     if (size === 0) throw new UploadError('El fichero llegó vacío')
 
-    const destination = uploadPath(videoId, originalFilename)
+    const destination = uploadPath(revisionId, originalFilename, fallbackExt)
     await rename(tempPath, destination)
     return {
       destination,
       size,
+      sha256: hash.digest('hex'),
       originalFilename,
+      folderId: folderId || null,
       title: title || path.basename(originalFilename, path.extname(originalFilename)) || 'Sin título',
       description
     }
@@ -140,3 +204,26 @@ export async function receiveVideoUpload (req, { videoId }) {
     await rm(tempPath, { force: true }).catch(() => {})
   }
 }
+
+export function receiveVideoUpload (req, { revisionId, videoId }) {
+  return receiveUpload(req, {
+    // `videoId` se acepta por compatibilidad con las pruebas y el código previo
+    // a T21, donde el fichero de origen se nombraba con el id del vídeo.
+    revisionId: revisionId ?? videoId,
+    allowedExtensions: VIDEO_EXTENSIONS,
+    maxBytes: config.media.maxUploadBytes,
+    fallbackExt: '.mp4'
+  })
+}
+
+export function receiveDocumentUpload (req, { revisionId }) {
+  return receiveUpload(req, {
+    revisionId,
+    allowedExtensions: PDF_EXTENSIONS,
+    maxBytes: config.pdf.maxUploadBytes,
+    magic: Buffer.from('%PDF-'),
+    fallbackExt: '.pdf'
+  })
+}
+
+export { VIDEO_EXTENSIONS, PDF_EXTENSIONS }

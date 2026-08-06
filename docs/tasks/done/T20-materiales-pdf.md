@@ -5,7 +5,7 @@
 | **Fase** | 10 · Biblioteca |
 | **Depende de** | T06, T08, T12, T17, T22 |
 | **Bloquea a** | Colecciones mixtas de T18 |
-| **Estado** | ⬜ pendiente |
+| **Estado** | ✅ done · verificado 2026-08-06 |
 | **Esfuerzo** | 3–4 días |
 
 ## Objetivo
@@ -311,19 +311,19 @@ test/deeplink.test.js
 
 ## Criterio de aceptación
 
-- [ ] El profesor sube, organiza e inserta un PDF desde Moodle.
-- [ ] PDF válido pasa por `queued/processing/ready` y conserva hash y páginas.
-- [ ] PDF corrupto, cifrado, excesivo o un fichero renombrado a `.pdf` termina en
+- [x] El profesor sube, organiza e inserta un PDF desde Moodle.
+- [x] PDF válido pasa por `queued/processing/ready` y conserva hash y páginas.
+- [x] PDF corrupto, cifrado, excesivo o un fichero renombrado a `.pdf` termina en
       `failed` sin restos temporales.
-- [ ] El alumno abre el documento dentro del iframe con overlay visible.
-- [ ] Un documento grande no renderiza todas las páginas ni se carga entero por
+- [x] El alumno abre el documento dentro del iframe con overlay visible.
+- [x] Un documento grande no renderiza todas las páginas ni se carga entero por
       defecto.
-- [ ] Range válido devuelve 206 e inválido 416.
-- [ ] No existe ruta estática pública al PDF ni a la primera página.
-- [ ] Una sesión de otro recurso, profesor o plataforma obtiene 404.
-- [ ] Vídeos y PDFs conviven en carpetas, búsqueda y filtros del catálogo.
-- [ ] Actividades antiguas con `videoId` continúan funcionando.
-- [ ] La interfaz y documentación explican que esta protección PDF no es
+- [x] Range válido devuelve 206 e inválido 416.
+- [x] No existe ruta estática pública al PDF ni a la primera página.
+- [x] Una sesión de otro recurso, profesor o plataforma obtiene 404.
+- [x] Vídeos y PDFs conviven en carpetas, búsqueda y filtros del catálogo.
+- [x] Actividades antiguas con `videoId` continúan funcionando.
+- [x] La interfaz y documentación explican que esta protección PDF no es
       forense y no impide recuperar bytes autorizados.
 
 ## Cómo se prueba
@@ -361,3 +361,95 @@ Recorrido Moodle:
   navegador.
 - **Normalización.** Ghostscript puede alterar firmas y formularios; ambos están
   fuera de alcance y deben avisarse antes de subir.
+
+## Cierre
+
+**Fecha**: 6 de agosto de 2026. Auditoría independiente contra el stack completo
+de `infra/local` (app + worker + nginx + Postgres con datos reales migrados) y
+contra base de datos limpia.
+
+### Regresión
+
+| Comprobación | Resultado |
+|---|---|
+| `npm run lint` | limpio |
+| `npm test` | 110 pruebas · 102 pasan · 0 fallan · 8 saltadas (las de PDF, que necesitan qpdf/pdfinfo/gs) |
+| `npm run test:integration` sobre base limpia | 62 pruebas · 62 pasan |
+| `test/pdf-processing.test.js` dentro de `node:22-alpine` con qpdf, poppler-utils y ghostscript | 8 pruebas · 8 pasan |
+| `npm run migrate` dos veces seguidas | 6 aplicadas / 0 aplicadas → idempotente |
+| Validación de compose de los tres entornos como en `ci.yml` | test, prod y local OK |
+
+### Evidencia por criterio
+
+| Criterio | Evidencia |
+|---|---|
+| Sube, organiza e inserta un PDF | `POST /documents` con `folderId` del multipart → 202 y `pdf_document.folder_id` no nulo; el content item firmado se construye en `contentItemFor` (`test/deeplink.test.js`) |
+| `queued/processing/ready` con hash y páginas | Subida real de un PDF de 3 páginas al stack local: `pdf_document.status='ready'`, `page_count=3`; `test/pdf-processing.test.js` «un PDF válido se normaliza, se cuenta y se le calcula la huella» |
+| Corrupto / cifrado / renombrado → `failed` sin restos | Subidas reales: ZIP renombrado a `.pdf` → **415** cortado en el primer chunk (magic bytes, `src/media/upload.js`); PDF truncado → `failed` «El PDF está dañado…»; PDF cifrado AES-256 → `failed` «El PDF está cifrado…». Tras los fallos: `.staging/`, `.quarantine/` y `uploads/.tmp/` vacíos y sin directorio publicado. El fichero de origen lo recoge `reconcileStorage()` (verificado: `{"uploads":3}`) |
+| Alumno abre con overlay | `src/ui/assets/pdf-component.js` inserta `#watermark` con identidad y `pointer-events:none` (`src/ui/assets/app.css`) |
+| No renderiza todo ni carga entero | `IntersectionObserver` con `RENDER_MARGIN=2`, `releaseFarPages()` y `disableAutoFetch: true` en `pdf-component.js` |
+| Range 206 / 416 | Contra `127.0.0.1:8088`: `bytes=0-99` → 206 `bytes 0-99/4364`; `bytes=100-` → 206; `bytes=-50` → 206 `4314-4363/4364`; `bytes=999999-1000000` → **416** con `Content-Range: bytes */4364`; `bytes=500-100`, `pepinillos=0-10` y multi-rango → **416**. `test/pdf-delivery.test.js` (6 pruebas) |
+| Sin ruta estática pública | `GET /media/documents/<id>/<rev>/document.pdf` → **403**; `poster.jpg` → **403**; `/media/documents/` → **403** (`infra/nginx/templates/default.conf.template`, `location /media/`) |
+| Sesión ajena → 404 | Profesor A pidiendo el PDF del profesor C: `PATCH /documents/:id` → 404 y `GET /documents/:id/content` → 404. Integración: «autorización: un token de PDF no sirve para un vídeo ni al revés», «T20: un PDF respeta el mismo aislamiento por propietario que un vídeo» |
+| Vídeos y PDFs conviven | `GET /materials` mezcla ambos con el mismo DTO; `?kind=video` y `?kind=pdf` filtran; `?folderId=<uuid>&q=…` combina. Integración: «T20: vídeos y PDFs conviven en el mismo catálogo con la misma forma», «T20: un PDF se organiza en carpetas igual que un vídeo», «T20: el catálogo pagina con cursor sin repetir ni saltarse filas» |
+| Actividades antiguas con `videoId` | `test/deeplink.test.js`: «las actividades antiguas con videoId siguen resolviéndose», «el formato nuevo tiene prioridad sobre el legacy», «el launch acepta las claves custom en cualquier caja» |
+| Se dice que no es forense | `src/ui/catalog.html` (aviso antes de subir), `README.md`, `docs/arquitectura.md` («El PDF protege menos que el vídeo, y hay que decirlo») y ADR-014 |
+
+### Riesgos de la ficha, comprobados
+
+- *Confiar en extensión o MIME*: el filtro real son los magic bytes durante el
+  streaming; un ZIP con nombre `.pdf` muere en el primer chunk.
+- *Procesar PDF en la app web*: `docker exec` en el contenedor `app` confirma que
+  no tiene `qpdf`, `pdfinfo`, `gs` ni `ffmpeg`; el `worker` sí (`docker/Dockerfile`).
+- *Servirlo estático desde nginx*: 403 en todo el árbol `/media/documents/`.
+- *Miniatura pública*: `contentItemFor` usa `pdf-placeholder.svg`; ninguna
+  referencia al poster del documento sale de `src/lti/`.
+- *Memoria de PDF.js*: virtualización con `IntersectionObserver` y liberación de
+  canvases lejanos.
+- *Normalización*: el aviso de firmas digitales está en el catálogo antes de subir.
+
+### Desviaciones respecto a la ficha
+
+1. **`document.pdf` vive en `documents/<id>/<revisionId>/`, no en `documents/<id>/`.**
+   El árbol de la ficha se sustituyó por el de T21, que se implementó en la misma
+   tanda. Justificado y documentado en `docs/arquitectura.md` y ADR-011.
+2. **`pdf_job` incorpora `worker_id`, `lease_expires_at`, `heartbeat_at`,
+   `cancel_requested_at` y el estado `cancelled`**, que la ficha no listaba. Es la
+   semántica de lease que T22 fijó para vídeo, y la propia ficha la exigía por
+   referencia («la misma semántica de lease/reintento que T22 establezca»).
+3. **El fichero de origen de una subida fallida no se borra en el acto**: queda en
+   `UPLOAD_ROOT` hasta que `reconcileStorage()` lo recoge (ventana mínima de una
+   hora, `MIN_AGE_MS` en `src/media/reconcile.js`). Es deliberado —esa ventana
+   existe para no borrar el fichero de un trabajo que aún no ha confirmado su
+   fila— y está verificado que la reconciliación se lo lleva. Los restos que la
+   ficha pedía evitar (staging, cuarentena, directorio publicado a medias) sí
+   desaparecen inmediatamente.
+4. **Las pruebas se agruparon en menos ficheros de los que listaba la ficha**:
+   `test/pdf-delivery.test.js` y `test/pdf-processing.test.js` existen tal cual,
+   pero el aislamiento y el catálogo unificado se cubren en
+   `test/catalog.test.js` y `test/integration/catalog.integration.js` en vez de en
+   ficheros sueltos por tema.
+5. **Sin verificar**: el recorrido con un Moodle real (pasos 1–5 de «Cómo se
+   prueba»). Esta auditoría no dispone de una instancia Moodle; se verificó todo
+   lo alcanzable desde el stack local, incluida la respuesta firmada de Deep
+   Linking, pero no el `LtiDeepLinkingResponse` aterrizando en un curso.
+
+### Carencia detectada y cerrada en la segunda pasada
+
+En la primera pasada, `src/ui/pdf.html` declaraba
+`<p id="accessibility-note" hidden>` y **nada lo desocultaba**: el flag `tagged`
+que lo dispararía se calculaba en `src/media/pdf.js` y se quedaba en `meta.json`.
+Era un elemento muerto y el punto 6 del diseño («mostrar un aviso de
+accesibilidad si el documento carece de texto extraíble») estaba a medias.
+
+Resuelto sin tocar el esquema: `pdf-component.js` mira el texto de las tres
+primeras páginas con `getTextContent()` de PDF.js y llama a
+`onAccessibility({ hasText })`; `pdf.js` desoculta el aviso cuando no hay texto.
+Sigue sin hacerse OCR.
+
+**Verificado en Chrome 150 headless**, cargando el visor real con dos documentos:
+
+| Documento | Resultado |
+|---|---|
+| PDF con texto, 3 páginas | aviso **oculto**, 3 canvas dibujados, overlay presente |
+| PDF sólo-imagen, 1 página | aviso **visible**, overlay presente |

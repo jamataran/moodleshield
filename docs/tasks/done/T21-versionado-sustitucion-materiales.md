@@ -5,7 +5,7 @@
 | **Fase** | 11 · Ciclo de vida |
 | **Depende de** | T17, T20, T22 |
 | **Bloquea a** | Actualización segura de contenido en producción |
-| **Estado** | ⬜ pendiente |
+| **Estado** | ✅ done · verificado 2026-08-06 |
 | **Esfuerzo** | 3–5 días |
 
 ## Objetivo
@@ -277,16 +277,16 @@ docs/arquitectura.md
 
 ## Criterio de aceptación
 
-- [ ] Sustituir un vídeo/PDF no cambia el UUID usado por Moodle.
-- [ ] Mientras se procesa una revisión nueva, la anterior sigue reproduciéndose.
-- [ ] Una revisión fallida no altera la activa.
-- [ ] La activación es atómica y nuevos launches ven sólo la nueva.
-- [ ] Un player abierto antes del cambio termina con una única revisión.
-- [ ] Se puede volver a cualquiera de las revisiones conservadas.
-- [ ] Carpetas, actividades y colecciones no necesitan editarse al sustituir.
-- [ ] El historial de accesos identifica la revisión exacta servida.
-- [ ] La purga no elimina una revisión activa ni una usada por tokens vigentes.
-- [ ] La migración conserva UUID, metadatos, jobs y reproducción de contenido
+- [x] Sustituir un vídeo/PDF no cambia el UUID usado por Moodle.
+- [x] Mientras se procesa una revisión nueva, la anterior sigue reproduciéndose.
+- [x] Una revisión fallida no altera la activa.
+- [x] La activación es atómica y nuevos launches ven sólo la nueva.
+- [x] Un player abierto antes del cambio termina con una única revisión.
+- [x] Se puede volver a cualquiera de las revisiones conservadas.
+- [x] Carpetas, actividades y colecciones no necesitan editarse al sustituir.
+- [x] El historial de accesos identifica la revisión exacta servida.
+- [x] La purga no elimina una revisión activa ni una usada por tokens vigentes.
+- [x] La migración conserva UUID, metadatos, jobs y reproducción de contenido
       existente.
 
 ## Cómo se prueba
@@ -314,3 +314,94 @@ docs/arquitectura.md
   archiva, no se recicla ni se crea otro durante una sustitución.
 - **Migración masiva de ficheros.** Debe poder reanudarse y comprobar hashes
   antes de retirar la estructura antigua.
+
+## Cierre
+
+**Fecha**: 6 de agosto de 2026. Auditoría independiente. Lo importante de esta
+tarea —que la migración no se lleve por delante el contenido existente— se
+verificó contra los **datos reales** del stack `infra/local`: ocho vídeos
+subidos antes de T21, migrados el 5 de agosto, reproducidos de extremo a extremo
+por nginx.
+
+### Regresión
+
+| Comprobación | Resultado |
+|---|---|
+| `npm run lint` | limpio |
+| `npm test` | 110 pruebas · 102 pasan · 0 fallan · 8 saltadas (PDF sin herramientas en el host) |
+| `npm run test:integration` sobre base limpia (`DB_NAME=ms_verify`) | 62 pruebas · 62 pasan |
+| `test/pdf-processing.test.js` en `node:22-alpine` con qpdf/poppler/ghostscript | 8 · 8 pasan |
+| `npm run migrate` dos veces seguidas | `applied:6` y después `applied:0` → idempotente |
+| Compose de test, prod y local como en `ci.yml` | los tres validan |
+
+### Evidencia por criterio
+
+| Criterio | Evidencia |
+|---|---|
+| Sustituir no cambia el UUID | `POST /videos/38916750-…/revisions` crea la revisión 2 y luego la 3; `video.id` sigue siendo `38916750-dba6-46af-aabe-9af94d03071b` en todo el ciclo. Integración: «T21: sustituir no cambia el UUID y la versión anterior sigue publicada mientras se procesa» |
+| La anterior sigue reproduciéndose mientras se procesa | Con la candidata en `queued`, `GET /hls/<id>/index.m3u8` devuelve 200 con los 8 segmentos de la revisión 1 |
+| Una revisión fallida no altera la activa | Se subió un MP4 deliberadamente truncado: la revisión 2 acabó en `failed` («ffprobe … moov atom not found») y `video` quedó `status=ready`, `active_revision_id` intacto, `duration_seconds=30.527`, `segment_count=8`. Integración: «T21: una revisión fallida no altera la publicada» |
+| Activación atómica; los launches nuevos ven sólo la nueva | Al terminar la revisión 3: rev 1 → `retired`, rev 3 → `ready`+activa y la proyección física del material pasó a `6.000 s / 2 segmentos` en la misma transacción (`completeJob` → `activateRevisionInTransaction`, `src/queue/postgres.js`). Un launch nuevo emite URLs bajo `/videos/<id>/4d5588ac-…/` |
+| Un player abierto termina con una única revisión | El token emitido antes del cambio sigue devolviendo URLs bajo `/videos/<id>/69334fc5-…/` y esos segmentos siguen sirviéndose **200** por nginx después de activar la 3 |
+| Se puede volver a una revisión conservada | `POST /materials/video/<id>/revisions/69334fc5-…/activate` → 200 `activated`; el material recupera `30.527 s / 8 segmentos` |
+| Carpetas, actividades y colecciones no se editan | La colección que referenciaba el vídeo siguió resolviéndolo durante rev 1 → rev 3 → rev 1 sin tocarla. Integración: «T21: las colecciones no se editan al sustituir un material» |
+| El historial identifica la revisión servida | `view_event.revision_id` guardó `9e21af6e-…` para el alumno de prueba; `GET /videos/:id/viewers` devuelve `revisions: [...]` por candidato. Integración: «registro: el evento guarda la revisión exacta que se sirvió» |
+| La purga respeta activa, gracia y `KEEP_MIN` | `DELETE …/revisions/<activa>` → **409** `revision_active`; `DELETE …/revisions/<retirada reciente>` → **409** `revision_in_grace`; `minimumGraceSeconds()` = 2 592 000 s. `purgeRetiredRevisions()` ejecutada dos veces seguidas: `{"video":0,"pdf":0,"failed":0}` las dos → idempotente. Integración: «T21: la purga nunca toca la activa ni se salta la ventana de gracia» (incluye `legal_hold`) |
+| La migración conserva contenido existente | En el stack local: 8 vídeos reales → 8 revisiones 1, `pattern_scope` con el UUID histórico, artefactos trasladados a `videos/<id>/<rev>/` con `migratedAt` y `artifactHash` en `meta.json`. **Reproducción real por nginx**: playlist personalizada con patrón A/B mezclado, clave AES de 16 bytes, los 8 segmentos a 200, y `ffmpeg -i` sobre la playlist completa reconstruye 30,485 s de h264 480×270 + aac. `test/integration/migration.integration.js`: 10 pruebas, todas pasan |
+
+### Riesgos de la ficha, comprobados
+
+- *Sobrescribir el directorio actual*: `publishStaging` sólo hace `rename` sobre
+  un destino inexistente; si existe y no valida, lo aparta a `.quarantine`.
+  Verificado en `test/publication-atomicity.test.js` («dos revisiones del mismo
+  vídeo conviven sin pisarse», «purgar una revisión deja intactas las demás»).
+- *Resolver «active» en cada segmento*: la revisión se fija en el launch y viaja
+  en el token (`rrv`); `test/session.test.js` «la sesión fija la revisión
+  resuelta en el launch».
+- *Purgar demasiado pronto*: `minimumGraceSeconds()` toma el máximo entre TTL de
+  sesión, TTL de enlace firmado y días de retención.
+- *Patrón sin revisión*: `video_revision.pattern_scope` es `<videoId>:<revisionId>`
+  para lo nuevo y sólo `<videoId>` para lo migrado; `tools/trace.mjs` exige
+  `--revision` cuando hay varias («Este vídeo tiene varias revisiones con
+  artefactos. Indica cuál con --revision»).
+- *Borrar el material lógico*: `DELETE /materials/:kind/:id` archiva, no borra.
+- *Migración masiva de ficheros*: `src/media/layout-migration.js` es reanudable,
+  compara la huella antes y después del `rename` y revierte si no cuadra.
+
+### Desviaciones respecto a la ficha
+
+1. **Las columnas físicas NO se retiran de `video`/`pdf_document`.** La ficha
+   decía «se retiran de `video` al finalizar la migración de código/datos». Se
+   mantienen como **proyección** de la revisión activa, actualizada en la misma
+   transacción que la activación. Motivo documentado en ADR-011: el catálogo y
+   las consultas existentes las leen, quitarlas no aportaba nada y arriesgaba
+   romper despliegues en marcha. La fuente de verdad es la tabla de revisiones.
+2. **`video_revision` añade `storage_layout`, `pattern_scope` y `legal_hold`**,
+   que la ficha no listaba. Los dos primeros son lo que permite servir el árbol
+   antiguo durante la transición y conservar las trazas históricas (ADR-012); el
+   tercero implementa el «legal hold» que la ficha dejaba como opcional
+   («si no se implementa, documentar…»). Se implementó.
+3. **El traslado de ficheros lo hace el worker al arrancar**, no un paso manual
+   de la migración: SQL no mueve ficheros y un despliegue que olvidara el paso
+   dejaría el catálogo sirviendo 404.
+4. **`MATERIAL_ARCHIVE_RETENTION_DAYS` era configuración muerta; se cerró en la
+   segunda pasada.** Aparecía en `.env.example`, en los tres compose y en
+   `config.revisions.archiveRetentionDays` sin que ningún código la leyera. Ahora
+   la consume `reportArchivedMaterials()` (`src/services/revisions.js`), que el
+   worker llama en el ciclo de purga: **avisa, nunca borra**, porque Moodle no
+   notifica las actividades eliminadas y borrar material archivado por su cuenta
+   las rompería en silencio. Verificado en el stack local: envejeciendo el
+   `archived_at` de un vídeo a 200 días, devuelve `{"video":1}` y registra un
+   aviso con id, título, fecha de archivado y último acceso.
+5. **Las pruebas se agruparon**: la ficha pedía `test/revisions.test.js`,
+   `revision-switch.test.js` y `revision-retention.test.js`; están todas dentro
+   de `test/integration/catalog.integration.js` (11 pruebas con prefijo `T21:`) y
+   `test/integration/migration.integration.js`, porque necesitan base de datos.
+6. **Se añadió `scripts/migrate-media-layout.mjs` durante esta auditoría**: el
+   `RAISE NOTICE` de `migrations/007_material_revisions.sql` lo citaba como forma
+   de forzar el traslado y el fichero no existía. No se editó la migración —ya
+   aplicada— sino que se creó el script que prometía.
+7. **Sin verificar**: el paso 8 de «Cómo se prueba» (trazado completo contra un
+   fichero filtrado real). Se verificó que `tools/trace.mjs` resuelve y desambigua
+   revisiones y deriva el patrón por revisión, pero la comparación forense
+   completa sigue cubierta por T13, que continúa en el backlog en estado 🔴.

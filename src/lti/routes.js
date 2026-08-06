@@ -10,8 +10,11 @@ import { MESSAGE_TYPE } from './claims.js'
 import { issueSession, issueToken, verifyToken } from '../session.js'
 import { renderPage } from '../ui/render.js'
 import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
-import { getVideoForPlatform, listReadyVideosForDeepLink, recordView } from '../services/videos.js'
-import { assertVideoId } from '../media/storage.js'
+import { getVideoForPlatform, listReadyVideosForDeepLink } from '../services/videos.js'
+import { getDocumentForPlatform, listReadyDocumentsForDeepLink } from '../services/documents.js'
+import { getCollectionForPlatform, loadItems, publicItem } from '../services/collections.js'
+import { getActiveRevision } from '../services/revisions.js'
+import { assertUuid, isUuid } from '../media/storage.js'
 
 export const ltiRouter = Router()
 
@@ -133,9 +136,9 @@ ltiRouter.post('/launch', async (req, res, next) => {
     }
 
     // Launch normal de una actividad ya insertada.
-    const videoId = context.custom?.videoId ?? context.custom?.videoid ?? null
+    const resource = resourceFromCustom(context.custom)
 
-    if (!videoId) {
+    if (!resource) {
       if (context.isInstructor) {
         const sessionToken = issueSession({ ...context, identity, mode: 'manage' })
         return res.type('html').send(
@@ -149,50 +152,148 @@ ltiRouter.post('/launch', async (req, res, next) => {
         )
       }
       throw new LtiError(
-        'Esta actividad todavía no tiene ningún vídeo asociado. Avisa a tu profesor: ' +
-          'tiene que editarla y elegir el vídeo con «Seleccionar contenido».',
-        { status: 409, code: 'no_video' }
+        'Esta actividad todavía no tiene ningún material asociado. Avisa a tu profesor: ' +
+          'tiene que editarla y elegir el material con «Seleccionar contenido».',
+        { status: 409, code: 'no_resource' }
       )
     }
 
-    const video = await getVideoForPlatform(assertVideoId(videoId), platform.id)
-    if (!video) throw new LtiError('El vídeo asociado ya no existe', { status: 404, code: 'video_missing' })
-    if (video.status !== 'ready') {
-      return res.status(202).type('html').send(
-        await renderPage('processing.html', { TITLE: video.title, STATUS: video.status })
-      )
+    if (resource.kind === 'collection') {
+      return renderCollectionLaunch({ res, context, platform, identity, resource })
     }
-
-    await recordView({
-      videoId: video.id,
-      platformId: platform.id,
-      context,
-      identity,
-      ip: req.ip,
-      userAgent: req.get('user-agent')
-    })
-
-    const sessionToken = issueSession({
-      ...context,
-      identity,
-      mode: 'launch',
-      resource: { kind: 'video', id: video.id }
-    })
-
-    return res.type('html').send(
-      await renderPage('player.html', {
-        bootstrap: {
-          sessionToken,
-          video: { id: video.id, title: video.title },
-          user: { name: context.name, identity },
-          playlistUrl: `${config.publicUrl}/hls/${video.id}/index.m3u8`
-        }
-      })
-    )
+    return renderMaterialLaunch({ res, context, platform, identity, resource })
   } catch (err) {
     next(err)
   }
 })
+
+/**
+ * Qué recurso lleva incrustado la actividad.
+ *
+ * Moodle puede normalizar las claves de `custom` a minúscula, así que se
+ * aceptan las dos formas. `videoId` es el formato anterior a T20 y sigue
+ * funcionando: cada actividad ya creada en un curso lo lleva escrito.
+ */
+export function resourceFromCustom (custom = {}) {
+  const kind = custom.resourcekind ?? custom.resourceKind ?? null
+  const id = custom.resourceid ?? custom.resourceId ?? null
+  if (kind && isUuid(id) && ['video', 'pdf', 'collection'].includes(kind)) {
+    return { kind, id }
+  }
+  const legacy = custom.videoId ?? custom.videoid ?? null
+  if (isUuid(legacy)) return { kind: 'video', id: legacy }
+  return null
+}
+
+async function renderMaterialLaunch ({ res, context, platform, identity, resource }) {
+  const material = resource.kind === 'pdf'
+    ? await getDocumentForPlatform(resource.id, platform.id)
+    : await getVideoForPlatform(resource.id, platform.id)
+  if (!material) {
+    throw new LtiError('El material asociado a esta actividad ya no existe', {
+      status: 404,
+      code: 'resource_missing'
+    })
+  }
+
+  // La revisión se resuelve UNA vez, aquí, y viaja en la sesión: si se
+  // resolviera en cada petición, una activación a mitad de reproducción
+  // mezclaría dos versiones bajo el mismo player.
+  const revision = await getActiveRevision({ kind: resource.kind, materialId: material.id })
+  if (!revision) {
+    return res.status(202).type('html').send(
+      await renderPage('processing.html', { TITLE: material.title, STATUS: material.status })
+    )
+  }
+
+  const sessionToken = issueSession({
+    ...context,
+    identity,
+    mode: 'launch',
+    resource: { kind: resource.kind, id: material.id, revisionId: revision.id }
+  })
+
+  // El registro forense ya no se hace aquí: abrir la actividad no es cargar el
+  // material. Lo dispara la primera petición real de bytes (playlist o PDF).
+  const archivedNotice = material.archived_at && context.isInstructor
+    ? 'Este material está archivado: sigue funcionando en las actividades existentes, pero ya no aparece en el selector.'
+    : null
+
+  if (resource.kind === 'pdf') {
+    return res.type('html').send(
+      await renderPage('pdf.html', {
+        bootstrap: {
+          sessionToken,
+          document: {
+            id: material.id,
+            title: material.title,
+            pageCount: material.page_count
+          },
+          user: { name: context.name, identity },
+          contentUrl: `${config.publicUrl}/documents/${material.id}/content`,
+          notice: archivedNotice
+        }
+      })
+    )
+  }
+
+  return res.type('html').send(
+    await renderPage('player.html', {
+      bootstrap: {
+        sessionToken,
+        video: { id: material.id, title: material.title },
+        user: { name: context.name, identity },
+        playlistUrl: `${config.publicUrl}/hls/${material.id}/index.m3u8`,
+        notice: archivedNotice
+      }
+    })
+  )
+}
+
+/**
+ * Una colección abre UNA actividad con varios materiales dentro. La composición
+ * se resuelve en cada launch, así que añadir, quitar o reordenar se refleja al
+ * volver a abrir la actividad sin editarla en Moodle.
+ */
+async function renderCollectionLaunch ({ res, context, platform, identity, resource }) {
+  const collection = await getCollectionForPlatform(resource.id, platform.id)
+  if (!collection) {
+    throw new LtiError('La colección asociada a esta actividad ya no existe', {
+      status: 404,
+      code: 'resource_missing'
+    })
+  }
+  const items = await loadItems(collection.id)
+  if (items.length === 0) {
+    throw new LtiError(
+      'Esta colección está vacía. Avisa a tu profesor para que añada materiales.',
+      { status: 409, code: 'empty_collection' }
+    )
+  }
+
+  const sessionToken = issueSession({
+    ...context,
+    identity,
+    mode: 'launch',
+    resource: { kind: 'collection', id: collection.id }
+  })
+
+  return res.type('html').send(
+    await renderPage('collection.html', {
+      bootstrap: {
+        sessionToken,
+        collection: {
+          id: collection.id,
+          title: collection.title,
+          description: collection.description
+        },
+        items: items.map(publicItem),
+        user: { name: context.name, identity },
+        manifestUrl: `${config.publicUrl}/collections/${collection.id}/manifest`
+      }
+    })
+  )
+}
 
 /** El catálogo llama aquí al pulsar "Insertar". */
 ltiRouter.post('/deeplink/response', async (req, res, next) => {
@@ -210,13 +311,18 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
       })
     }
 
+    const kind = ['video', 'pdf', 'collection'].includes(req.body?.resourceKind)
+      ? req.body.resourceKind
+      : 'video'
     const selected = []
-      .concat(req.body?.videoIds ?? req.body?.videoId ?? [])
+      .concat(req.body?.resourceIds ?? req.body?.videoIds ?? req.body?.videoId ?? [])
       .filter(Boolean)
-    if (selected.length === 0) throw new LtiError('No se seleccionó ningún vídeo', { code: 'no_selection' })
+    if (selected.length === 0) {
+      throw new LtiError('No se seleccionó ningún material', { code: 'no_selection' })
+    }
     let ids
     try {
-      ids = selected.map(assertVideoId)
+      ids = selected.map((id) => assertUuid(id, 'Identificador de material'))
     } catch {
       throw new LtiError('La selección contiene un identificador inválido', { code: 'invalid_selection' })
     }
@@ -224,20 +330,29 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
     const platform = await one('SELECT * FROM lti_platform WHERE id = $1', [payload.pid])
     if (!platform) throw new LtiError('Plataforma desconocida', { status: 404 })
 
-    const rows = await listReadyVideosForDeepLink({
-      ids,
-      platformId: payload.pid,
-      ownerSub: payload.sub
-    })
-    if (rows.length === 0) {
-      throw new LtiError('Ninguno de los vídeos seleccionados está listo', { code: 'not_ready' })
+    const scope = { ids, platformId: payload.pid, ownerSub: payload.sub }
+    let materials
+
+    if (kind === 'collection') {
+      // Una colección es exactamente UN content_item, se anuncie o no
+      // `accept_multiple`: la agrupación la hace la colección, no la
+      // plataforma. Devolver varios sería otra semántica y otro resultado.
+      materials = await resolveCollectionsForDeepLink(scope)
+    } else if (kind === 'pdf') {
+      materials = (await listReadyDocumentsForDeepLink(scope)).map((row) => ({ ...row, kind: 'pdf' }))
+    } else {
+      materials = (await listReadyVideosForDeepLink(scope)).map((row) => ({ ...row, kind: 'video' }))
+    }
+
+    if (materials.length === 0) {
+      throw new LtiError('Ninguno de los materiales seleccionados está disponible', { code: 'not_ready' })
     }
 
     const jwt = await buildDeepLinkingResponse({
       platform,
       deploymentId: payload.dep,
       data: payload.dat,
-      videos: payload.multi ? rows : rows.slice(0, 1)
+      materials: kind === 'collection' || !payload.multi ? materials.slice(0, 1) : materials
     })
 
     res.type('html').send(deepLinkingForm(payload.ret, jwt))
@@ -245,6 +360,38 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
     next(err)
   }
 })
+
+/**
+ * Una colección sólo se inserta si es del profesor, tiene contenido y todos sus
+ * elementos siguen listos. Firmar una colección rota produciría una actividad
+ * que falla al abrirse, y el profesor se enteraría por un alumno.
+ */
+async function resolveCollectionsForDeepLink ({ ids, platformId, ownerSub }) {
+  const out = []
+  for (const id of ids) {
+    const collection = await one(
+      `SELECT * FROM content_collection
+        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 AND archived_at IS NULL`,
+      [id, platformId, ownerSub]
+    )
+    if (!collection) continue
+    const items = await loadItems(id)
+    if (items.length === 0) {
+      throw new LtiError('La colección está vacía; añade materiales antes de insertarla', {
+        code: 'empty_collection'
+      })
+    }
+    const broken = items.filter((item) => item.status !== 'ready' || !item.active_revision_id)
+    if (broken.length > 0) {
+      throw new LtiError(
+        `La colección contiene ${broken.length} material(es) que todavía no están listos`,
+        { code: 'items_not_ready' }
+      )
+    }
+    out.push({ ...collection, kind: 'collection' })
+  }
+  return out
+}
 
 /**
  * Alta de plataformas por API, para poder automatizar el registro desde un

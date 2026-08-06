@@ -247,3 +247,149 @@ escaso del sistema.
 **Consecuencias.** Un alumno con mala conexión sufrirá. Aceptable para un MVP en
 un contexto de academia; si aparece como problema real, la ampliación es directa
 (un `master.m3u8` con varios niveles, cada uno con sus variantes A/B).
+
+---
+
+## ADR-011 · Material lógico y revisión física, separados
+
+**Estado**: aceptada · **Fecha**: 2026-08 · **Tarea**: T21
+
+**Contexto.** El UUID de `video` queda incrustado en cada actividad Moodle. Para
+actualizar el contenido había que borrar, volver a subir y editar todas las
+actividades que lo reutilizaban. Y si se sobreescribieran los segmentos en el
+mismo directorio mientras se procesa, un alumno podría recibir una mezcla
+inconsistente de dos versiones.
+
+**Decisión.** Se separan dos identidades: el **material lógico** (`video`,
+`pdf_document`), que es el UUID permanente que conoce Moodle, y la **revisión**
+(`video_revision`, `pdf_revision`), que es el fichero concreto y sus artefactos.
+La revisión activa sólo cambia cuando la nueva está completamente validada.
+
+**Razones.** Es la única forma de que sustituir un fichero no obligue a tocar
+ninguna actividad, colección ni carpeta. Y separar el estado del material del
+estado del fichero permite que una candidata falle sin tumbar lo publicado.
+
+**Consecuencias.**
+
+- El directorio de una revisión publicada es **inmutable**: se escribe en
+  staging y se publica con un `rename`. Nunca se reescribe.
+- La revisión se resuelve **una vez**, durante el launch, y viaja en el token de
+  sesión. Resolverla en cada segmento permitiría que una activación a mitad de
+  reproducción mezclara versiones.
+- Las columnas físicas de `video`/`pdf_document` se conservan como **proyección**
+  de la revisión activa, actualizada en la misma transacción que la activación.
+  La ficha original planteaba retirarlas; se mantuvieron porque el catálogo y las
+  consultas existentes las leen, quitarlas no aportaba nada y sí arriesgaba
+  romper despliegues en marcha. La fuente de verdad es la tabla de revisiones.
+- Los artefactos pasan de `MEDIA_ROOT/<videoId>/` a
+  `MEDIA_ROOT/videos/<videoId>/<revisionId>/`. El traslado lo hace el worker al
+  arrancar, comprobando la huella antes y después; nginx sirve las dos rutas
+  mientras queden revisiones sin trasladar.
+
+**Alternativas descartadas.** Un symlink `current` por material: introduce una
+carrera entre la caché del filesystem y la activación, y no resuelve qué revisión
+está usando una sesión ya emitida.
+
+---
+
+## ADR-012 · El patrón forense incluye la revisión, sin invalidar las trazas antiguas
+
+**Estado**: aceptada · **Fecha**: 2026-08 · **Tarea**: T21 · **Matiza**: ADR-008
+
+**Contexto.** El patrón A/B se deriva de `HMAC(WATERMARK_SECRET, "sub:videoId:n")`.
+Con revisiones, dos versiones del mismo material producirían patrones idénticos
+para el mismo alumno, y el trazado no podría decir de cuál salió la copia.
+
+**Decisión.** El ámbito del HMAC pasa a ser `<videoId>:<revisionId>`, y se
+**guarda** en `video_revision.pattern_scope` en vez de derivarse.
+
+**Razones.** Guardarlo es lo que permite que las revisiones migradas conserven su
+ámbito histórico (sólo el UUID del vídeo). ADR-008 promete que las trazas
+anteriores siguen siendo reproducibles; recalcular el ámbito habría roto esa
+promesa para todo el material ya publicado.
+
+**Consecuencias.** `tools/trace.mjs` acepta `--revision`; si un material tiene
+varias revisiones con artefactos y no se indica cuál, exige elegir en vez de
+adivinar. `view_event.revision_id` dice exactamente qué versión vio cada alumno,
+y la lista de candidatos se filtra por esa revisión.
+
+---
+
+## ADR-013 · Una colección es un content item, no varios
+
+**Estado**: aceptada · **Fecha**: 2026-08 · **Tarea**: T18
+
+**Contexto.** LTI Deep Linking permite devolver varios `content_items` cuando la
+plataforma anuncia `accept_multiple`. Parecía la vía natural para insertar varios
+materiales de una vez.
+
+**Decisión.** Varios `content_items` y una colección son cosas distintas y no se
+mezclan. Una colección es una entidad persistente en MoodleShield que se inserta
+como **exactamente un** `ltiResourceLink`, se anuncie `accept_multiple` o no.
+
+**Razones.** Devolver varios items crea varios recursos y, según la plataforma,
+varias actividades: el resultado dependería del Moodle de enfrente. Además, la
+composición vive aquí, así que añadir, quitar o reordenar se refleja en todas sus
+inserciones al siguiente launch, sin editar nada en ningún curso.
+
+**Consecuencias.** El título que Moodle copió al crear la actividad no se
+renombra solo: LTI no define un callback de vuelta y Moodle guarda su propia
+copia. Borrar un material referenciado devuelve 409 con la lista de colecciones
+afectadas (`ON DELETE RESTRICT`), en vez de dejar una colección rota en silencio.
+Las colecciones se archivan, nunca se borran: no hay forma de demostrar que no
+queda ninguna actividad apuntándolas.
+
+---
+
+## ADR-014 · El PDF se normaliza en el worker, y su protección no es forense
+
+**Estado**: aceptada · **Fecha**: 2026-08 · **Tarea**: T20
+
+**Contexto.** Un PDF comparte casi todo el ciclo de vida del vídeo —subida,
+validación asíncrona, propietario, carpeta, selección LTI, autorización,
+registro— pero no necesita HLS ni ffmpeg. Y, al contrario que el vídeo, no admite
+una marca A/B: el fichero se entrega entero al navegador para renderizarlo.
+
+**Decisión.** El PDF se valida y normaliza en el worker con `qpdf --check`,
+`pdfinfo`, Ghostscript `-dSAFER` con `pdfwrite` y `pdftoppm`, con plazo máximo y
+`nice`. Se entrega siempre desde la aplicación, con autorización previa y soporte
+de `Range`. Se documenta explícitamente que **no es DRM ni marca forense**.
+
+**Razones.** Ni la extensión ni el `Content-Type` demuestran que un fichero sea
+un PDF; el filtro real son los magic bytes (durante el streaming) y esas cuatro
+herramientas. Ejecutarlas en el proceso web pondría un parser de ficheros que
+llegan de fuera en el mismo bucle de eventos que los launches LTI. Y servir el
+PDF como estático desde nginx saltaría toda la autorización.
+
+**Consecuencias.** La imagen del worker añade `qpdf`, `poppler-utils` y
+`ghostscript`; la de la aplicación no. La normalización descarta JavaScript
+embebido, acciones automáticas, adjuntos y formularios —y también las firmas
+digitales, que quedan fuera de alcance y se avisan en el catálogo—. El content
+item de Deep Linking usa un icono genérico y nunca la primera página, que podría
+ser justo el material sensible. Las pruebas de la cadena se ejecutan dentro de una
+imagen con esas herramientas, no en el runner de CI.
+
+---
+
+## ADR-015 · Carpetas personales por profesor, no por institución
+
+**Estado**: aceptada · **Fecha**: 2026-08 · **Tarea**: T17
+
+**Contexto.** El catálogo listaba todos los vídeos de una plataforma ordenados
+por fecha. Con varios profesores en el mismo Moodle, eso es a la vez incómodo y
+una fuga: cada uno veía el material de los demás.
+
+**Decisión.** Las carpetas y la administración del catálogo son personales por
+`platform_id + owner_sub`. `platform_id` separa instancias de Moodle; `owner_sub`
+separa profesores dentro de la misma instancia. Un solo nivel, sin `parent_id`.
+
+**Razones.** Confundir instancia con propietario era el hueco real: `platform_id`
+nunca separó profesores. La propiedad usa el `sub` estable de LTI, nunca el
+nombre ni el email. Un nivel cubre «temas», «convocatorias» y «ediciones» sin
+traer consigo el árbol, el movimiento recursivo y los permisos heredados.
+
+**Consecuencias.** No existe una biblioteca compartida por la institución;
+compartir material exigirá una tarea posterior con permisos explícitos. La
+carpeta es clasificación pura: no forma parte del enlace LTI ni de la ruta en
+disco, así que mover un material **nunca** cambia su UUID. Borrar una carpeta
+devuelve su contenido a la raíz y no borra nada.

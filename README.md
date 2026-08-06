@@ -1,7 +1,8 @@
 # MoodleShield
 
-Herramienta LTI 1.3 que sirve vídeo a los alumnos de Moodle con **marca de agua
-forense por alumno**, sin transcodificar en cada visionado.
+Herramienta LTI 1.3 que sirve **vídeo y PDF** a los alumnos de Moodle con
+**marca de agua forense por alumno** en el vídeo, sin transcodificar en cada
+visionado.
 
 Cada vídeo se procesa **una sola vez** a dos variantes HLS cifradas con una
 diferencia imperceptible. La playlist de cada alumno mezcla segmentos de una y
@@ -20,22 +21,37 @@ Moodle ──LTI 1.3──▶ MoodleShield ──▶ HLS cifrado, personalizado 
 ```
 
 - **Sin licencias.** Todo open source.
-- **Sin salir de Moodle.** El profesor sube el vídeo y lo inserta en el curso
+- **Sin salir de Moodle.** El profesor sube el material y lo inserta en el curso
   desde el propio editor, con Deep Linking.
+- **Biblioteca propia.** Carpetas personales por profesor, búsqueda y
+  colecciones que agrupan varios materiales en **una sola actividad**.
+- **Actualizable sin romper nada.** Sustituir un fichero crea una revisión
+  nueva; el identificador que Moodle tiene incrustado no cambia y la versión
+  anterior se sigue sirviendo hasta que la nueva está validada.
 - **Poca memoria.** El servicio web ocupa unos 45 MB de RSS; el resto de la
   máquina queda para transcodificar.
+
+> **PDF: hasta dónde llega.** El visor controla el acceso y muestra la identidad
+> del alumno, pero el documento autorizado viaja al navegador para renderizarse.
+> No es DRM y **no** deja marca forense: a diferencia del vídeo, una filtración
+> de PDF no es atribuible. Ver [`docs/arquitectura.md`](docs/arquitectura.md).
 
 ---
 
 ## Estado
 
-Scaffolding completo y verificado: handshake LTI, pipeline A/B, playlists
-personalizadas, entrega firmada, player, Deep Linking, trazado forense, dos
-entornos de infraestructura y CI/CD. Lo que falta es conectarlo a **tu** Moodle
-y **tu** servidor.
+**12 tareas del MVP completadas**: handshake LTI, pipeline A/B, playlists
+personalizadas, entrega firmada, Deep Linking, catálogo. **4 tareas de biblioteca**
+(carpetas, colecciones, PDF, revisiones) completadas el 6 de agosto.
 
-Qué está hecho y qué no, tarea por tarea:
-[`docs/tasks/README.md`](docs/tasks/README.md).
+Lo que falta:
+- **T13 roto**: El trazado forense es incorrecto; necesita revisión del algoritmo.
+- **T11 parcial**: El player funciona en desarrollo; falta matriz de navegadores.
+- **T22 prioritaria**: Corrige un hueco en los leases del worker.
+- **T14–T16 parciales**: Infraestructura existe pero faltan alertas, backup, auditoría.
+
+Detalle, estado y orden recomendado: [`docs/tasks/README.md`](docs/tasks/README.md).  
+Resumen ejecutivo: [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md).
 
 ---
 
@@ -101,11 +117,15 @@ docker run --rm -u root -e MEDIA_ROOT=/data/media -e MARK_ALPHA=0.5 \
     node --input-type=module -e "
       const { transcodeVideo } = await import(\"/app/src/media/transcode.js\")
       const { buildUserPlaylist } = await import(\"/app/src/media/playlist.js\")
-      const id = \"11111111-2222-3333-4444-555555555555\"
-      const meta = await transcodeVideo(id, \"/tmp/in.mp4\")
+      const { revisionDir } = await import(\"/app/src/media/storage.js\")
+      const id  = \"11111111-2222-3333-4444-555555555555\"
+      const rev = \"22222222-3333-4444-5555-666666666666\"
+      const dir = revisionDir(\"video\", id, rev)
+      const meta = await transcodeVideo(id, \"/tmp/in.mp4\", { outputDir: dir, revisionId: rev })
       const p = (x) => Array.from(x, b => b ? \"B\" : \"A\").join(\"\")
-      const ana  = await buildUserPlaylist({ videoId: id, userSub: \"ana\",  keyToken: \"t\" })
-      const luis = await buildUserPlaylist({ videoId: id, userSub: \"luis\", keyToken: \"t\" })
+      const scope = { videoId: id, revisionId: rev, layout: \"revision\", patternScope: id + \":\" + rev }
+      const ana  = await buildUserPlaylist({ ...scope, userSub: \"ana\",  keyToken: \"t\" })
+      const luis = await buildUserPlaylist({ ...scope, userSub: \"luis\", keyToken: \"t\" })
       console.log(\"segmentos:\", meta.segmentCount)
       console.log(\"ana :\", p(ana.pattern))
       console.log(\"luis:\", p(luis.pattern))
@@ -341,7 +361,7 @@ del stack de Portainer, y `infra/<env>/.env.sample` sólo sirve como plantilla.
 ## Trazar una filtración
 
 ```bash
-node tools/trace.mjs --video <videoId> --input pirata.mp4
+node tools/trace.mjs --video <videoId> [--revision <revisionId>] --input pirata.mp4
 ```
 
 ```
@@ -357,7 +377,7 @@ Origen más probable: Ana García Pérez (12345678Z) — 100.0% de coincidencia,
 El script se niega a concluir cuando la muestra es corta o cuando el segundo
 candidato está demasiado cerca: un falso positivo aquí tiene consecuencias sobre
 una persona real. Detalle y limitaciones (recorte de bordes, colusión):
-[`docs/tasks/T13`](docs/tasks/T13-trazado-forense.md).
+[`docs/tasks/T13`](docs/tasks/backlog/T13-trazado-forense.md).
 
 ---
 
@@ -365,6 +385,7 @@ una persona real. Detalle y limitaciones (recorte de bordes, colusión):
 
 | Documento | Para qué |
 |---|---|
+| **[`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md)** | **Punto de entrada** — qué está hecho, qué no, por dónde empezar |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Qué se construye, en qué orden, con qué criterio de éxito |
 | [`docs/tasks/`](docs/tasks/README.md) | Una ficha por tarea: alcance, pasos, pruebas, trampas |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Referencia técnica: flujos, endpoints, modelo de seguridad |
@@ -385,17 +406,17 @@ src/
 ├── worker.js          entrada del transcodificador
 ├── session.js         tokens de sesión (sin cookies: va en iframe)
 ├── lti/               handshake LTI 1.3 sobre `jose`
-├── media/             marca A/B, playlists, transcodificación, firma de URLs
+├── media/             marca A/B, playlists, transcodificación, PDF, firma de URLs
 ├── queue/             leases, heartbeat y fencing de trabajos Postgres
-├── routes/            HTTP: vídeos, HLS, salud
-├── services/          acceso a datos
-└── ui/                player y catálogo
+├── routes/            HTTP: materiales, carpetas, colecciones, vídeos, PDFs, HLS, salud
+├── services/          acceso a datos, autorización por recurso y revisiones
+└── ui/                biblioteca, player, visor de PDF y visor de colección
 
 migrations/            SQL plano, aplicado solo al arrancar
 infra/{local,test,prod}/  un compose autosuficiente por entorno, con su README
 docker/                Dockerfile con dos destinos + bake
 tools/trace.mjs        trazado forense
-test/                  58 tests unitarios + 7 de integración con Postgres
+test/                  110 tests unitarios + 62 de integración con Postgres
 ```
 
 ## Configuración

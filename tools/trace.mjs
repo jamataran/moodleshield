@@ -19,14 +19,16 @@
 import { spawn } from 'node:child_process'
 import { parseArgs } from 'node:util'
 import config from '../src/config.js'
-import { readMeta } from '../src/media/storage.js'
+import { readMediaMeta, revisionDir } from '../src/media/storage.js'
 import { patternFor, comparePatterns, patternToString, falsePositiveProbability } from '../src/media/watermark.js'
 import { listViewers } from '../src/services/videos.js'
+import { listRevisions } from '../src/services/revisions.js'
 import { closeDatabase } from '../src/db/index.js'
 
 const { values } = parseArgs({
   options: {
     video: { type: 'string' },
+    revision: { type: 'string' },
     input: { type: 'string' },
     'pattern-of': { type: 'string' },
     threshold: { type: 'string', default: '0.35' },
@@ -37,23 +39,76 @@ const { values } = parseArgs({
 
 if (values.help || !values.video) {
   console.log(`Uso:
-  node tools/trace.mjs --video <videoId> --input <fichero-filtrado>
-  node tools/trace.mjs --video <videoId> --pattern-of <userSub>
+  node tools/trace.mjs --video <videoId> [--revision <revisionId>] --input <fichero-filtrado>
+  node tools/trace.mjs --video <videoId> [--revision <revisionId>] --pattern-of <userSub>
 
 Opciones:
+  --revision <id>   Revisión contra la que comparar. Si se omite y hay varias con
+                    artefactos, hay que elegir: cada revisión tiene su propio patrón.
   --threshold <n>   Diferencia mínima de luminancia para aceptar un bit (por defecto 0.35)
   --json            Salida en JSON en vez de tabla`)
   process.exit(values.help ? 0 : 1)
 }
 
-const meta = await readMeta(values.video)
+/**
+ * Resuelve contra qué revisión hay que comparar.
+ *
+ * Desde T21 un material puede tener varias revisiones con artefactos, y cada
+ * una produce un patrón distinto (`pattern_scope`). Comparar contra la que no
+ * es da un resultado no concluyente sin decir por qué, así que si hay ambigüedad
+ * se exige elegir en vez de adivinar.
+ */
+async function resolveRevision () {
+  const revisions = await listRevisions({ kind: 'video', materialId: values.video })
+  if (revisions.length === 0) {
+    console.error(`El vídeo ${values.video} no tiene ninguna revisión registrada.`)
+    process.exit(1)
+  }
+  if (values.revision) {
+    const chosen = revisions.find((r) => r.id === values.revision)
+    if (!chosen) {
+      console.error(`La revisión ${values.revision} no pertenece a este vídeo.`)
+      process.exit(1)
+    }
+    return chosen
+  }
+  const withArtifacts = revisions.filter((r) => ['ready', 'retired'].includes(r.status))
+  if (withArtifacts.length === 0) {
+    console.error('Ninguna revisión de este vídeo conserva artefactos en disco.')
+    process.exit(1)
+  }
+  if (withArtifacts.length > 1) {
+    console.error('Este vídeo tiene varias revisiones con artefactos. Indica cuál con --revision:\n')
+    for (const revision of withArtifacts) {
+      console.error(
+        `  ${revision.id}  revisión ${revision.revision_number}` +
+        `${revision.is_active ? ' (publicada)' : ''}` +
+        `  ${revision.segment_count ?? '?'} segmentos` +
+        `  ${new Date(revision.created_at).toISOString().slice(0, 10)}`
+      )
+    }
+    process.exit(1)
+  }
+  return withArtifacts[0]
+}
+
+const revision = await resolveRevision()
+const meta = await readMediaMeta(
+  revisionDir('video', values.video, revision.id, revision.storage_layout)
+)
 if (!meta) {
-  console.error(`No hay meta.json para el vídeo ${values.video}. ¿Está transcodificado?`)
+  console.error(
+    `No hay meta.json para la revisión ${revision.id}. ¿Se purgaron sus artefactos?`
+  )
   process.exit(1)
 }
 
+// El ámbito del patrón lo dicta la fila de la revisión: las revisiones
+// anteriores a T21 se derivaban sólo del UUID del vídeo y siguen trazándose.
+const patternScope = revision.pattern_scope ?? values.video
+
 if (values['pattern-of']) {
-  const bits = patternFor(values['pattern-of'], values.video, meta.segmentCount)
+  const bits = patternFor(values['pattern-of'], patternScope, meta.segmentCount)
   console.log(patternToString(bits))
   await closeDatabase()
   process.exit(0)
@@ -155,16 +210,20 @@ for (let i = 0; i < sampleCount; i++) {
 
 console.error(`Bits legibles: ${measured} de ${sampleCount} muestreados\n`)
 
-const viewers = await listViewers(values.video)
+// Sólo los alumnos que cargaron ESTA revisión: incluir a los de otra produciría
+// candidatos que, por construcción, no pueden coincidir.
+const viewers = await listViewers(values.video, { revisionId: revision.id })
 if (viewers.length === 0) {
-  console.error('No hay visionados registrados para este vídeo: no hay candidatos que comparar.')
+  console.error(
+    `No hay visionados registrados para la revisión ${revision.id}: no hay candidatos que comparar.`
+  )
   await closeDatabase()
   process.exit(2)
 }
 
 const results = viewers
   .map((viewer) => {
-    const candidate = patternFor(viewer.user_sub, values.video, meta.segmentCount)
+    const candidate = patternFor(viewer.user_sub, patternScope, meta.segmentCount)
     const { matches, compared, score } = comparePatterns(observed, candidate)
     return {
       userSub: viewer.user_sub,
@@ -180,7 +239,14 @@ const results = viewers
   .sort((a, b) => b.score - a.score)
 
 if (values.json) {
-  console.log(JSON.stringify({ videoId: values.video, measured, sampleCount, results }, null, 2))
+  console.log(JSON.stringify({
+    videoId: values.video,
+    revisionId: revision.id,
+    revisionNumber: revision.revision_number,
+    measured,
+    sampleCount,
+    results
+  }, null, 2))
 } else {
   console.log('Coincid.  Aciertos   Alumno                              Usuario      1 entre')
   console.log('-'.repeat(88))

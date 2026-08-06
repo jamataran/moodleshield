@@ -6,6 +6,10 @@ import config from './config.js'
 import logger from './logger.js'
 import { ltiRouter, ltiErrorHandler } from './lti/routes.js'
 import { videosRouter } from './routes/videos.js'
+import { documentsRouter } from './routes/documents.js'
+import { collectionsRouter } from './routes/collections.js'
+import { foldersRouter } from './routes/folders.js'
+import { materialsRouter } from './routes/materials.js'
 import { hlsRouter, mediaRouter } from './routes/hls.js'
 import { healthRouter } from './routes/health.js'
 import { listPlatforms } from './lti/platform.js'
@@ -61,6 +65,13 @@ export async function createApp () {
       "img-src 'self' data: blob:",
       "media-src 'self' blob:",
       "connect-src 'self'",
+      // PDF.js ejecuta su parser en un Worker propio. Se sirve desde /vendor
+      // (mismo origen); `blob:` cubre el fallback que la librería usa cuando el
+      // navegador no le deja instanciar el worker desde una URL.
+      "worker-src 'self' blob:",
+      // `object-src 'none'` es deliberado con PDF: se renderiza con PDF.js
+      // sobre canvas, nunca incrustando el visor nativo del navegador, que
+      // ejecutaría el JavaScript del propio documento.
       "object-src 'none'",
       "base-uri 'none'",
       `frame-ancestors ${frameAncestors}`
@@ -79,7 +90,11 @@ export async function createApp () {
 
   app.use(healthRouter)
   app.use('/lti', ltiRouter)
+  app.use('/materials', materialsRouter)
+  app.use('/folders', foldersRouter)
+  app.use('/collections', collectionsRouter)
   app.use('/videos', videosRouter)
+  app.use('/documents', documentsRouter)
   app.use('/hls', hlsRouter)
   // En producción los segmentos los sirve nginx y esta ruta no existe. Fuera de
   // producción se monta siempre, incluso con delivery='signed', para poder
@@ -92,14 +107,16 @@ export async function createApp () {
     '/assets',
     express.static(path.join(uiDir, 'assets'), { maxAge: '1h', index: false })
   )
-  // hls.js se sirve desde node_modules: sin CDN, el despliegue es autónomo.
+  // hls.js y PDF.js se sirven desde node_modules: sin CDN, el despliegue es
+  // autónomo y la CSP no necesita abrirse a ningún origen externo.
+  const vendorOptions = { maxAge: '7d', index: false, immutable: true }
+  app.use(
+    '/vendor/pdfjs',
+    express.static(path.join(rootDir, 'node_modules/pdfjs-dist/build'), vendorOptions)
+  )
   app.use(
     '/vendor',
-    express.static(path.join(rootDir, 'node_modules/hls.js/dist'), {
-      maxAge: '7d',
-      index: false,
-      immutable: true
-    })
+    express.static(path.join(rootDir, 'node_modules/hls.js/dist'), vendorOptions)
   )
 
   app.get('/', async (_req, res) => {

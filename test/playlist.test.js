@@ -4,6 +4,18 @@ import { parseVariantPlaylist, assertVariantsAligned, buildUserPlaylist } from '
 import { patternFor } from '../src/media/watermark.js'
 import config from '../src/config.js'
 
+const VIDEO_ID = '11111111-2222-3333-4444-555555555555'
+const REVISION_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+const OTHER_REVISION_ID = 'aaaaaaaa-bbbb-cccc-dddd-ffffffffffff'
+
+/** Revisión publicada en el árbol nuevo: lo que ve un launch normal. */
+const REVISION = {
+  videoId: VIDEO_ID,
+  revisionId: REVISION_ID,
+  layout: 'revision',
+  patternScope: `${VIDEO_ID}:${REVISION_ID}`
+}
+
 function fixture ({ segments = 6, duration = 4, keyUri = 'key' } = {}) {
   const lines = [
     '#EXTM3U',
@@ -55,18 +67,17 @@ test('assertVariantsAligned rechaza claves distintas', () => {
 })
 
 test('la playlist de un alumno sigue exactamente su patrón A/B', async () => {
-  const videoId = '11111111-2222-3333-4444-555555555555'
   const userSub = 'alumno-1'
   const basePlaylist = fixture({ segments: 24 })
 
   const { body, pattern } = await buildUserPlaylist({
-    videoId,
+    ...REVISION,
     userSub,
     keyToken: 'token-de-prueba',
     basePlaylist
   })
 
-  const expected = patternFor(userSub, videoId, 24)
+  const expected = patternFor(userSub, REVISION.patternScope, 24)
   assert.deepEqual(Array.from(pattern), Array.from(expected))
 
   const segmentLines = body.split('\n').filter((l) => l.includes('seg_'))
@@ -74,35 +85,69 @@ test('la playlist de un alumno sigue exactamente su patrón A/B', async () => {
   segmentLines.forEach((line, i) => {
     const variant = expected[i] ? 'B' : 'A'
     assert.ok(
-      line.includes(`/${videoId}/${variant}/seg_${String(i).padStart(4, '0')}.ts`),
+      line.includes(`/videos/${VIDEO_ID}/${REVISION_ID}/${variant}/seg_${String(i).padStart(4, '0')}.ts`),
       `el segmento ${i} debería apuntar a la variante ${variant}: ${line}`
     )
   })
 })
 
 test('dos alumnos reciben playlists distintas del mismo vídeo', async () => {
-  const videoId = '11111111-2222-3333-4444-555555555555'
   const basePlaylist = fixture({ segments: 32 })
-  const a = await buildUserPlaylist({ videoId, userSub: 'ana', keyToken: 't', basePlaylist })
-  const b = await buildUserPlaylist({ videoId, userSub: 'luis', keyToken: 't', basePlaylist })
+  const a = await buildUserPlaylist({ ...REVISION, userSub: 'ana', keyToken: 't', basePlaylist })
+  const b = await buildUserPlaylist({ ...REVISION, userSub: 'luis', keyToken: 't', basePlaylist })
   assert.notEqual(a.body, b.body)
+})
+
+test('dos revisiones del mismo vídeo dan patrones distintos al mismo alumno', async () => {
+  // Si el patrón dependiera sólo del videoId, sustituir el fichero produciría
+  // exactamente la misma secuencia A/B y el trazado no sabría a cuál apuntar.
+  const basePlaylist = fixture({ segments: 32 })
+  const primera = await buildUserPlaylist({ ...REVISION, userSub: 'ana', keyToken: 't', basePlaylist })
+  const segunda = await buildUserPlaylist({
+    ...REVISION,
+    revisionId: OTHER_REVISION_ID,
+    patternScope: `${VIDEO_ID}:${OTHER_REVISION_ID}`,
+    userSub: 'ana',
+    keyToken: 't',
+    basePlaylist
+  })
+  assert.notDeepEqual(Array.from(primera.pattern), Array.from(segunda.pattern))
+})
+
+test('una revisión legacy conserva el patrón histórico y su ruta antigua', async () => {
+  // ADR-008: cambiar la derivación invalidaría todas las trazas anteriores a
+  // T21. Las revisiones migradas llevan `pattern_scope` = UUID del vídeo.
+  const basePlaylist = fixture({ segments: 16 })
+  const { body, pattern } = await buildUserPlaylist({
+    videoId: VIDEO_ID,
+    revisionId: REVISION_ID,
+    layout: 'legacy',
+    patternScope: VIDEO_ID,
+    userSub: 'ana',
+    keyToken: 't',
+    basePlaylist
+  })
+  assert.deepEqual(Array.from(pattern), Array.from(patternFor('ana', VIDEO_ID, 16)))
+  const first = body.split('\n').find((l) => l.includes('seg_0000.ts'))
+  assert.ok(first.includes(`/media/${VIDEO_ID}/`), first)
+  assert.ok(!first.includes('/videos/'), first)
 })
 
 test('la URI de la clave se reescribe con el token del alumno', async () => {
   const { body } = await buildUserPlaylist({
-    videoId: '11111111-2222-3333-4444-555555555555',
+    ...REVISION,
     userSub: 'ana',
     keyToken: 'abc.def',
     basePlaylist: fixture({ segments: 2 })
   })
   const keyLine = body.split('\n').find((l) => l.startsWith('#EXT-X-KEY'))
-  assert.ok(keyLine.includes('/hls/11111111-2222-3333-4444-555555555555/key?kt=abc.def'))
+  assert.ok(keyLine.includes(`/hls/${VIDEO_ID}/key?kt=abc.def`))
   assert.ok(!keyLine.includes('URI="key"'))
 })
 
 test('las cabeceras y el ENDLIST se conservan intactos', async () => {
   const { body } = await buildUserPlaylist({
-    videoId: '11111111-2222-3333-4444-555555555555',
+    ...REVISION,
     userSub: 'ana',
     keyToken: 't',
     basePlaylist: fixture({ segments: 4 })
@@ -117,7 +162,7 @@ test('las cabeceras y el ENDLIST se conservan intactos', async () => {
 test('una playlist sin segmentos es un error, no una playlist vacía', async () => {
   await assert.rejects(
     buildUserPlaylist({
-      videoId: '11111111-2222-3333-4444-555555555555',
+      ...REVISION,
       userSub: 'ana',
       keyToken: 't',
       basePlaylist: '#EXTM3U\n#EXT-X-ENDLIST\n'
@@ -132,7 +177,7 @@ test('con entrega firmada, cada segmento lleva md5 y expires', async (t) => {
   t.after(() => { config.media.delivery = original })
 
   const { body } = await buildUserPlaylist({
-    videoId: '11111111-2222-3333-4444-555555555555',
+    ...REVISION,
     userSub: 'ana',
     keyToken: 't',
     basePlaylist: fixture({ segments: 3 })

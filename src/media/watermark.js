@@ -18,16 +18,21 @@ import config from '../config.js'
 export const VARIANTS = ['A', 'B']
 
 /**
- * Deriva el patrón de bits de un alumno para un vídeo.
+ * Deriva el patrón de bits de un alumno para una revisión de vídeo.
  * Se expande el HMAC en contador para cubrir vídeos con más de 256 segmentos.
  *
  * @param {string} userSub  identificador estable del alumno (claim `sub`)
- * @param {string} videoId
- * @param {number} bitCount número de segmentos del vídeo
+ * @param {string} scope    ámbito del patrón. Hasta T21 era el UUID del vídeo;
+ *                          desde T21, `<videoId>:<revisionId>`, para que dos
+ *                          revisiones del mismo material no produzcan patrones
+ *                          idénticos y el trazado sepa contra cuál comparar.
+ *                          Lo guarda `video_revision.pattern_scope`, de modo
+ *                          que las trazas antiguas siguen siendo reproducibles.
+ * @param {number} bitCount número de segmentos de la revisión
  * @param {string} [secret]
  * @returns {Uint8Array} un byte por bit, con valores 0 (variante A) o 1 (B)
  */
-export function patternFor (userSub, videoId, bitCount, secret = config.secrets.watermark) {
+export function patternFor (userSub, scope, bitCount, secret = config.secrets.watermark) {
   if (!Number.isInteger(bitCount) || bitCount < 0) {
     throw new TypeError('bitCount debe ser un entero no negativo')
   }
@@ -37,7 +42,7 @@ export function patternFor (userSub, videoId, bitCount, secret = config.secrets.
 
   while (produced < bitCount) {
     const block = createHmac('sha256', secret)
-      .update(`${userSub}:${videoId}:${counter}`)
+      .update(`${userSub}:${scope}:${counter}`)
       .digest()
     for (let byteIndex = 0; byteIndex < block.length && produced < bitCount; byteIndex++) {
       const byte = block[byteIndex]
