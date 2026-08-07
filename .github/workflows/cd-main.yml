@@ -1,4 +1,4 @@
-name: CD · main → test
+name: 'CD · main: publicar imágenes y desplegar en test'
 
 # Cada push a main: verifica, construye UNA vez, publica :sha-<commit> y :edge,
 # y escribe la etiqueta directamente en infra/test/compose.yml. Portainer

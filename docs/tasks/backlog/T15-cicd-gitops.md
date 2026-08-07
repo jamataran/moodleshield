@@ -87,7 +87,7 @@ infra/{test,prod}/.env.sample      ← plantilla local; Portainer no depende de 
    ghcr.io con un PAT `read:packages`. Sin esto, Portainer no puede hacer pull.
 4. **Webhooks de Portainer** (opcional, para despliegue inmediato en vez de
    polling): secretos `PORTAINER_WEBHOOK_TEST` y `PORTAINER_WEBHOOK_PROD`.
-5. **Primera versión**: GitHub → Actions → Release · test → prod → Run workflow.
+5. **Primera versión**: GitHub → Actions → Release · promoción manual de test a producción → Run workflow.
 
 ## Criterio de aceptación
 

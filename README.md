@@ -280,7 +280,7 @@ git commit -m "feat: describe el cambio"
 git push -u origin feature/mi-cambio
 ```
 
-El PR ejecuta `ci.yml`: lint, tests unitarios e integración con Postgres,
+El PR ejecuta `CI · PR: validar código, infraestructura y build` (`ci.yml`): lint, tests unitarios e integración con Postgres,
 migraciones idempotentes, validación de los tres Compose, comprobación de que
 no hay secretos y una construcción Docker sin publicar. Si todo está verde,
 se revisa y se hace merge a `main` (preferiblemente *squash merge*). No se
@@ -311,7 +311,7 @@ lanzarse manualmente desde Actions si se quiere validar el cambio.
 #### Publicar producción
 
 Primero espera a que el commit esté desplegado y validado en test. La forma
-recomendada es usar el botón de GitHub: ve a **Actions → Release · test → prod
+recomendada es usar el botón de GitHub: ve a **Actions → Release · promoción manual de test a producción
 → Run workflow**, escribe la versión (`v0.1.0`) y pulsa **Run workflow**. El
 workflow localiza automáticamente la imagen que está en test, crea el tag
 correcto, promociona el mismo digest y actualiza producción.

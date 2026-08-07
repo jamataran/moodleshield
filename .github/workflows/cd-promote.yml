@@ -1,4 +1,4 @@
-name: CD · tag → prod
+name: 'CD · tag vX.Y.Z: promover la misma imagen a producción'
 
 # Promoción a producción SIN reconstruir: `docker buildx imagetools create`
 # re-etiqueta el digest que ya rodó en test como vX.Y.Z + latest. Ni Node, ni

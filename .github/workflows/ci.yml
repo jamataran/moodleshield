@@ -1,4 +1,4 @@
-name: CI
+name: 'CI · PR: validar código, infraestructura y build'
 
 # Sólo en pull requests. Los pushes a main los cubre cd-main.yml (que ya
 # verifica antes de publicar): así cada commit se construye UNA vez, no dos.

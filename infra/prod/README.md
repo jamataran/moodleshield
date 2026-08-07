@@ -66,7 +66,7 @@ clonar el repositorio, ni crear directorios, ni ajustar permisos.
 
 ## Publicar una versión
 
-La forma recomendada es **GitHub → Actions → Release · test → prod → Run
+La forma recomendada es **GitHub → Actions → Release · promoción manual de test a producción → Run
 workflow**. Introduce una versión como `v0.1.0` y pulsa **Run workflow**. El
 workflow encuentra la imagen actualmente desplegada en test, crea el tag y
 promueve el mismo digest.

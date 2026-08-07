@@ -1,4 +1,4 @@
-name: CodeQL
+name: 'CodeQL · análisis de seguridad en PR y semanal'
 
 # Análisis estático de seguridad. Fuera del CI de cada push porque tarda varios
 # minutos y aquí no aporta velocidad: semanal y en PR a main es suficiente.

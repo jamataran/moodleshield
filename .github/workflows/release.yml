@@ -1,4 +1,4 @@
-name: Release · test → prod
+name: 'Release · promoción manual de test a producción'
 
 # Publicación manual desde GitHub Actions. Evita tener que localizar a mano el
 # commit padre de deploy(test): crea el tag y promueve el mismo digest.
