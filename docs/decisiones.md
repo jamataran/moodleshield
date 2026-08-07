@@ -392,4 +392,70 @@ traer consigo el árbol, el movimiento recursivo y los permisos heredados.
 compartir material exigirá una tarea posterior con permisos explícitos. La
 carpeta es clasificación pura: no forma parte del enlace LTI ni de la ruta en
 disco, así que mover un material **nunca** cambia su UUID. Borrar una carpeta
-devuelve su contenido a la raíz y no borra nada.
+devuelve su contenido a la raíz y no borra nada. *(La parte «un solo nivel» la
+sustituye ADR-016.)*
+
+---
+
+## ADR-016 · Carpetas anidadas con reglas en el servicio, no en el esquema
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Sustituye la parte «un solo nivel» de ADR-015
+
+**Contexto.** Un nivel de carpetas se quedó corto en cuanto un profesor organizó
+más de un curso: «Álgebra / Tema 1 / Prácticas» no cabe en una lista plana. La
+interfaz además confundía carpetas con colecciones, y el rediseño del catálogo
+como explorador de archivos pedía un árbol de verdad.
+
+**Decisión.** `catalog_folder.parent_id` con FK compuesta
+`(parent_id, platform_id, owner_sub) → (id, platform_id, owner_sub)`: colgar una
+carpeta de la de otro profesor es imposible por esquema. La unicidad de nombre
+pasa a ser por nivel (`platform_id, owner_sub, COALESCE(parent_id, uuid_cero),
+lower(btrim(name))`). Los ciclos largos y la profundidad máxima
+(`MAX_FOLDER_DEPTH`, 6 por defecto) los comprueba el servicio con CTE
+recursivas, serializado por un advisory lock por `(plataforma, profesor)`.
+
+**Razones.** Postgres no puede expresar «sin ciclos» ni «máximo N niveles» de
+forma declarativa sin triggers, y un trigger escondería la regla donde nadie la
+lee. El advisory lock convierte la carrera clásica (A→bajo B y B→bajo A a la
+vez) en dos movimientos serializados sin bloquear a otros profesores. Borrar una
+carpeta sube contenido y subcarpetas a su padre: sigue sin borrarse jamás
+material por borrar una carpeta.
+
+**Consecuencias.** La carpeta sigue siendo clasificación pura: mover carpetas o
+materiales no toca UUIDs ni rutas en disco, y las actividades Moodle no se
+enteran. La migración 008 conserva los datos existentes (todo era raíz, y la
+unicidad global implica la unicidad por nivel). Revertirlo sería aplanar el
+árbol: `UPDATE catalog_folder SET parent_id = NULL` y restaurar el índice único
+global, aceptando renombrar las carpetas que colisionen.
+
+---
+
+## ADR-017 · La copia descargable de un PDF se sella y se cifra, y no es forense
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Complementa a ADR-014
+
+**Contexto.** Los alumnos necesitan el PDF fuera del visor (estudiar sin
+conexión, imprimir). Hasta ahora la única «descarga» era recuperar los bytes
+desde las herramientas de desarrollo, sin marca alguna. El vídeo no tiene este
+problema: no se ofrece descarga y su traza A/B viaja en el streaming.
+
+**Decisión.** `GET /documents/:id/download` genera al vuelo, con
+`@cantoo/pdf-lib` (fork de pdf-lib con cifrado, JavaScript puro), una copia por
+peticionario: diagonal translúcida con su identidad en cada página, pie con
+identidad y fecha, y cifrado con **contraseña de propietario aleatoria de un
+solo uso** (se abre y se imprime sin contraseña; edición, copia y ensamblado
+quedan bloqueados; la bandera de accesibilidad queda activa para lectores de
+pantalla). Techo de tamaño `PDF_DOWNLOAD_MAX_BYTES` porque el sellado ocurre en
+memoria del proceso web. Sólo PDF: el vídeo no tiene descarga.
+
+**Razones.** Generar la copia al vuelo evita custodiar N copias por alumno y no
+toca el pipeline del worker (qpdf y Ghostscript no existen en la imagen de la
+aplicación). La contraseña no se guarda porque no hace falta: su único fin es
+activar los permisos del PDF.
+
+**Consecuencias.** Que nadie lo venda como DRM: los permisos de un PDF los
+aplica el visor, no el fichero —`qpdf --decrypt` los elimina—, y quien sabe
+editar un PDF puede quitar el sello. Es disuasión visible y atribución social,
+un escalón por encima de «sin marca», y ADR-014 sigue diciendo la verdad: el
+documento que muestra el visor viaja completo y sin marca forense. La imagen de
+la aplicación suma una dependencia JavaScript pura; la del worker no cambia.

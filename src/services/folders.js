@@ -2,7 +2,7 @@ import { many, one, transaction } from '../db/index.js'
 import config from '../config.js'
 
 /**
- * Carpetas personales de un único nivel.
+ * Carpetas personales anidadas (n niveles).
  *
  * La identidad de una carpeta es `platform_id + owner_sub`: `platform_id`
  * separa instancias de Moodle y `owner_sub` separa profesores dentro de la
@@ -10,8 +10,14 @@ import config from '../config.js'
  * petición. Un UUID de otro profesor responde 404 y no 403: confirmar que
  * existe ya sería filtrar información del catálogo ajeno.
  *
- * Una carpeta clasifica; no gobierna el ciclo de vida de nada. Borrarla devuelve
- * su contenido a la raíz.
+ * Una carpeta clasifica; no gobierna el ciclo de vida de nada. Borrarla sube su
+ * contenido y sus subcarpetas al padre, nunca borra material.
+ *
+ * Los ciclos largos (A→B→A) no los puede impedir el esquema; los corta este
+ * servicio recorriendo los ancestros del destino. Toda mutación del árbol toma
+ * antes un advisory lock por (plataforma, profesor): dos movimientos
+ * simultáneos del mismo árbol se serializan y ninguno puede colar un ciclo
+ * entre la comprobación y el UPDATE.
  */
 
 /** UNIQUE es sobre `lower(btrim(name))`; NFC evita que "Tema 1" con la tilde
@@ -39,17 +45,73 @@ function assertName (raw) {
   return name
 }
 
-/** Carpetas del profesor con el número de materiales que contiene cada una. */
+/** Serializa las mutaciones del árbol de UN profesor sin bloquear a los demás. */
+function lockOwnerTree (client, { platformId, ownerSub }) {
+  return client.query(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1, 42))',
+    [`catalog_folder:${platformId}:${ownerSub}`]
+  )
+}
+
+/** Niveles desde la raíz hasta la carpeta, ambos incluidos (raíz virtual = 0). */
+async function folderDepth (client, id) {
+  if (!id) return 0
+  const { rows } = await client.query(
+    `WITH RECURSIVE ancestors AS (
+       SELECT id, parent_id, 1 AS depth FROM catalog_folder WHERE id = $1
+       UNION ALL
+       SELECT f.id, f.parent_id, a.depth + 1
+         FROM catalog_folder f JOIN ancestors a ON f.id = a.parent_id
+     )
+     SELECT max(depth)::int AS depth FROM ancestors`,
+    [id]
+  )
+  return rows[0]?.depth ?? 0
+}
+
+/** ¿Está `candidate` entre los ancestros de `id` (o es `id` mismo)? */
+async function isSelfOrDescendant (client, { id, candidate }) {
+  const { rows } = await client.query(
+    `WITH RECURSIVE ancestors AS (
+       SELECT id, parent_id FROM catalog_folder WHERE id = $1
+       UNION ALL
+       SELECT f.id, f.parent_id
+         FROM catalog_folder f JOIN ancestors a ON f.id = a.parent_id
+     )
+     SELECT 1 AS hit FROM ancestors WHERE id = $2 LIMIT 1`,
+    [id, candidate]
+  )
+  return rows.length > 0
+}
+
+/** Niveles del subárbol que cuelga de la carpeta, incluida ella misma. */
+async function subtreeHeight (client, id) {
+  const { rows } = await client.query(
+    `WITH RECURSIVE sub AS (
+       SELECT id, 1 AS depth FROM catalog_folder WHERE id = $1
+       UNION ALL
+       SELECT f.id, s.depth + 1
+         FROM catalog_folder f JOIN sub s ON f.parent_id = s.id
+     )
+     SELECT max(depth)::int AS height FROM sub`,
+    [id]
+  )
+  return rows[0]?.height ?? 1
+}
+
+/** Todas las carpetas del profesor, planas; el árbol lo monta el cliente. */
 export function listFolders ({ platformId, ownerSub }) {
   if (!platformId || !ownerSub) return Promise.resolve([])
   return many(
-    `SELECT f.id, f.name, f.created_at, f.updated_at,
+    `SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at,
             (SELECT count(*) FROM video v
               WHERE v.folder_id = f.id AND v.archived_at IS NULL)         AS video_count,
             (SELECT count(*) FROM pdf_document d
               WHERE d.folder_id = f.id AND d.archived_at IS NULL)         AS document_count,
             (SELECT count(*) FROM content_collection c
-              WHERE c.folder_id = f.id AND c.archived_at IS NULL)         AS collection_count
+              WHERE c.folder_id = f.id AND c.archived_at IS NULL)         AS collection_count,
+            (SELECT count(*) FROM catalog_folder h
+              WHERE h.parent_id = f.id)                                   AS folder_count
        FROM catalog_folder f
       WHERE f.platform_id = $1 AND f.owner_sub = $2
       ORDER BY lower(btrim(f.name))`,
@@ -57,7 +119,7 @@ export function listFolders ({ platformId, ownerSub }) {
   )
 }
 
-/** Materiales sin clasificar: la raíz virtual «Sin carpeta». */
+/** Materiales sin clasificar: la raíz de la biblioteca. */
 export function countRootMaterials ({ platformId, ownerSub }) {
   return one(
     `SELECT
@@ -69,7 +131,9 @@ export function countRootMaterials ({ platformId, ownerSub }) {
            AND archived_at IS NULL)                     AS document_count,
        (SELECT count(*) FROM content_collection
          WHERE platform_id = $1 AND owner_sub = $2 AND folder_id IS NULL
-           AND archived_at IS NULL)                     AS collection_count`,
+           AND archived_at IS NULL)                     AS collection_count,
+       (SELECT count(*) FROM catalog_folder
+         WHERE platform_id = $1 AND owner_sub = $2 AND parent_id IS NULL) AS folder_count`,
     [platformId, ownerSub]
   )
 }
@@ -82,9 +146,10 @@ export function getFolder ({ id, platformId, ownerSub }) {
   )
 }
 
-export function createFolder ({ platformId, ownerSub, name }) {
+export function createFolder ({ platformId, ownerSub, name, parentId = null }) {
   const clean = assertName(name)
   return transaction(async (client) => {
+    await lockOwnerTree(client, { platformId, ownerSub })
     const { rows: counted } = await client.query(
       'SELECT count(*)::int AS total FROM catalog_folder WHERE platform_id = $1 AND owner_sub = $2',
       [platformId, ownerSub]
@@ -95,18 +160,27 @@ export function createFolder ({ platformId, ownerSub, name }) {
         { status: 409, code: 'too_many_folders' }
       )
     }
+
+    const parent = await assertFolderInTransaction(client, { folderId: parentId, platformId, ownerSub })
+    if (parent && await folderDepth(client, parent) >= config.catalog.maxFolderDepth) {
+      throw new FolderError(
+        `Las carpetas admiten como máximo ${config.catalog.maxFolderDepth} niveles`,
+        { status: 409, code: 'folder_too_deep' }
+      )
+    }
+
     try {
       const { rows } = await client.query(
-        `INSERT INTO catalog_folder (platform_id, owner_sub, name)
-         VALUES ($1,$2,$3) RETURNING *`,
-        [platformId, ownerSub, clean]
+        `INSERT INTO catalog_folder (platform_id, owner_sub, name, parent_id)
+         VALUES ($1,$2,$3,$4) RETURNING *`,
+        [platformId, ownerSub, clean, parent]
       )
       return rows[0]
     } catch (err) {
       // La unicidad la decide el índice, no una consulta previa: comprobarlo
       // antes dejaría una ventana entre el SELECT y el INSERT.
       if (err.code === '23505') {
-        throw new FolderError(`Ya tienes una carpeta llamada «${clean}»`, {
+        throw new FolderError(`Ya hay una carpeta llamada «${clean}» en este nivel`, {
           status: 409,
           code: 'duplicate_folder'
         })
@@ -131,13 +205,15 @@ export function renameFolder ({ id, platformId, ownerSub, name }) {
             (SELECT count(*) FROM pdf_document d
               WHERE d.folder_id = f.id AND d.archived_at IS NULL)         AS document_count,
             (SELECT count(*) FROM content_collection c
-              WHERE c.folder_id = f.id AND c.archived_at IS NULL)         AS collection_count`,
+              WHERE c.folder_id = f.id AND c.archived_at IS NULL)         AS collection_count,
+            (SELECT count(*) FROM catalog_folder h
+              WHERE h.parent_id = f.id)                                   AS folder_count`,
         [id, platformId, ownerSub, clean]
       )
       return rows[0] ?? null
     } catch (err) {
       if (err.code === '23505') {
-        throw new FolderError(`Ya tienes una carpeta llamada «${clean}»`, {
+        throw new FolderError(`Ya hay una carpeta llamada «${clean}» en este nivel`, {
           status: 409,
           code: 'duplicate_folder'
         })
@@ -148,7 +224,65 @@ export function renameFolder ({ id, platformId, ownerSub, name }) {
 }
 
 /**
- * Vacía la carpeta y la borra, en una sola transacción.
+ * Cuelga la carpeta de otro padre (o de la raíz, con `parentId` nulo).
+ *
+ * Mover no toca UUIDs ni contenido: sólo cambia `parent_id`. Las dos reglas del
+ * árbol se comprueban aquí: nada de ciclos (el destino no puede ser la propia
+ * carpeta ni un descendiente) y nada de superar la profundidad máxima con el
+ * subárbol completo que se arrastra.
+ */
+export function moveFolder ({ id, platformId, ownerSub, parentId = null }) {
+  return transaction(async (client) => {
+    await lockOwnerTree(client, { platformId, ownerSub })
+    const { rows } = await client.query(
+      `SELECT id, parent_id FROM catalog_folder
+        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3
+        FOR UPDATE`,
+      [id, platformId, ownerSub]
+    )
+    if (rows.length === 0) return null
+
+    const target = await assertFolderInTransaction(client, { folderId: parentId, platformId, ownerSub })
+    if (target) {
+      if (await isSelfOrDescendant(client, { id: target, candidate: id })) {
+        throw new FolderError('No puedes mover una carpeta dentro de sí misma', {
+          status: 409,
+          code: 'folder_cycle'
+        })
+      }
+      const depth = await folderDepth(client, target)
+      const height = await subtreeHeight(client, id)
+      if (depth + height > config.catalog.maxFolderDepth) {
+        throw new FolderError(
+          `Las carpetas admiten como máximo ${config.catalog.maxFolderDepth} niveles`,
+          { status: 409, code: 'folder_too_deep' }
+        )
+      }
+    }
+
+    try {
+      const { rows: updated } = await client.query(
+        `UPDATE catalog_folder SET parent_id = $4, updated_at = now()
+          WHERE id = $1 AND platform_id = $2 AND owner_sub = $3
+          RETURNING *`,
+        [id, platformId, ownerSub, target]
+      )
+      return updated[0] ?? null
+    } catch (err) {
+      if (err.code === '23505') {
+        throw new FolderError('Ya hay una carpeta con ese nombre en el destino', {
+          status: 409,
+          code: 'duplicate_folder'
+        })
+      }
+      throw err
+    }
+  })
+}
+
+/**
+ * Borra la carpeta subiendo su contenido y sus subcarpetas al padre, en una
+ * sola transacción. Nunca borra material.
  *
  * El `FOR UPDATE` sobre la carpeta es lo que impide que una subida concurrente
  * clasifique un material en una carpeta que está desapareciendo: esa subida se
@@ -156,24 +290,40 @@ export function renameFolder ({ id, platformId, ownerSub, name }) {
  */
 export function deleteFolder ({ id, platformId, ownerSub }) {
   return transaction(async (client) => {
+    await lockOwnerTree(client, { platformId, ownerSub })
     const { rows } = await client.query(
-      `SELECT id FROM catalog_folder
+      `SELECT id, parent_id FROM catalog_folder
         WHERE id = $1 AND platform_id = $2 AND owner_sub = $3
         FOR UPDATE`,
       [id, platformId, ownerSub]
     )
     if (rows.length === 0) return { status: 'not_found' }
+    const parent = rows[0].parent_id
 
-    const moved = { videos: 0, documents: 0, collections: 0 }
-    const params = [id, platformId, ownerSub]
+    const moved = { videos: 0, documents: 0, collections: 0, folders: 0 }
+    const params = [id, platformId, ownerSub, parent]
+    try {
+      const folders = await client.query(
+        `UPDATE catalog_folder SET parent_id = $4, updated_at = now()
+          WHERE parent_id = $1 AND platform_id = $2 AND owner_sub = $3`, params)
+      moved.folders = folders.rowCount
+    } catch (err) {
+      if (err.code === '23505') {
+        throw new FolderError(
+          'Una subcarpeta chocaría con otra del mismo nombre en el destino. Renómbrala antes de borrar.',
+          { status: 409, code: 'duplicate_folder' }
+        )
+      }
+      throw err
+    }
     const videos = await client.query(
-      `UPDATE video SET folder_id = NULL, updated_at = now()
+      `UPDATE video SET folder_id = $4, updated_at = now()
         WHERE folder_id = $1 AND platform_id = $2 AND owner_sub = $3`, params)
     const documents = await client.query(
-      `UPDATE pdf_document SET folder_id = NULL, updated_at = now()
+      `UPDATE pdf_document SET folder_id = $4, updated_at = now()
         WHERE folder_id = $1 AND platform_id = $2 AND owner_sub = $3`, params)
     const collections = await client.query(
-      `UPDATE content_collection SET folder_id = NULL, updated_at = now()
+      `UPDATE content_collection SET folder_id = $4, updated_at = now()
         WHERE folder_id = $1 AND platform_id = $2 AND owner_sub = $3`, params)
     moved.videos = videos.rowCount
     moved.documents = documents.rowCount
@@ -181,9 +331,9 @@ export function deleteFolder ({ id, platformId, ownerSub }) {
 
     await client.query(
       'DELETE FROM catalog_folder WHERE id = $1 AND platform_id = $2 AND owner_sub = $3',
-      params
+      [id, platformId, ownerSub]
     )
-    return { status: 'deleted', moved }
+    return { status: 'deleted', moved, parentId: parent }
   })
 }
 

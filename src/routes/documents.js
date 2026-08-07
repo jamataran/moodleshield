@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { createReadStream } from 'node:fs'
-import { rm, stat } from 'node:fs/promises'
+import { readFile, rm, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import config from '../config.js'
 import logger from '../logger.js'
 import { requireSession, requireCatalogInstructor } from './auth.js'
 import {
@@ -27,6 +28,7 @@ import {
 } from '../media/storage.js'
 import { receiveDocumentUpload } from '../media/upload.js'
 import { parseRangeHeader } from '../media/range.js'
+import { stampPdfForViewer } from '../media/pdf-stamp.js'
 
 export const documentsRouter = Router()
 
@@ -334,3 +336,77 @@ documentsRouter.get('/:id/content', requireSession, (req, res, next) =>
   deliverDocument(req, res, next))
 documentsRouter.head('/:id/content', requireSession, (req, res, next) =>
   deliverDocument(req, res, next, { headOnly: true }))
+
+/**
+ * Copia descargable, sellada con la identidad de quien la pide.
+ *
+ * El sello (diagonal + pie en cada página) es disuasión visible, no marca
+ * forense: quien sabe editar un PDF puede quitarlo (ADR-014 sigue vigente).
+ * Se genera al vuelo con pdf-lib y por eso hay techo de tamaño: esto corre en
+ * el proceso web y un documento enorme en memoria competiría con los launches.
+ *
+ * Sólo PDF. El vídeo no tiene descarga: su protección es el patrón A/B servido
+ * por streaming, y una descarga oficial lo desactivaría.
+ */
+documentsRouter.get('/:id/download', requireSession, async (req, res, next) => {
+  try {
+    const id = assertDocumentId(req.params.id)
+    const scope = await authorizeResource(req.session, 'pdf', id)
+    if (!scope.ok) return res.status(404).json({ error: 'Documento no encontrado' })
+
+    const revision = scope.revision ?? await getActiveRevision({ kind: 'pdf', materialId: id })
+    if (!revision || !['ready', 'retired'].includes(revision.status)) {
+      return res.status(409).json({ error: 'El documento todavía no está disponible' })
+    }
+
+    const file = documentPath(revisionDir('pdf', id, revision.id, revision.storage_layout))
+    const info = await stat(file).catch(() => null)
+    if (!info) return res.status(404).json({ error: 'Documento no encontrado' })
+    if (info.size > config.pdf.downloadMaxBytes) {
+      return res.status(409).json({
+        error: 'Este documento es demasiado grande para generar la copia descargable. ' +
+          'Puedes seguir leyéndolo en el visor.',
+        code: 'download_too_large'
+      })
+    }
+
+    // Mismo registro que la lectura: desduplicado por el jti de la sesión, así
+    // que ver y descargar en la misma sesión cuentan como un único acceso.
+    if (!scope.viaOwner) {
+      await recordDocumentView({
+        documentId: id,
+        revisionId: revision.id,
+        platformId: req.session.platformId,
+        collectionId: scope.collectionId,
+        sessionJti: req.session.jti,
+        context: {
+          sub: req.session.sub,
+          name: req.session.name,
+          contextId: req.session.contextId,
+          resourceLinkId: req.session.resourceLinkId
+        },
+        identity: req.session.identity,
+        ip: req.ip,
+        userAgent: req.get('user-agent')
+      }).catch((err) => req.log?.warn({ err, documentId: id }, 'No se pudo registrar la descarga'))
+    }
+
+    // El fichero se lee dentro de la compuerta de sellado: mientras se espera
+    // turno no hay ningún búfer del documento en memoria.
+    const stamped = await stampPdfForViewer(() => readFile(file), {
+      identity: req.session.identity,
+      name: req.session.name
+    })
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${safeFilename(scope.material.title)}"`,
+      'Content-Length': String(stamped.byteLength),
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff'
+    })
+    res.end(Buffer.from(stamped))
+  } catch (err) {
+    next(err)
+  }
+})

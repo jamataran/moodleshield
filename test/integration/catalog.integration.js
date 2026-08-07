@@ -3,10 +3,13 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { closeDatabase, many, one, query } from '../../src/db/index.js'
 import { runMigrations } from '../../src/db/migrate.js'
+import config from '../../src/config.js'
 import {
+  countRootMaterials,
   createFolder,
   deleteFolder,
   listFolders,
+  moveFolder,
   renameFolder,
   FolderError
 } from '../../src/services/folders.js'
@@ -173,13 +176,110 @@ test('T17: dos carpetas con el mismo nombre normalizado colisionan', async () =>
   assert.ok(await createFolder({ ...scopeLuis, name: 'Tema 1' }))
 })
 
-test('T17: sólo hay un nivel de carpetas', async () => {
-  // No existe `parent_id`: la única jerarquía posible es raíz → carpeta.
-  const columns = await many(
-    `SELECT column_name FROM information_schema.columns WHERE table_name = 'catalog_folder'`
+// ===========================================================================
+// Carpetas anidadas (n niveles)
+// ===========================================================================
+
+test('árbol: crear subcarpetas, listarlas planas y contarlas en la raíz', async () => {
+  const algebra = await createFolder({ ...scopeA, name: 'Álgebra' })
+  const tema1 = await createFolder({ ...scopeA, name: 'Tema 1', parentId: algebra.id })
+  const tema11 = await createFolder({ ...scopeA, name: 'Tema 1.1', parentId: tema1.id })
+
+  const flat = await listFolders(scopeA)
+  const byId = new Map(flat.map((f) => [f.id, f]))
+  assert.equal(byId.get(algebra.id).parent_id, null)
+  assert.equal(byId.get(tema1.id).parent_id, algebra.id)
+  assert.equal(byId.get(tema11.id).parent_id, tema1.id)
+  assert.equal(Number(byId.get(algebra.id).folder_count), 1)
+
+  // La raíz sólo cuenta lo que cuelga directamente de ella.
+  const root = await countRootMaterials(scopeA)
+  assert.equal(Number(root.folder_count), 1)
+})
+
+test('árbol: el mismo nombre convive en ramas distintas pero no entre hermanas', async () => {
+  const algebra = await createFolder({ ...scopeA, name: 'Álgebra' })
+  const calculo = await createFolder({ ...scopeA, name: 'Cálculo' })
+  await createFolder({ ...scopeA, name: 'Tema 1', parentId: algebra.id })
+  // Mismo nombre bajo otro padre: permitido.
+  assert.ok(await createFolder({ ...scopeA, name: 'Tema 1', parentId: calculo.id }))
+  // Mismo nombre normalizado bajo el mismo padre: colisión.
+  await assert.rejects(
+    createFolder({ ...scopeA, name: '  tema 1 ', parentId: algebra.id }),
+    (err) => err instanceof FolderError && err.code === 'duplicate_folder'
   )
-  const names = columns.map((row) => row.column_name)
-  assert.ok(!names.includes('parent_id'), `catalog_folder no debe tener parent_id: ${names}`)
+})
+
+test('árbol: mover una carpeta dentro de sí misma o de un descendiente se rechaza', async () => {
+  const a = await createFolder({ ...scopeA, name: 'A' })
+  const b = await createFolder({ ...scopeA, name: 'B', parentId: a.id })
+  const c = await createFolder({ ...scopeA, name: 'C', parentId: b.id })
+
+  for (const target of [a.id, c.id]) {
+    await assert.rejects(
+      moveFolder({ id: a.id, ...scopeA, parentId: target }),
+      (err) => err instanceof FolderError && err.code === 'folder_cycle',
+      `mover A bajo ${target} debería ser un ciclo`
+    )
+  }
+
+  // Un movimiento legal: C pasa a colgar de la raíz.
+  const moved = await moveFolder({ id: c.id, ...scopeA, parentId: null })
+  assert.equal(moved.parent_id, null)
+})
+
+test('árbol: la profundidad máxima se respeta al crear y al mover subárboles', async () => {
+  const max = config.catalog.maxFolderDepth
+  let parent = null
+  const chain = []
+  for (let i = 1; i <= max; i++) {
+    parent = await createFolder({ ...scopeA, name: `Nivel ${i}`, parentId: parent?.id ?? null })
+    chain.push(parent)
+  }
+  await assert.rejects(
+    createFolder({ ...scopeA, name: 'Demasiado profundo', parentId: parent.id }),
+    (err) => err instanceof FolderError && err.code === 'folder_too_deep'
+  )
+
+  // Mover un subárbol de dos niveles bajo el penúltimo nivel también se pasa.
+  const rama = await createFolder({ ...scopeA, name: 'Rama' })
+  await createFolder({ ...scopeA, name: 'Hoja', parentId: rama.id })
+  await assert.rejects(
+    moveFolder({ id: rama.id, ...scopeA, parentId: chain[max - 2].id }),
+    (err) => err instanceof FolderError && err.code === 'folder_too_deep'
+  )
+})
+
+test('árbol: borrar una carpeta intermedia sube contenido y subcarpetas a su padre', async () => {
+  const algebra = await createFolder({ ...scopeA, name: 'Álgebra' })
+  const tema1 = await createFolder({ ...scopeA, name: 'Tema 1', parentId: algebra.id })
+  const tema11 = await createFolder({ ...scopeA, name: 'Tema 1.1', parentId: tema1.id })
+  const videoId = await readyVideo({ folderId: tema1.id })
+
+  const deleted = await deleteFolder({ id: tema1.id, ...scopeA })
+  assert.equal(deleted.status, 'deleted')
+  assert.equal(deleted.parentId, algebra.id)
+  assert.equal(deleted.moved.videos, 1)
+  assert.equal(deleted.moved.folders, 1)
+
+  // Ni el material ni la subcarpeta cambian de UUID; sólo de sitio.
+  const survivor = await one('SELECT folder_id FROM video WHERE id = $1', [videoId])
+  assert.equal(survivor.folder_id, algebra.id)
+  const child = await one('SELECT parent_id FROM catalog_folder WHERE id = $1', [tema11.id])
+  assert.equal(child.parent_id, algebra.id)
+})
+
+test('árbol: no se puede colgar una carpeta de la carpeta de otro profesor', async () => {
+  const ajena = await createFolder({ ...scopeLuis, name: 'De Luis' })
+  const propia = await createFolder({ ...scopeA, name: 'De Ana' })
+  await assert.rejects(
+    moveFolder({ id: propia.id, ...scopeA, parentId: ajena.id }),
+    (err) => err instanceof FolderError && err.code === 'folder_not_found'
+  )
+  await assert.rejects(
+    createFolder({ ...scopeA, name: 'Colada', parentId: ajena.id }),
+    (err) => err instanceof FolderError && err.code === 'folder_not_found'
+  )
 })
 
 test('T17: un profesor no ve ni toca la biblioteca de otro del mismo Moodle', async () => {

@@ -12,10 +12,16 @@
       <h1>Biblioteca</h1>
       <p class="muted" id="subtitle"></p>
     </div>
-    <button id="refresh">Actualizar</button>
+    <button id="refresh" type="button">Actualizar</button>
   </header>
 
   <div id="notice" hidden></div>
+
+  <div id="deeplink-banner" class="notice info" hidden>
+    <strong>Estás eligiendo el contenido de una actividad.</strong>
+    Pulsa <em>Insertar</em> sobre un material o una colección y volverás a Moodle
+    con la actividad ya enlazada.
+  </div>
 
   <div id="manage-hint" class="notice" hidden>
     <strong>Esta actividad todavía no tiene ningún material asignado.</strong>
@@ -28,90 +34,56 @@
     falta marcar <em>Supports Deep Linking</em>.</span>
   </div>
 
-  <div class="catalog-layout">
-    <nav class="folders panel" aria-label="Carpetas">
-      <div class="folders-head">
-        <h2>Carpetas</h2>
-        <button id="new-folder" type="button">Nueva</button>
-      </div>
-      <label class="only-mobile" for="folder-select">Carpeta</label>
-      <select id="folder-select" class="only-mobile"></select>
-      <ul id="folder-list" class="only-desktop"></ul>
-    </nav>
-
-    <main class="catalog-main">
-      <div class="toolbar">
-        <div class="tabs" role="tablist" aria-label="Tipo de contenido">
-          <button id="tab-materials" type="button" role="tab" aria-selected="true">Materiales</button>
-          <button id="tab-collections" type="button" role="tab" aria-selected="false">Colecciones</button>
-        </div>
-        <input type="search" id="search" placeholder="Buscar por título" aria-label="Buscar por título">
-        <button id="new-collection" type="button">Nueva colección</button>
-      </div>
-
-      <section class="panel" id="upload-panel">
-        <h2>Subir material</h2>
-        <form id="upload">
-          <p><input type="text" name="title" placeholder="Título (si lo dejas vacío se usa el nombre del fichero)"></p>
-          <p>
-            <input type="file" name="file" required
-                   accept="video/mp4,video/quicktime,video/x-matroska,video/webm,application/pdf,.mp4,.mov,.mkv,.m4v,.webm,.avi,.pdf">
-          </p>
-          <p class="muted" id="upload-target"></p>
-          <p>
-            <button type="submit" class="primary" id="upload-btn">Subir y procesar</button>
-            <span class="muted" id="upload-status"></span>
-          </p>
-          <p class="muted">
-            Los PDF se normalizan al subirlos: se descartan formularios, adjuntos
-            y acciones automáticas. Si el documento lleva firma digital, la
-            perderá. Esta protección disuade y controla el acceso, pero
-            <strong>no impide</strong> que quien puede leerlo recupere el fichero.
-          </p>
-        </form>
-      </section>
-
-      <section class="panel" id="tray" hidden>
-        <h2 id="tray-heading">Nueva colección</h2>
-        <p class="muted">
-          Los materiales de esta lista se insertan como <strong>una sola
-          actividad</strong> por la que el alumno navega. Añade material con
-          «Añadir a colección» desde la pestaña <strong>Materiales</strong>.
-        </p>
-        <ol id="tray-list"></ol>
-        <p class="muted" id="tray-empty" hidden>
-          Todavía no has añadido ningún material.
-        </p>
-        <p>
-          <label for="tray-title">Título</label>
-          <input type="text" id="tray-title" placeholder="Título de la colección" maxlength="300">
-        </p>
-        <p>
-          <label for="tray-description">Descripción</label>
-          <textarea id="tray-description" rows="2" maxlength="2000"></textarea>
-        </p>
-        <p>
-          <label for="tray-folder">Carpeta</label>
-          <select id="tray-folder"></select>
-        </p>
-        <p>
-          <button type="button" class="primary" id="tray-save">Guardar colección</button>
-          <button type="button" id="tray-save-insert" hidden>Guardar e insertar</button>
-          <button type="button" id="tray-cancel">Cancelar</button>
-        </p>
-      </section>
-
-      <section id="catalog" class="grid" aria-live="polite"></section>
-      <p class="muted" id="empty" hidden></p>
-      <p><button id="load-more" type="button" hidden>Cargar más</button></p>
-    </main>
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Buscar en toda la biblioteca"
+           aria-label="Buscar en toda la biblioteca">
+    <div class="toolbar-actions">
+      <button id="new-folder" type="button">＋ Carpeta</button>
+      <button id="new-collection" type="button">＋ Colección</button>
+      <button id="upload-open" type="button" class="primary">⬆ Subir material</button>
+    </div>
   </div>
+
+  <p class="muted concept-hint">
+    Las <strong>carpetas</strong> ordenan tu biblioteca y sólo las ves tú.
+    Una <strong>colección</strong> agrupa varios materiales y es lo que se
+    inserta en Moodle como una única actividad.
+  </p>
+
+  <nav id="crumbs" class="crumbs" aria-label="Ruta de carpetas"></nav>
+
+  <main>
+    <section id="section-folders" class="explorer-section" hidden>
+      <h2>Carpetas</h2>
+      <div id="folder-grid" class="folder-grid"></div>
+    </section>
+
+    <section id="section-collections" class="explorer-section" hidden>
+      <div class="section-head">
+        <h2 id="collections-heading">Colecciones</h2>
+      </div>
+      <div id="collection-grid" class="grid" aria-live="polite"></div>
+    </section>
+
+    <section id="section-materials" class="explorer-section" hidden>
+      <h2 id="materials-heading">Materiales</h2>
+      <div id="material-grid" class="grid" aria-live="polite"></div>
+      <p><button id="load-more" type="button" hidden>Cargar más</button></p>
+    </section>
+
+    <p class="muted" id="empty" hidden></p>
+
+    <p class="muted archive-link">
+      <button id="archived-toggle" type="button" class="linklike">Ver archivados</button>
+    </p>
+  </main>
 
   <!--
     Chrome y Edge retiraron alert/confirm/prompt de los iframes cross-origin, y
     MoodleShield se sirve siempre desde otro origen dentro de Moodle: ahí
     `prompt()` devuelve null y `confirm()` devuelve false sin avisar de nada.
-    Estos dos diálogos los sustituyen.
+    Todo diálogo de esta página los sustituye y se abre con el helper que limpia
+    `returnValue` (ver catalog.js).
   -->
   <dialog id="prompt-dialog">
     <form method="dialog" id="prompt-form">
@@ -120,7 +92,7 @@
         <label for="prompt-input" id="prompt-label"></label>
         <input type="text" id="prompt-input" maxlength="100" required>
       </p>
-      <p>
+      <p class="dialog-actions">
         <button value="ok" class="primary" id="prompt-ok">Aceptar</button>
         <!--
           formnovalidate no es opcional: un form method="dialog" ejecuta la
@@ -137,7 +109,7 @@
     <form method="dialog" id="confirm-form">
       <h2 id="confirm-heading"></h2>
       <p id="confirm-message"></p>
-      <p>
+      <p class="dialog-actions">
         <button value="ok" class="primary" id="confirm-ok">Continuar</button>
         <button value="cancel" formnovalidate>Cancelar</button>
       </p>
@@ -151,13 +123,95 @@
          <input type="text" id="edit-title" maxlength="300" required></p>
       <p><label for="edit-description">Descripción</label>
          <textarea id="edit-description" rows="3" maxlength="2000"></textarea></p>
-      <p><label for="edit-folder">Mover a</label>
-         <select id="edit-folder"></select></p>
-      <p>
+      <p class="dialog-actions">
         <button value="save" class="primary">Guardar</button>
         <button value="cancel" formnovalidate>Cancelar</button>
       </p>
     </form>
+  </dialog>
+
+  <dialog id="move-dialog">
+    <form method="dialog" id="move-form">
+      <h2 id="move-heading">Mover</h2>
+      <p>
+        <label for="move-target">Carpeta de destino</label>
+        <select id="move-target"></select>
+      </p>
+      <p class="dialog-actions">
+        <button value="ok" class="primary" id="move-ok">Mover aquí</button>
+        <button value="cancel" formnovalidate>Cancelar</button>
+      </p>
+    </form>
+  </dialog>
+
+  <dialog id="upload-dialog">
+    <div>
+      <h2>Subir material</h2>
+      <p class="muted">Vídeo (MP4, MOV, MKV, WebM, AVI) o PDF.</p>
+      <p>
+        <label for="upload-title">Título</label>
+        <input type="text" id="upload-title" maxlength="300"
+               placeholder="Si lo dejas vacío se usa el nombre del fichero">
+      </p>
+      <p>
+        <label for="upload-file">Fichero</label>
+        <input type="file" id="upload-file" required
+               accept="video/mp4,video/quicktime,video/x-matroska,video/webm,application/pdf,.mp4,.mov,.mkv,.m4v,.webm,.avi,.pdf">
+      </p>
+      <p class="muted" id="upload-target"></p>
+      <p class="muted">
+        Los PDF se normalizan al subirlos: se descartan formularios, adjuntos
+        y acciones automáticas. Si el documento lleva firma digital, la
+        perderá. Esta protección disuade y controla el acceso, pero
+        <strong>no impide</strong> que quien puede leerlo recupere el fichero.
+      </p>
+      <p class="dialog-actions">
+        <button type="button" class="primary" id="upload-btn">Subir y procesar</button>
+        <button type="button" id="upload-cancel">Cancelar</button>
+        <span class="muted" id="upload-status" role="status"></span>
+      </p>
+    </div>
+  </dialog>
+
+  <dialog id="collection-dialog">
+    <div>
+      <h2 id="collection-heading">Nueva colección</h2>
+      <p class="muted">
+        El alumno abre la colección como <strong>una única actividad</strong> y
+        navega por sus materiales en el orden de esta lista.
+      </p>
+      <p>
+        <label for="collection-title">Título</label>
+        <input type="text" id="collection-title" maxlength="300" placeholder="P. ej. «Semana 1 · Límites»">
+      </p>
+      <p>
+        <label for="collection-description">Descripción</label>
+        <textarea id="collection-description" rows="2" maxlength="2000"></textarea>
+      </p>
+      <p>
+        <label for="collection-folder">Guardar en la carpeta</label>
+        <select id="collection-folder"></select>
+      </p>
+
+      <h3>Materiales de la colección</h3>
+      <ol id="collection-items" class="collection-items"></ol>
+      <p class="muted" id="collection-empty">
+        Todavía no hay materiales: añádelos con el buscador de aquí abajo.
+      </p>
+
+      <h3>Añadir materiales</h3>
+      <p>
+        <input type="search" id="collection-search" placeholder="Buscar materiales listos"
+               aria-label="Buscar materiales para añadir">
+      </p>
+      <ul id="collection-picker" class="collection-picker"></ul>
+
+      <p class="dialog-actions">
+        <button type="button" class="primary" id="collection-save">Guardar</button>
+        <button type="button" id="collection-save-insert" hidden>Guardar e insertar</button>
+        <button type="button" id="collection-cancel">Cancelar</button>
+      </p>
+    </div>
   </dialog>
 
   <dialog id="revisions-dialog">
@@ -170,13 +224,13 @@
       </p>
       <form id="revision-upload">
         <p><input type="file" id="revision-file" required></p>
-        <p>
+        <p class="dialog-actions">
           <button type="submit" class="primary">Subir nueva versión</button>
-          <span class="muted" id="revision-status"></span>
+          <span class="muted" id="revision-status" role="status"></span>
         </p>
       </form>
       <ul id="revision-list"></ul>
-      <p><button type="button" id="revisions-close">Cerrar</button></p>
+      <p class="dialog-actions"><button type="button" id="revisions-close">Cerrar</button></p>
     </div>
   </dialog>
 

@@ -144,6 +144,12 @@ export const config = {
     maxPages: integer('MAX_PDF_PAGES', 500),
     /** Corta qpdf/Ghostscript/pdftoppm si un fichero hostil los deja colgados. */
     processTimeoutSeconds: integer('PDF_PROCESS_TIMEOUT_SECONDS', 180),
+    /**
+     * La copia descargable se sella en memoria (pdf-lib) dentro del proceso web,
+     * que vive con 512 MB: por encima de este tamaño se deniega la descarga en
+     * vez de arriesgar un OOM sirviendo launches.
+     */
+    downloadMaxBytes: integer('PDF_DOWNLOAD_MAX_BYTES', 50 * 1024 * 1024),
     qpdfPath: optional('QPDF_PATH', 'qpdf'),
     pdfinfoPath: optional('PDFINFO_PATH', 'pdfinfo'),
     ghostscriptPath: optional('GHOSTSCRIPT_PATH', 'gs'),
@@ -151,8 +157,10 @@ export const config = {
   },
 
   catalog: {
-    /** Techo por profesor: la barra lateral deja de ser navegable mucho antes. */
+    /** Techo por profesor: la biblioteca deja de ser navegable mucho antes. */
     maxFoldersPerOwner: integer('MAX_FOLDERS_PER_OWNER', 100),
+    /** Niveles de anidamiento de carpetas. Más de esto, la miga no cabe en móvil. */
+    maxFolderDepth: integer('MAX_FOLDER_DEPTH', 6),
     /** Materiales por colección. El `position` de la tabla es 0..49. */
     maxCollectionItems: integer('MAX_COLLECTION_ITEMS', 50),
     /** Página por defecto y techo duro del listado del catálogo. */

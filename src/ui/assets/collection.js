@@ -128,7 +128,12 @@ async function show (nextIndex, { focus = true } = {}) {
       view = await createPdfView({
         container: contentEl,
         sessionToken: boot.sessionToken,
-        document: { id: item.id, title: item.title, contentUrl: `/documents/${item.id}/content` },
+        document: {
+          id: item.id,
+          title: item.title,
+          contentUrl: `/documents/${item.id}/content`,
+          downloadUrl: `/documents/${item.id}/download`
+        },
         user: boot.user,
         onStatus: setStatus
       })

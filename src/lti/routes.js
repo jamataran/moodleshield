@@ -236,6 +236,7 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
           },
           user: { name: context.name, identity },
           contentUrl: `${config.publicUrl}/documents/${material.id}/content`,
+          downloadUrl: `${config.publicUrl}/documents/${material.id}/download`,
           notice: archivedNotice
         }
       })

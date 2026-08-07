@@ -30,12 +30,16 @@ No hay DRM. El sistema no impide capturar el vídeo — lo hace **atribuible**.
 
 El PDF se valida y normaliza en el worker y se entrega con control de acceso y
 overlay visible, pero **no lleva marca forense**: el documento autorizado viaja
-entero al navegador. Una filtración de PDF no es atribuible, y eso no debe
-presentarse de otra forma.
+entero al navegador. El alumno puede descargar una copia oficial **sellada con
+su identidad y cifrada con contraseña de permisos aleatoria** (ADR-017), pero
+ese sello es removible por alguien técnico: una filtración de PDF no es
+atribuible, y eso no debe presentarse de otra forma.
 
-Encima de ambos: carpetas personales por profesor, colecciones que agrupan varios
-materiales en una sola actividad Moodle, y revisiones que permiten sustituir un
-fichero sin cambiar el UUID que Moodle tiene incrustado.
+Encima de ambos: carpetas personales **anidadas** por profesor (ADR-016),
+colecciones que agrupan varios materiales en una sola actividad Moodle, y
+revisiones que permiten sustituir un fichero sin cambiar el UUID que Moodle
+tiene incrustado. La biblioteca del profesor es un explorador de archivos:
+migas + tarjetas de carpeta; la colección se compone en un diálogo con buscador.
 
 ## Invariantes que no se negocian
 

@@ -22,6 +22,7 @@
     "trace": "node tools/trace.mjs"
   },
   "dependencies": {
+    "@cantoo/pdf-lib": "^2.8.1",
     "busboy": "^1.6.0",
     "express": "^5.1.0",
     "express-rate-limit": "^8.6.2",
