@@ -73,6 +73,11 @@ El Compose corregido hace una consulta autenticada: ante la misma discordancia,
    *Prune services* activados. Si no actualizas el Compose todavía, reinicia al
    menos `app`, `worker` y `proxy`.
 
+Antes de actualizar un stack creado con un Compose antiguo, comprueba que
+`DATA_ROOT` existe explícitamente en sus variables. Si antes usaba el valor por
+defecto, conserva exactamente `/docker-apps/moodleshield-pro` en producción o
+`/docker-apps/moodleshield-test` en test. No regeneres el resto del bloque.
+
 Si conoces la contraseña original de la base, la alternativa más corta es
 restaurar ese valor como `DB_PASSWORD` en Portainer y redesplegar.
 

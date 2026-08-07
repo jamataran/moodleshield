@@ -74,9 +74,9 @@ RUN apk add --no-cache ffmpeg qpdf poppler-utils ghostscript
 
 ENV NODE_OPTIONS="--max-old-space-size=192"
 
-# El worker no escucha en ningún puerto: se comprueba que el proceso sigue vivo
-# y que la conexión a la base de datos responde.
+# El worker no escucha en ningún puerto: se comprueba que el proceso Node sigue
+# vivo. El patrón anclado evita que `pgrep` encuentre su propio shell.
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-  CMD pgrep -f "node src/worker.js" >/dev/null || exit 1
+  CMD pgrep -f '^node src/worker[.]js$' >/dev/null || exit 1
 
 CMD ["node", "src/worker.js"]
