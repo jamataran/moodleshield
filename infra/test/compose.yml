@@ -73,7 +73,7 @@ services:
   # bind mounts que Docker crea son de root y app/worker (uid 1000) no escriben.
   # Explicación larga en infra/prod/compose.yml.
   prepare:
-    image: ghcr.io/jamataran/moodleshield/app:sha-bf178a9
+    image: ghcr.io/jamataran/moodleshield/app:sha-13f7a50
     user: root
     restart: "no"
     command:
@@ -117,7 +117,7 @@ services:
     networks: [internal]
 
   app:
-    image: ghcr.io/jamataran/moodleshield/app:sha-1db4a89
+    image: ghcr.io/jamataran/moodleshield/app:sha-13f7a50
     restart: unless-stopped
     init: true
     depends_on:
@@ -140,7 +140,7 @@ services:
     networks: [internal]
 
   worker:
-    image: ghcr.io/jamataran/moodleshield/worker:sha-1db4a89
+    image: ghcr.io/jamataran/moodleshield/worker:sha-13f7a50
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -161,7 +161,7 @@ services:
   # La configuración de nginx viaja dentro de la imagen (docker/Dockerfile.proxy)
   # y se etiqueta a la vez que app y worker.
   proxy:
-    image: ghcr.io/jamataran/moodleshield/proxy:sha-bf178a9
+    image: ghcr.io/jamataran/moodleshield/proxy:sha-13f7a50
     restart: unless-stopped
     depends_on:
       app:
