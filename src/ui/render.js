@@ -30,6 +30,10 @@ function safeJson (value) {
 export async function renderPage (name, { bootstrap = {}, ...vars } = {}) {
   let html = await loadTemplate(name)
   html = html.replace('{{BOOTSTRAP}}', safeJson(bootstrap))
+  // Los HTML se generan en cada navegación LTI, pero los estáticos pueden
+  // permanecer en la caché del navegador. Al variar esta query con cada imagen
+  // desplegada nunca se mezcla un HTML nuevo con su JavaScript anterior.
+  html = html.replaceAll('{{ASSET_VERSION}}', encodeURIComponent(process.env.APP_VERSION ?? 'dev'))
   for (const [key, value] of Object.entries(vars)) {
     html = html.replaceAll(`{{${key}}}`, String(value ?? ''))
   }

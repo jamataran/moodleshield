@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Reproductor · MoodleShield</title>
-  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
 </head>
 <body class="viewer">
   <div id="content" class="viewer-content"></div>
@@ -20,7 +20,7 @@
   <p class="muted" id="notice" hidden></p>
 
   <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
-  <script src="/vendor/hls.min.js"></script>
-  <script type="module" src="/assets/player.js"></script>
+  <script src="/vendor/hls.min.js?v={{ASSET_VERSION}}"></script>
+  <script type="module" src="/assets/player.js?v={{ASSET_VERSION}}"></script>
 </body>
 </html>

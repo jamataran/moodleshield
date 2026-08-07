@@ -9,7 +9,7 @@
        siguen siendo públicos porque Moodle los pide sin autenticar— pero un
        escaneo oportunista se encuentra un formulario y nada más. -->
   <title>Acceso</title>
-  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
 </head>
 <body class="admin login-page">
   <main class="login-card panel">
@@ -23,6 +23,6 @@
     </form>
   </main>
   <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
-  <script src="/assets/login.js" defer></script>
+  <script src="/assets/login.js?v={{ASSET_VERSION}}" defer></script>
 </body>
 </html>
