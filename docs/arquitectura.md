@@ -145,7 +145,8 @@ tool_key                 kid, alg, public_jwk, private_pkcs8, active
 lti_platform             issuer + client_id (único), deployment_ids[], endpoints
 lti_oidc_state           state (PK), nonce, platform_id, expires_at, consumed_at
 
-catalog_folder           carpeta personal por (platform_id, owner_sub)
+catalog_folder           carpeta personal por (platform_id, owner_sub); anidable
+                         vía parent_id (FK compuesta al mismo propietario)
 video                    identidad lógica, propietario, carpeta, revisión activa
 video_revision           fichero físico: estado, duración, segmentos, patrón
 pdf_document             identidad lógica de un PDF
@@ -197,8 +198,8 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | DELETE | `/materials/:kind/:id/revisions/:rid` | catálogo | Purgar si la retención lo permite |
 | DELETE | `/materials/:kind/:id` | catálogo | Archivar el material lógico |
 | POST | `/materials/:kind/:id/restore` | catálogo | Restaurar del archivo |
-| GET/POST | `/folders` | catálogo | Carpetas del profesor |
-| PATCH/DELETE | `/folders/:id` | catálogo | Renombrar / vaciar y borrar |
+| GET/POST | `/folders` | catálogo | Árbol de carpetas del profesor (plano, con `parentId`); alta con padre opcional |
+| PATCH/DELETE | `/folders/:id` | catálogo | Renombrar y/o mover (`parentId`) / borrar subiendo contenido y subcarpetas al padre |
 | GET | `/videos` | catálogo | Catálogo de vídeo (compatibilidad) |
 | POST | `/videos` | catálogo | Subida en streaming |
 | POST | `/videos/:id/revisions` | catálogo | Sustituir el fichero sin cambiar el UUID |
@@ -209,6 +210,7 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | POST | `/documents` | catálogo | Subida de PDF |
 | POST | `/documents/:id/revisions` | catálogo | Sustituir el PDF |
 | GET/HEAD | `/documents/:id/content` | sesión con alcance | **PDF con `Range`**; nunca estático |
+| GET | `/documents/:id/download` | sesión con alcance | **Copia descargable sellada**: identidad en cada página + cifrado con permisos (ADR-017) |
 | GET | `/documents/:id/poster.jpg` | sesión con alcance | Portada (no va al content item) |
 | GET/POST | `/collections` | catálogo | Colecciones propias |
 | PATCH | `/collections/:id` | catálogo | Metadatos y lista, con control optimista |
@@ -286,17 +288,29 @@ herramientas de desarrollo y quitar el overlay.
 | | Vídeo | PDF |
 |---|---|---|
 | Control de acceso | Sí | Sí |
-| Disuasión visible | Overlay | Overlay |
-| Atribución de una filtración | **Sí** (patrón A/B por alumno) | **No** |
+| Disuasión visible | Overlay | Overlay (visor) + sello con identidad (descarga) |
+| Atribución de una filtración | **Sí** (patrón A/B por alumno) | **No** (el sello de la descarga es removible) |
+| Descarga oficial | No | Sí, sellada y con permisos bloqueados |
 | Impide recuperar el fichero | No | No |
 
-Marcar un PDF por alumno exigiría generar y custodiar una copia distinta por
-usuario, con su coste de proceso y su gestión de datos personales. No entra en
-este alcance y no debe presentarse como si entrara. Lo que sí se hace al subir
-es **normalizar** el documento con Ghostscript, descartando JavaScript
-embebido, acciones automáticas, adjuntos y formularios: el visor no ejecutará
-nada que traiga el fichero. Esa normalización también elimina las firmas
-digitales, y el catálogo lo avisa antes de subir.
+Lo que sí existe desde ADR-017 es una **descarga oficial sellada**: el alumno
+puede llevarse el PDF, pero la copia que recibe lleva su identidad en cada
+página (diagonal translúcida + pie con fecha) y sale cifrada con una contraseña
+de propietario aleatoria que bloquea editar y copiar en los visores que
+respetan permisos. Se genera al vuelo por peticionario; no se custodia ninguna
+copia. Sigue sin ser una marca forense: los permisos de un PDF los aplica el
+visor y quien sabe editar un PDF puede quitar el sello. Es disuasión visible y
+atribución social, no DRM. El vídeo **no** tiene descarga: su protección es el
+patrón A/B servido en streaming y una descarga oficial lo anularía.
+
+Marcar un PDF de forma forense de verdad exigiría generar y custodiar una copia
+distinta por usuario también para el visor, con su coste de proceso y su
+gestión de datos personales. No entra en este alcance y no debe presentarse
+como si entrara. Lo que sí se hace al subir es **normalizar** el documento con
+Ghostscript, descartando JavaScript embebido, acciones automáticas, adjuntos y
+formularios: el visor no ejecutará nada que traiga el fichero. Esa
+normalización también elimina las firmas digitales, y el catálogo lo avisa
+antes de subir.
 
 ## Presupuesto de recursos
 

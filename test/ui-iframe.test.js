@@ -59,7 +59,8 @@ test('la interfaz no usa alert, confirm ni prompt', async () => {
 
 test('cada diálogo declara los botones que su código espera', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
-  for (const id of ['prompt-dialog', 'confirm-dialog', 'edit-dialog', 'revisions-dialog']) {
+  for (const id of ['prompt-dialog', 'confirm-dialog', 'edit-dialog', 'revisions-dialog',
+    'move-dialog', 'upload-dialog', 'collection-dialog']) {
     assert.ok(html.includes(`id="${id}"`), `falta el diálogo ${id}`)
   }
   // `method="dialog"` es lo que hace que el botón cierre el diálogo y deje su
@@ -140,8 +141,8 @@ test('el catálogo permite componer y EDITAR colecciones, no sólo crearlas', as
 
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
   assert.ok(html.includes('id="new-collection"'), 'falta el botón de crear colección')
-  assert.ok(html.includes('id="tray-description"'), 'falta la descripción de la colección')
-  assert.ok(html.includes('id="tray-folder"'), 'falta el selector de carpeta de la colección')
+  assert.ok(html.includes('id="collection-description"'), 'falta la descripción de la colección')
+  assert.ok(html.includes('id="collection-folder"'), 'falta el selector de carpeta de la colección')
 })
 
 test('el player y los visores se sirven sin CDN', async () => {

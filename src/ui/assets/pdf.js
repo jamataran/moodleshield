@@ -27,7 +27,8 @@ try {
     document: {
       id: boot.document.id,
       title: boot.document.title,
-      contentUrl: boot.contentUrl
+      contentUrl: boot.contentUrl,
+      downloadUrl: boot.downloadUrl
     },
     user: boot.user,
     onStatus: setStatus,

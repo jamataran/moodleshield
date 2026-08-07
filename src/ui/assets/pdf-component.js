@@ -35,6 +35,51 @@ export async function createPdfView ({
   pages.setAttribute('role', 'document')
   pages.setAttribute('aria-label', doc.title ?? 'Documento')
 
+  // Descarga de la copia sellada. Se hace con fetch + blob y no con un enlace
+  // ?st=: así el token viaja en cabecera y no queda en los logs del proxy, y
+  // funciona igual dentro del iframe de Moodle.
+  let toolbar = null
+  if (doc.downloadUrl) {
+    toolbar = window.document.createElement('div')
+    toolbar.className = 'pdf-toolbar'
+    const hint = window.document.createElement('span')
+    hint.className = 'muted'
+    hint.textContent = 'La copia descargada lleva tu identidad en cada página.'
+    const download = window.document.createElement('button')
+    download.type = 'button'
+    download.textContent = 'Descargar PDF'
+    download.addEventListener('click', async () => {
+      download.disabled = true
+      onStatus?.('Preparando tu copia…')
+      try {
+        const res = await fetch(doc.downloadUrl, {
+          headers: { Authorization: `Bearer ${sessionToken}` }
+        })
+        if (!res.ok) {
+          let message = `HTTP ${res.status}`
+          try { message = (await res.json()).error ?? message } catch { /* sin cuerpo JSON */ }
+          throw new Error(message)
+        }
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const link = window.document.createElement('a')
+        link.href = url
+        link.download = `${String(doc.title ?? 'documento')
+          .replace(/[\\/:*?"<>|]/g, '')
+          .trim()
+          .slice(0, 80) || 'documento'}.pdf`
+        link.click()
+        setTimeout(() => URL.revokeObjectURL(url), 30_000)
+        onStatus?.('Descarga iniciada')
+      } catch (err) {
+        onStatus?.(`No se pudo descargar: ${err?.message ?? 'error'}`, true)
+      } finally {
+        download.disabled = false
+      }
+    })
+    toolbar.append(hint, download)
+  }
+
   const watermark = window.document.createElement('div')
   watermark.id = 'watermark'
   watermark.className = 'pdf-watermark'
@@ -42,6 +87,7 @@ export async function createPdfView ({
   watermark.textContent =
     [user?.identity, user?.name].filter(Boolean).join(' · ') || 'sesión verificada'
 
+  if (toolbar) root.append(toolbar)
   root.append(pages, watermark)
   container.replaceChildren(root)
 

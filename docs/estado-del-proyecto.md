@@ -11,7 +11,7 @@ MoodleShield es una herramienta **LTI 1.3** que protege vídeo y PDF cuando se i
 
 **Vídeo**: Se transcodifica una sola vez en dos variantes HLS imperceptiblemente distintas (marca A/B en posiciones opuestas), cada alumno recibe una mezcla pseudoaleatoria de segmentos según su identidad, y si el vídeo se filtra es posible atribuirlo mediante patrón de segmentos.
 
-**PDF**: Se valida, normaliza (quita JavaScript, acciones, adjuntos) y sirve desde el navegador con control de acceso y un overlay visible con el nombre del alumno. Pero el PDF viaja completo al navegador para renderizarse con PDF.js: **no tiene marca forense** y un alumno técnico puede recuperar los bytes descargados.
+**PDF**: Se valida, normaliza (quita JavaScript, acciones, adjuntos) y sirve desde el navegador con control de acceso y un overlay visible con el nombre del alumno. El alumno puede además **descargar una copia oficial sellada**: identidad en cada página y cifrado con contraseña de permisos aleatoria (ADR-017). Pero el PDF del visor viaja completo al navegador para renderizarse con PDF.js: **no tiene marca forense**, el sello de la descarga es removible por alguien técnico, y nada de esto debe venderse como DRM.
 
 **Infraestructura**: Express + Postgres + worker aparte con ffmpeg. Tests unitarios + integración. CI/CD con GitOps (código entra en main → imagen en GHCR → Portainer redespliega).
 
@@ -85,7 +85,7 @@ Para forzar el traslado a mano: `node scripts/migrate-media-layout.mjs`.
 
 ## Limitaciones conocidas
 
-**PDF**: Sin marca forense, sin impedir descarga. El overlay es disuasión visible, no protección. Normalizar quita firmas digitales.
+**PDF**: Sin marca forense. El overlay del visor y el sello de la copia descargada (identidad + cifrado de permisos) son disuasión visible, no protección: los permisos de un PDF los aplica el visor y `qpdf --decrypt` los elimina. Normalizar quita firmas digitales.
 
 **Vídeo**: No es DRM. La protección es **atribuible**, no impermeabilidad. Dos alumnos que comparen copias pueden crear una tercera sin marca (colusión). Recorte de bordes elimina las marcas.
 
@@ -135,6 +135,35 @@ de la tarea que vayas a tocar. No hace falta leer código para entender el dise�
 ---
 
 ## Cambios recientes
+
+**Rediseño de la biblioteca del profesor + carpetas anidadas + descarga de PDF sellada** (7 de agosto):
+
+- **La biblioteca es ahora un explorador de archivos**: migas de navegación,
+  tarjetas de carpeta, y las colecciones y materiales del nivel abierto en
+  secciones separadas. Desaparecen las pestañas Materiales/Colecciones y la
+  bandeja flotante: la colección se compone en su propio diálogo con un
+  buscador de materiales. La subida vive en un diálogo y hereda la carpeta
+  abierta. Nueva vista «Ver archivados» con restauración (antes archivar era un
+  camino sin salida: nada listaba lo archivado).
+- **Carpetas anidadas** (`parent_id`, ADR-016): hasta `MAX_FOLDER_DEPTH`
+  niveles, ciclos y profundidad vigilados por el servicio con advisory lock por
+  profesor. Migración `008_folder_tree.sql`. Borrar una carpeta sube contenido
+  y subcarpetas a su padre.
+- **Descarga de PDF sellada** (`GET /documents/:id/download`, ADR-017):
+  identidad del alumno en diagonal en cada página + pie con fecha, y cifrado
+  con contraseña de propietario aleatoria (abrir e imprimir sin contraseña;
+  editar/copiar bloqueados). Sólo PDF; el vídeo sigue sin descarga. Botón en el
+  visor suelto y en el de colección.
+- **Repaso móvil**: diálogos como hoja inferior, objetivos táctiles de 44 px,
+  campos a 16 px (sin zoom de iOS), rejillas a una columna.
+- **Despliegue**: la migración 008 se aplica sola al arrancar y es compatible
+  con los datos existentes; la imagen de la aplicación suma la dependencia
+  JavaScript pura `@cantoo/pdf-lib` (se instala al reconstruir; sin paquetes de
+  sistema nuevos); la del worker y nginx no cambian.
+- **Sin verificar contra un Moodle real**: como en la entrega anterior, el
+  recorrido completo dentro de un iframe de Moodle queda pendiente de prueba
+  manual (la condición crítica de los iframes cross-origin sigue cubierta por
+  `test/ui-iframe.test.js`).
 
 **Cuatro tareas grandes cerradas** (5–6 de agosto):
 
