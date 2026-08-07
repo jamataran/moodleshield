@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.7
+#
+# El proxy, con su configuración DENTRO de la imagen.
+#
+# Antes se montaba `infra/nginx/` desde el host (${INFRA_ROOT}) y eso obligaba a
+# mantener un clon del repositorio en una ruta fija del servidor. Portainer clona
+# el stack en su propio volumen, no en una ruta estable del host: si nadie había
+# clonado el repo a mano en ${INFRA_ROOT}, Docker creaba esos bind mounts como
+# directorios vacíos, nginx arrancaba con la configuración por defecto (sin
+# /healthz y escuchando en el 80 en vez del 8080) y el healthcheck lo dejaba en
+# "unhealthy" para siempre.
+#
+# Con la configuración horneada aquí, el stack no depende de nada del host: se
+# despliega eligiendo el compose y pegando el .env, que es como se opera.
+
+FROM nginx:1.27-alpine
+
+# Lo pasa el bake para las tres imágenes; aquí sólo sirve para que la etiqueta
+# de versión de la imagen coincida con la de app y worker.
+ARG APP_VERSION=dev
+
+COPY infra/nginx/templates/ /etc/nginx/templates/
+COPY infra/nginx/proxy_headers.conf /etc/nginx/proxy_headers.conf
+
+# El entrypoint oficial pasa envsubst sobre /etc/nginx/templates/*.template y
+# escribe el resultado en /etc/nginx/conf.d/. El filtro limita la sustitución a
+# estas dos variables, para que $uri, $arg_* y demás variables de nginx lleguen
+# intactas a la configuración final.
+#
+# El valor por defecto de MAX_UPLOAD_SIZE no es decorativo: si llegara vacío,
+# `client_max_body_size ;` es un error de sintaxis y nginx no arrancaría.
+ENV NGINX_ENVSUBST_FILTER="^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)\$" \
+    MAX_UPLOAD_SIZE=4g
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1

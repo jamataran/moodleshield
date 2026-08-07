@@ -3,14 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Administración · MoodleShield</title>
+  <!-- Esta página es la portada de facto: la raíz redirige aquí. No lleva marca,
+       ni producto, ni mención a Moodle o LTI, para no anunciar a quien pasa por
+       el dominio qué hay detrás. No es ocultación —/lti/keys y el handshake OIDC
+       siguen siendo públicos porque Moodle los pide sin autenticar— pero un
+       escaneo oportunista se encuentra un formulario y nada más. -->
+  <title>Acceso</title>
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body class="admin login-page">
   <main class="login-card panel">
-    <p class="eyebrow">MoodleShield</p>
-    <h1>Administración</h1>
-    <p class="muted">Accede para gestionar las instancias Moodle.</p>
+    <h1>Acceso</h1>
     <div id="notice" class="notice error" hidden></div>
     <form method="post" action="/admin/login" autocomplete="on">
       <input type="hidden" name="_csrf">
@@ -20,6 +23,6 @@
     </form>
   </main>
   <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
-  <script src="/assets/admin.js" defer></script>
+  <script src="/assets/login.js" defer></script>
 </body>
 </html>

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Prepara el host antes del primer despliegue con Portainer.
+# Repara el árbol de datos en el host.
 #
 #   sudo ./scripts/bootstrap-host.sh /docker-apps/moodleshield-pro prod
 #
-# Crea el árbol de datos con los permisos correctos. Los contenedores corren
-# como el usuario `node` (uid 1000), así que los directorios tienen que ser
-# suyos o el worker no podrá escribir los segmentos.
+# YA NO HACE FALTA para desplegar: de esto se encarga el servicio `prepare` del
+# compose en cada despliegue. Queda como herramienta de rescate para cuando hay
+# que arreglar a mano un árbol que quedó a medias (por ejemplo, ficheros de root
+# creados por un despliegue anterior a este cambio).
+#
+# Los contenedores corren como el usuario `node` (uid 1000), así que los
+# directorios tienen que ser suyos o el worker no podrá escribir los segmentos.
 
 set -euo pipefail
 
@@ -27,25 +31,27 @@ mkdir -p "${DATA}/media" "${DATA}/uploads" "${DATA}/pgdata"
 
 chown -R "${NODE_UID}:${NODE_GID}" "${DATA}/media" "${DATA}/uploads"
 chown -R "${POSTGRES_UID}:${POSTGRES_UID}" "${DATA}/pgdata"
-chmod 750 "${DATA}/media" "${DATA}/uploads" "${DATA}/pgdata"
+
+# media va en 755, no en 750: los segmentos los sirve nginx con sendfile y su
+# worker corre como uid 101, que no pertenece al grupo de node. Con 750 no
+# puede atravesar el directorio y todos los vídeos responden 403.
+chmod 755 "${DATA}/media"
+chmod 750 "${DATA}/uploads" "${DATA}/pgdata"
 
 cat <<EOF
 
-Listo. Ahora, en Portainer:
+Listo: ${DATA} queda con el propietario correcto (uid 1000 para media y
+uploads, uid 70 para pgdata).
 
-  1. Stacks → Add stack → Repository
-       URL              https://github.com/USUARIO/moodleshield
+Para desplegar no hace falta nada más en este servidor. Desde tu equipo:
+
+  1. ./scripts/generate-env.sh ${ENVIRONMENT}     # bloque de variables
+
+  2. Portainer → Stacks → Add stack → Repository
+       URL              https://github.com/jamataran/moodleshield
        Compose path     infra/${ENVIRONMENT}/compose.yml
        GitOps updates   activado (polling cada 5 min, o webhook)
-
-  2. Environment variables: pega los secretos generados con
-       ./scripts/generate-secrets.sh
-
-  3. El compose usa estos valores por defecto (puedes sobreescribirlos en
-     las variables del stack de Portainer):
-       DATA_ROOT=${DATA}
-       INFRA_ROOT=${ROOT}/repo/infra
-       PUBLIC_URL=https://tu-dominio
+       Environment variables → Advanced mode → pega el bloque
 
 Detalle completo en infra/README.md
 EOF

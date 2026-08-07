@@ -43,14 +43,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Re-etiquetar el mismo digest (app + worker)
+      - name: Re-etiquetar el mismo digest (app + worker + proxy)
         env:
           REPO: ${{ steps.meta.outputs.repo }}
           SRC: ${{ steps.meta.outputs.sha_tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
-          for img in app worker; do
+          for img in app worker proxy; do
             src="ghcr.io/${REPO}/${img}:${SRC}"
             if ! docker buildx imagetools inspect "$src" >/dev/null 2>&1; then
               echo "::error::No existe ${src}. Sólo se pueden etiquetar commits que hayan pasado por main (cd-main publica su imagen sha-*). Haz push a main primero."
@@ -78,8 +78,10 @@ jobs:
             git fetch origin main
             git checkout -B main origin/main
 
+            # `app` aparece en dos servicios (app y prepare); se cambian los dos.
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${VERSION}|"   infra/prod/compose.yml
 
             if git diff --quiet -- infra/prod/compose.yml; then
               echo "Sin cambios (prod ya estaba en ${VERSION})"; exit 0

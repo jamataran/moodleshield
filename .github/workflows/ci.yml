@@ -66,7 +66,13 @@ jobs:
           for env in test prod; do
             grep -Eq '^    image: ghcr.io/[^[:space:]]+/app:[^[:space:]]+$' "infra/$env/compose.yml"
             grep -Eq '^    image: ghcr.io/[^[:space:]]+/worker:[^[:space:]]+$' "infra/$env/compose.yml"
+            grep -Eq '^    image: ghcr.io/[^[:space:]]+/proxy:[^[:space:]]+$' "infra/$env/compose.yml"
             ! grep -Eq 'IMAGE_(REPO|TAG)' "infra/$env/compose.yml"
+            # Autocontenido: nada montado desde el repositorio. Portainer clona
+            # el stack en su propio volumen, así que un bind al repo apunta a un
+            # directorio inexistente y Docker lo crea vacío (el proxy arrancaba
+            # con la configuración por defecto y se quedaba en unhealthy).
+            ! grep -q 'INFRA_ROOT' "infra/$env/compose.yml"
             docker compose --env-file "infra/$env/.env.sample" --env-file "infra/$env/.env.ci" \
               -f "infra/$env/compose.yml" config -q
             echo "infra/$env OK"
@@ -101,7 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
-      - name: Bake (app + worker)
+      - name: Bake (app + worker + proxy)
         uses: docker/bake-action@v6
         with:
           files: docker/docker-bake.hcl

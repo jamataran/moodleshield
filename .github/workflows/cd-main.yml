@@ -62,7 +62,11 @@ jobs:
           for env in test prod; do
             grep -Eq '^    image: ghcr.io/[^[:space:]]+/app:[^[:space:]]+$' "infra/$env/compose.yml"
             grep -Eq '^    image: ghcr.io/[^[:space:]]+/worker:[^[:space:]]+$' "infra/$env/compose.yml"
+            grep -Eq '^    image: ghcr.io/[^[:space:]]+/proxy:[^[:space:]]+$' "infra/$env/compose.yml"
             ! grep -Eq 'IMAGE_(REPO|TAG)' "infra/$env/compose.yml"
+            # El stack tiene que ser autocontenido: un bind del repositorio
+            # apunta a un directorio que no existe cuando lo despliega Portainer.
+            ! grep -q 'INFRA_ROOT' "infra/$env/compose.yml"
             docker compose --env-file "infra/$env/.env.sample" --env-file "infra/$env/.env.ci" \
               -f "infra/$env/compose.yml" config -q
           done
@@ -104,10 +108,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Una invocación para las dos imágenes: worker reutiliza todas las capas
+      # Una invocación para las tres imágenes: worker reutiliza todas las capas
       # de app, y la caché GHA hace que un push con package-lock intacto tarde
-      # 1-2 minutos.
-      - name: Bake y push (app + worker)
+      # 1-2 minutos. `proxy` es nginx + la configuración de infra/nginx.
+      - name: Bake y push (app + worker + proxy)
         uses: docker/bake-action@v6
         with:
           files: docker/docker-bake.hcl
@@ -141,8 +145,11 @@ jobs:
             git fetch origin main
             git checkout -B main origin/main
 
+            # `app` aparece dos veces (servicios app y prepare): el sed sin /1
+            # las cambia las dos, que es justo lo que hay que hacer.
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${SHA_TAG}|"       infra/test/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${SHA_TAG}|" infra/test/compose.yml
+            sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${SHA_TAG}|"   infra/test/compose.yml
 
             if git diff --quiet -- infra/test/compose.yml; then
               echo "Sin cambios (la etiqueta ya era ${SHA_TAG})"; exit 0

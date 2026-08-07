@@ -132,10 +132,8 @@ function renderForm () {
   document.querySelector('#privateWarning').hidden = !data.allowPrivateHosts
 }
 
-if (document.body.classList.contains('login-page')) {
-  showNotice('#notice', data.error, 'error')
-  setValue('_csrf', data.csrf)
-} else if (document.body.dataset.page === 'platforms') {
+// El login no pasa por aquí: tiene su propio login.js, sin vocabulario LTI.
+if (document.body.dataset.page === 'platforms') {
   renderPlatforms()
 } else if (document.body.dataset.page === 'platform-form') {
   renderForm()

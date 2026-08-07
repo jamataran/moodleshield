@@ -124,8 +124,15 @@ services:
       - ./data/media:/data/media
       - ./data/uploads:/data/uploads
 
+  # Igual que en test y prod, la configuración de nginx va DENTRO de la imagen.
+  # Se construye aquí en vez de montarla para que lo que se prueba en local sea
+  # exactamente el artefacto que se despliega: si tocas infra/nginx/, reconstruye
+  # con `docker compose up -d --build proxy`.
   proxy:
-    image: nginx:1.27-alpine
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.proxy
+    image: moodleshield/proxy:local
     restart: unless-stopped
     depends_on:
       app:
@@ -135,10 +142,7 @@ services:
       # los segmentos devuelven 403.
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:-local-inseguro-medialink-00000000000000000000}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
-      NGINX_ENVSUBST_FILTER: "^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)$$"
     volumes:
-      - ../nginx/templates:/etc/nginx/templates:ro
-      - ../nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
       - ./data/media:/srv/media:ro
     ports:
       - "127.0.0.1:${HTTP_PORT:-8088}:8080"

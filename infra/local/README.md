@@ -179,7 +179,12 @@ docker compose logs -f app worker            # logs en vivo (LOG_LEVEL=debug)
 docker compose exec db psql -U moodleshield  # la base de datos
 ls data/media/<videoId>/{A,B}                # los segmentos generados
 docker compose up -d --build app             # reconstruir tras tocar src/
+docker compose up -d --build proxy           # …tras tocar infra/nginx/
 ```
+
+La configuración de nginx va **dentro** de la imagen del proxy (igual que en
+test y prod, donde el stack no puede montar nada del repositorio), así que
+editar `infra/nginx/` no surte efecto hasta reconstruir.
 
 La base de datos también está en `localhost:55432` (usuario/clave
 `moodleshield` / `moodleshield-local`) para conectar desde WebStorm.

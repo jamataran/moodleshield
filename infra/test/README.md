@@ -6,9 +6,9 @@ INTERNET ──▶ nginx proxy (tu edge, TLS) ──▶ proxy del stack ──�
 ```
 
 Réplica de producción donde aterriza **cada push a `main`**: el CI publica
-`app`/`worker` con etiqueta `sha-<commit>`, actualiza las dos referencias de
-imagen directamente en este `compose.yml` y hace commit; Portainer detecta el
-cambio y redespliega leyendo sólo el Compose.
+`app`, `worker` y `proxy` con etiqueta `sha-<commit>`, actualiza las
+referencias de imagen directamente en este `compose.yml` y hace commit;
+Portainer detecta el cambio y redespliega leyendo sólo el Compose.
 
 Diferencias deliberadas respecto a prod:
 
@@ -50,28 +50,21 @@ pestaña *Advanced*. Si tu proxy corre en Docker en el mismo host, pon
 
 ## Alta en Portainer (una vez)
 
-1. **Host** (por SSH):
+No hay paso previo por SSH: el stack no monta nada del repositorio y se prepara
+solo el árbol de datos.
+
+1. **Variables**, desde un clon del repositorio en tu equipo:
+
    ```bash
-   git clone https://github.com/jamataran/moodleshield /docker-apps/moodleshield-test/repo
-   sudo /docker-apps/moodleshield-test/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield-test test
+   ./scripts/generate-env.sh test
    ```
-   El clon del host existe para que nginx monte `infra/nginx/` (Portainer clona
-   dentro de su propio volumen, no en una ruta estable del host). Sólo hay que
-   hacer `git pull` en él si cambia algo bajo `infra/nginx/` — es raro.
 
-2. **Secretos**: `./scripts/generate-secrets.sh` y guárdalos (con
-   `WATERMARK_SECRET` el primero) en el gestor de contraseñas. Define además
-   `ADMIN_USERNAME` y genera `ADMIN_PASSWORD_HASH` con
-   `node scripts/hash-admin-password.mjs`; el script de secretos ya emite
-   `ADMIN_SESSION_SECRET`.
+   Pregunta URL pública, usuario y contraseña de administración, y genera el
+   bloque completo (incluido `WATERMARK_SECRET`, que es **permanente**:
+   guárdalo en el gestor de contraseñas antes de desplegar). Detalle en
+   [`../README.md`](../README.md#desplegar-en-portainer).
 
-3. El Compose ya trae por defecto `DATA_ROOT=/docker-apps/moodleshield-test`
-   e `INFRA_ROOT=/docker-apps/moodleshield-test/repo/infra`. Si necesitas
-   cambiarlos, define esas variables en Portainer. `.env.sample` sólo es una
-   plantilla para ejecutar el stack manualmente; no hace falta crear un `.env`
-   para Portainer.
-
-4. **Portainer** → *Stacks → Add stack → Repository*:
+2. **Portainer** → *Stacks → Add stack → Repository*:
 
    | Campo | Valor |
    |---|---|
@@ -79,7 +72,7 @@ pestaña *Advanced*. Si tu proxy corre en Docker en el mismo host, pon
    | Reference | `refs/heads/main` |
    | Compose path | `infra/test/compose.yml` |
    | GitOps updates | ✅ (polling 5 min, o webhook → secreto `PORTAINER_WEBHOOK_TEST` en GitHub) |
-   | Environment variables | los secretos del paso 2 |
+   | Environment variables | *Advanced mode* → el bloque del paso 1 |
 
 > Las imágenes de ghcr.io son privadas por defecto: hazlas públicas
 > (GitHub → Packages → cada paquete → Change visibility) o configura en
@@ -89,7 +82,7 @@ pestaña *Advanced*. Si tu proxy corre en Docker en el mismo host, pon
 
 ```bash
 P="docker compose -p moodleshield-test"
-$P ps                                   # db, app, worker y proxy
+$P ps                                   # db, app, worker y proxy (+ prepare, salido con 0)
 $P logs -f app worker
 $P exec db psql -U moodleshield -c "SELECT status, count(*) FROM transcode_job GROUP BY status"
 ```
@@ -102,9 +95,10 @@ historial de despliegues.
 
 | Síntoma | Causa probable |
 |---|---|
+| El stack no llega ni a crear contenedores | Falta una variable obligatoria en el bloque pegado; el mensaje la nombra (`falta ADMIN_PASSWORD_HASH`, …). Ojo: vacío cuenta como que falta |
 | `app` reinicia en bucle | Falta un secreto en Portainer (`logs app` lo nombra) |
 | Todos los segmentos 403 | `MEDIA_LINK_SECRET` distinto entre `app` y `proxy` |
 | Subidas cortadas | `client_max_body_size` del **edge** menor que el del stack |
 | URLs generadas en http | El edge no manda `X-Forwarded-Proto: https` |
-| nginx no arranca | `INFRA_ROOT` no apunta al clon del host |
-| Worker con `EACCES` | Permisos de `DATA_ROOT` → `bootstrap-host.sh` |
+| `proxy` en `unhealthy` y el puerto no responde | Que las tres imágenes no lleven la misma etiqueta. La configuración de nginx va dentro de la imagen `proxy`: si se despliega una mezcla, la plantilla puede no cuadrar con las rutas que sirve `app` |
+| Worker con `EACCES` | `prepare` falló o se saltó. `logs prepare`; como último recurso, `bootstrap-host.sh` por SSH |

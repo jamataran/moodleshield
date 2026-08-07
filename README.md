@@ -250,7 +250,7 @@ feature/* ── PR ──▶ CI ──▶ merge a main
                               │
                               ├─ cd-main.yml: lint, tests, migraciones,
                               │  validación Compose y build
-                              ├─ publica app/worker:sha-<commit> en GHCR
+                              ├─ publica app/worker/proxy:sha-<commit> en GHCR
                               ├─ actualiza las imágenes en infra/test/compose.yml
                               └─ Portainer detecta el commit y despliega TEST
 
@@ -290,9 +290,11 @@ emergencia.
 #### Qué ocurre después del merge
 
 Cada push de código a `main` ejecuta `cd-main.yml`. El workflow vuelve a
-verificar el commit, construye una vez las imágenes `app` y `worker`, las
-publica en GHCR como `sha-<commit corto>` y cambia sólo las referencias `image:`
-en `infra/test/compose.yml`. Ese cambio automático se commitea como
+verificar el commit, construye una vez las imágenes `app`, `worker` y `proxy`
+(nginx con su configuración horneada: el stack no puede montar ficheros del
+repositorio, ver [`infra/README.md`](infra/README.md)), las publica en GHCR como
+`sha-<commit corto>` y cambia sólo las referencias `image:` en
+`infra/test/compose.yml`. Ese cambio automático se commitea como
 `deploy(test): ... [skip ci]`.
 
 Portainer tiene el repositorio configurado con la rama `main` y el Compose del

@@ -5,6 +5,10 @@
 # (GitOps). Ver infra/README.md para el alta paso a paso.
 #
 # Reglas de la casa:
+#   - Autocontenido: NADA se monta desde el repositorio. Portainer clona el
+#     stack en su propio volumen, no en una ruta estable del host, así que un
+#     bind a ficheros del repo apunta a un directorio que no existe y Docker lo
+#     crea vacío. La configuración de nginx viaja dentro de la imagen `proxy`.
 #   - Rutas de volumen absolutas: Portainer no ejecuta el compose desde una
 #     carpeta estable, así que las rutas relativas apuntan a cualquier sitio.
 #   - Los secretos se definen en las variables de entorno del stack en
@@ -12,6 +16,9 @@
 #     son el estado desplegado; el CI actualiza sus tags directamente aquí.
 #   - Todo el estado vive bajo ${DATA_ROOT}; con eso y la base de datos hay
 #     copia de seguridad completa.
+#
+# Para generar el bloque de variables que hay que pegar en Portainer:
+#   ./scripts/generate-env.sh prod
 # =============================================================================
 
 name: moodleshield
@@ -69,6 +76,38 @@ x-app-env: &app-env
 
 services:
   # ---------------------------------------------------------------------------
+  # Prepara el árbol de datos y termina. Existe para que el despliegue no exija
+  # tocar el host por SSH: Docker crea los bind mounts que faltan como root, y
+  # app y worker corren como uid 1000, así que sin esto la primera subida muere
+  # con EACCES. Es idempotente y sale en milisegundos cuando ya está bien.
+  prepare:
+    image: ghcr.io/jamataran/moodleshield/app:latest
+    user: root
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        for d in /data/media /data/uploads; do
+          mkdir -p "$$d"
+          # Recursivo sólo la primera vez: en un árbol de medios con miles de
+          # segmentos, un chown -R en cada despliegue cuesta minutos.
+          [ "$$(stat -c %u "$$d")" = "1000" ] || chown -R 1000:1000 "$$d"
+        done
+        # media lo lee TAMBIÉN el worker de nginx, que corre como uid 101: con
+        # 750 no puede atravesar el directorio y todos los segmentos dan 403.
+        # Los ficheros que publica el worker ya salen 644 por el umask.
+        chmod 755 /data/media
+        chmod 750 /data/uploads
+        echo "Árbol de datos listo"
+    volumes:
+      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/data/media
+      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/uploads:/data/uploads
+    logging: *logging
+    networks: [internal]
+
+  # ---------------------------------------------------------------------------
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -98,6 +137,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      prepare:
+        condition: service_completed_successfully
     environment: *app-env
     volumes:
       - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/data/media
@@ -123,6 +164,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      prepare:
+        condition: service_completed_successfully
     environment: *app-env
     volumes:
       - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/data/media
@@ -135,8 +178,11 @@ services:
     networks: [internal]
 
   # ---------------------------------------------------------------------------
+  # nginx con la configuración de infra/nginx DENTRO de la imagen (misma
+  # etiqueta que app y worker: se despliegan como un trío coherente). Lo único
+  # que monta son los medios que sirve con sendfile.
   proxy:
-    image: nginx:1.27-alpine
+    image: ghcr.io/jamataran/moodleshield/proxy:latest
     restart: unless-stopped
     depends_on:
       app:
@@ -144,10 +190,7 @@ services:
     environment:
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4g}
-      NGINX_ENVSUBST_FILTER: "^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)$$"
     volumes:
-      - ${INFRA_ROOT:-/docker-apps/moodleshield-pro/repo/infra}/nginx/templates:/etc/nginx/templates:ro
-      - ${INFRA_ROOT:-/docker-apps/moodleshield-pro/repo/infra}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
       - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/srv/media:ro
     ports:
       # Sólo en loopback: quien expone al mundo es el reverse proxy del host.

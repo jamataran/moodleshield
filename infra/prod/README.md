@@ -7,8 +7,9 @@ INTERNET ──▶ nginx proxy (tu edge, TLS) ──▶ proxy del stack ──�
 
 Aquí sólo llegan **versiones etiquetadas**. Al crear un tag `vX.Y.Z`, el CI
 **no reconstruye nada**: re-etiqueta el mismo digest que ya rodó en test
-(`docker buildx imagetools create`) y actualiza las referencias de imagen en
-este `compose.yml`. Lo que se probó en test es, bit a bit, lo que llega aquí.
+(`docker buildx imagetools create`) para las tres imágenes —`app`, `worker` y
+`proxy`— y actualiza las referencias en este `compose.yml`. Lo que se probó en
+test es, bit a bit, lo que llega aquí.
 
 ```
 push a main ──▶ imagen sha-abc1234 ──▶ TEST
@@ -34,28 +35,34 @@ proxy_read_timeout 3600s;
 
 ## Alta en Portainer (una vez)
 
-Igual que test cambiando el entorno:
+Igual que test cambiando el entorno. **No hace falta tocar el servidor**: ni
+clonar el repositorio, ni crear directorios, ni ajustar permisos.
 
-1. ```bash
-   git clone https://github.com/jamataran/moodleshield /docker-apps/moodleshield-pro/repo
-   sudo /docker-apps/moodleshield-pro/repo/scripts/bootstrap-host.sh /docker-apps/moodleshield-pro prod
+1. **Variables**, desde un clon del repositorio en tu equipo:
+
+   ```bash
+   ./scripts/generate-env.sh prod
    ```
-2. Secretos: `./scripts/generate-secrets.sh` → variables del stack en Portainer.
-   Añade `ADMIN_USERNAME` y genera `ADMIN_PASSWORD_HASH` de forma interactiva
-   con `node scripts/hash-admin-password.mjs`. La salida de
-   `generate-secrets.sh` ya incluye `ADMIN_SESSION_SECRET`.
+
+   Pregunta URL pública, usuario y contraseña de administración, y genera el
+   bloque completo. Detalle en [`../README.md`](../README.md#desplegar-en-portainer).
 
    > ⚠️ **`WATERMARK_SECRET` es permanente.** Guárdalo en el gestor de
    > contraseñas ANTES del primer despliegue: si se pierde o se cambia, todas
    > las trazas forenses anteriores dejan de poder atribuirse.
 
-3. El Compose ya trae por defecto `DATA_ROOT=/docker-apps/moodleshield-pro`
-   e `INFRA_ROOT=/docker-apps/moodleshield-pro/repo/infra`. Si necesitas
-   cambiarlos, define esas variables en Portainer. `.env.sample` es sólo una
-   plantilla para ejecutar el stack manualmente.
-4. Portainer → *Add stack → Repository* con *Compose path* =
+2. **Portainer** → *Add stack → Repository* con *Compose path* =
    `infra/prod/compose.yml`, GitOps activado (webhook → secreto
-   `PORTAINER_WEBHOOK_PROD` en GitHub).
+   `PORTAINER_WEBHOOK_PROD` en GitHub), y el bloque del paso 1 pegado en
+   *Environment variables → Advanced mode*.
+
+   El compose trae `DATA_ROOT=/docker-apps/moodleshield-pro` por defecto; el
+   bloque generado lo incluye explícitamente para que se vea dónde acaban los
+   datos. Cámbialo ahí si el disco grande está en otro sitio.
+
+3. **Deploy**. El servicio `prepare` crea `${DATA_ROOT}/{media,uploads}` con el
+   propietario correcto y termina; `app` y `worker` no arrancan hasta que ha
+   salido con 0.
 
 ## Publicar una versión
 
@@ -97,7 +104,7 @@ nunca se restauró no es una copia.
 
 ```bash
 P="docker compose -p moodleshield"
-$P ps && $P logs --tail=100 app worker
+$P ps && $P logs --tail=100 app worker      # `prepare` sale con 0: es normal
 $P up -d --scale worker=2               # más transcodificación en paralelo
 df -h ${DATA_ROOT}                      # los segmentos ocupan ~2× el re-encode
 ```

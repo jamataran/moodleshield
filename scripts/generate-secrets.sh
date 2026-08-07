@@ -4,6 +4,10 @@
 #   ./scripts/generate-secrets.sh            # imprime por pantalla
 #   ./scripts/generate-secrets.sh --env      # rellena el .env local
 #
+# Para desplegar en Portainer no uses esto: `./scripts/generate-env.sh prod`
+# emite el bloque COMPLETO de variables del stack (rutas, URL pública, usuario
+# de administración y estos mismos secretos).
+#
 # ⚠️ WATERMARK_SECRET es permanente: si se cambia, los vídeos ya vistos dejan de
 # poder atribuirse a nadie. Guárdalo en el gestor de contraseñas antes que nada.
 

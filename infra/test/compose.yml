@@ -9,6 +9,9 @@
 #
 # Se despliega igual que producción (Portainer + GitOps) o en local con:
 #   docker compose --env-file .env.sample -f compose.yml up -d
+#
+# Para generar el bloque de variables que hay que pegar en Portainer:
+#   ./scripts/generate-env.sh test
 # =============================================================================
 
 name: moodleshield-test
@@ -66,6 +69,32 @@ x-app-env: &app-env
   MATERIAL_ARCHIVE_RETENTION_DAYS: ${MATERIAL_ARCHIVE_RETENTION_DAYS:-90}
 
 services:
+  # Crea el árbol de datos con el propietario correcto y termina; sin esto los
+  # bind mounts que Docker crea son de root y app/worker (uid 1000) no escriben.
+  # Explicación larga en infra/prod/compose.yml.
+  prepare:
+    image: ghcr.io/jamataran/moodleshield/app:sha-bf178a9
+    user: root
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        for d in /data/media /data/uploads; do
+          mkdir -p "$$d"
+          [ "$$(stat -c %u "$$d")" = "1000" ] || chown -R 1000:1000 "$$d"
+        done
+        # 755 en media: lo lee el worker de nginx (uid 101). Ver prod.
+        chmod 755 /data/media
+        chmod 750 /data/uploads
+        echo "Árbol de datos listo"
+    volumes:
+      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/data/media
+      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/uploads:/data/uploads
+    logging: *logging
+    networks: [internal]
+
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -94,6 +123,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      prepare:
+        condition: service_completed_successfully
     environment: *app-env
     volumes:
       - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/data/media
@@ -116,6 +147,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      prepare:
+        condition: service_completed_successfully
     environment: *app-env
     volumes:
       - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/data/media
@@ -125,8 +158,10 @@ services:
     logging: *logging
     networks: [internal]
 
+  # La configuración de nginx viaja dentro de la imagen (docker/Dockerfile.proxy)
+  # y se etiqueta a la vez que app y worker.
   proxy:
-    image: nginx:1.27-alpine
+    image: ghcr.io/jamataran/moodleshield/proxy:sha-bf178a9
     restart: unless-stopped
     depends_on:
       app:
@@ -134,10 +169,7 @@ services:
     environment:
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
-      NGINX_ENVSUBST_FILTER: "^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)$$"
     volumes:
-      - ${INFRA_ROOT:-/docker-apps/moodleshield-test/repo/infra}/nginx/templates:/etc/nginx/templates:ro
-      - ${INFRA_ROOT:-/docker-apps/moodleshield-test/repo/infra}/nginx/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
       - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/srv/media:ro
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-43128}:8080"

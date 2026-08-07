@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import { hashAdminPassword } from '../src/admin/auth.js'
 
-if (!process.stdin.isTTY || !process.stdout.isTTY) {
-  console.error('Este script debe ejecutarse en un TTY para no exponer la contraseña.')
+// Sólo se exige TTY en la entrada: es lo que permite leer sin eco. La salida
+// puede ser una tubería, y de hecho lo es cuando llama generate-env.sh
+// (`HASH=$(node scripts/hash-admin-password.mjs)`). Por eso los mensajes van a
+// stderr y por stdout sale únicamente el hash.
+if (!process.stdin.isTTY) {
+  console.error('Este script necesita un terminal interactivo para no exponer la contraseña.')
   process.exit(1)
 }
 
 async function hiddenPrompt (label) {
-  process.stdout.write(label)
+  process.stderr.write(label)
   process.stdin.setRawMode(true)
   process.stdin.resume()
   process.stdin.setEncoding('utf8')
@@ -19,7 +23,7 @@ async function hiddenPrompt (label) {
         reject(new Error('Cancelado'))
       } else if (key === '\r' || key === '\n') {
         cleanup()
-        process.stdout.write('\n')
+        process.stderr.write('\n')
         resolve(value)
       } else if (key === '\u007f') {
         value = value.slice(0, -1)

@@ -30,7 +30,14 @@ concretas en el diseño, todas ya resueltas en el código:
 Y una particularidad de Portainer que condiciona los ficheros: **las rutas de
 volumen tienen que ser absolutas**. Portainer no ejecuta el compose desde un
 directorio estable, así que un `./datos` acaba en cualquier sitio. De ahí
-`${DATA_ROOT}` e `${INFRA_ROOT}`, siempre absolutas.
+`${DATA_ROOT}`, siempre absoluta.
+
+Del mismo hecho sale una consecuencia más fuerte: **el stack no puede montar
+nada del repositorio**. Portainer clona en su propio volumen, así que un bind a
+`infra/nginx/` apunta a una ruta que en el host no existe y Docker la crea
+vacía; nginx arranca entonces con su configuración por defecto y se queda en
+`unhealthy`. Por eso la configuración de nginx viaja dentro de la imagen
+`proxy` (`docker/Dockerfile.proxy`) y desapareció `${INFRA_ROOT}`.
 
 ## Alcance
 
@@ -65,29 +72,27 @@ Detalle completo en el README del entorno:
 [`infra/prod/README.md`](../../../infra/prod/README.md) /
 [`infra/test/README.md`](../../../infra/test/README.md).
 
-1. **Preparar el host** (una vez, por SSH):
+1. **Generar el bloque de variables** (desde un clon en tu equipo):
    ```bash
-   sudo ./scripts/bootstrap-host.sh /docker-apps/moodleshield-pro prod
-   ```
-2. **Generar los secretos**:
-   ```bash
-   ./scripts/generate-secrets.sh
+   ./scripts/generate-env.sh prod
    ```
    Guardar `WATERMARK_SECRET` en el gestor de contraseñas **antes** de seguir.
-3. **Revisar** `infra/prod/compose.yml`: trae por defecto
-   `DATA_ROOT=/docker-apps/moodleshield-pro` e
-   `INFRA_ROOT=/docker-apps/moodleshield-pro/repo/infra`. Sobrescribe esos
-   valores en las variables del stack si tu host usa otras rutas. Las imágenes
-   completas y sus tags están en el Compose; no dependen de `IMAGE_REPO` en un
-   `.env`.
-4. **Crear el stack en Portainer** desde el repositorio, con *Compose path* =
-   `infra/prod/compose.yml`, pegando los secretos en *Environment variables*.
-5. **Activar GitOps updates** (→ T15).
+2. **Revisar** `infra/prod/compose.yml`: trae por defecto
+   `DATA_ROOT=/docker-apps/moodleshield-pro`. Sobrescribe ese valor en las
+   variables del stack si tu host usa otra ruta. Las imágenes completas y sus
+   tags están en el Compose; no dependen de `IMAGE_REPO` en un `.env`.
+3. **Crear el stack en Portainer** desde el repositorio, con *Compose path* =
+   `infra/prod/compose.yml`, pegando el bloque en *Environment variables →
+   Advanced mode*.
+4. **Activar GitOps updates** (→ T15).
+
+El host no necesita preparación previa: el servicio `prepare` crea el árbol de
+datos con el propietario correcto en cada despliegue.
 
 ## Criterio de aceptación
 
-- [ ] El stack levanta desde Portainer sin tocar nada por SSH después del
-      `bootstrap-host.sh`.
+- [ ] El stack levanta desde Portainer sin tocar el servidor por SSH: elegir el
+      compose del repositorio, pegar el bloque de variables y desplegar.
 - [ ] `docker compose ps` muestra `db`, `app`, `worker` y `proxy`.
 - [ ] `https://<dominio>/readyz` devuelve `{"status":"ready"}`.
 - [ ] Reiniciar el servidor entero deja el sistema funcionando solo.
@@ -115,10 +120,12 @@ sudo reboot
 
 - **Permisos de los volúmenes.** Los contenedores corren como `node` (uid 1000).
   Si `${DATA_ROOT}/media` es de root, el worker no puede escribir y todos los
-  trabajos fallan con `EACCES`. Lo arregla `bootstrap-host.sh`.
-- **`INFRA_ROOT` mal apuntado.** nginx necesita las plantillas del repositorio.
-  Tiene que apuntar al `infra/` del repositorio clonado por Portainer, cuya ruta
-  se ve en la pantalla del stack.
+  trabajos fallan con `EACCES`. De eso se encarga el servicio `prepare`, que
+  bloquea el arranque de `app` y `worker` hasta haber salido con 0;
+  `bootstrap-host.sh` queda como rescate para un árbol ya estropeado.
+- **Montar ficheros del repositorio.** No se puede: Portainer clona en su
+  propio volumen. Todo lo que el stack necesite del repositorio va dentro de
+  una imagen. El CI falla si un compose vuelve a mencionar `INFRA_ROOT`.
 - **Los secretos en el `.env` versionado.** No: sólo en Portainer. El job
   `infra` del CI falla si detecta una variable `*SECRET*`, `*PASSWORD*`,
   `*TOKEN*` o `*AUTHKEY*` con valor en un `.env` del repositorio.

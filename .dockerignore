@@ -5,6 +5,8 @@ node_modules
 coverage
 docs
 infra
+# …salvo la configuración de nginx, que la hornea docker/Dockerfile.proxy.
+!infra/nginx
 init.md
 test
 *.md
