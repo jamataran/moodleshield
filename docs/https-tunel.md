@@ -26,8 +26,8 @@ profesor. La comprobación final debe hacerse también desde el servidor Moodle.
 ## Test y producción: reverse proxy público
 
 ```text
-INTERNET ──HTTPS──▶ nginx/Nginx Proxy Manager ──HTTP──▶ 127.0.0.1:43127/43128
-                         TLS del host                         proxy del stack
+INTERNET ──HTTPS──▶ nginx/Nginx Proxy Manager ──HTTP──▶ proxy del stack
+                         TLS del host                 127.0.0.1:43127/43128
 ```
 
 1. Crea un registro DNS para el dominio de cada entorno apuntando al servidor.
@@ -58,8 +58,13 @@ server {
 
 Test usa por defecto el puerto `43128` y producción el `43127`. Ambos se ligan a
 `127.0.0.1`, de forma que el HTTP interno no queda publicado directamente. Si
-el reverse proxy corre en otro contenedor, conéctalo a la red adecuada o usa
-`BIND_ADDRESS=0.0.0.0` restringiendo el puerto con firewall.
+el reverse proxy corre en otro contenedor, `127.0.0.1` se refiere a ese
+contenedor: liga `HTTP_BIND_ADDRESS` a la IP privada concreta del host y úsala
+como upstream. Recurre a `0.0.0.0` sólo con firewall. En test,
+`DB_BIND_ADDRESS` permanece en `127.0.0.1`, independiente del bind HTTP.
+
+El destino es siempre el servicio `proxy` del stack. No apuntes directamente a
+`app:3000`: ese gateway aplica `secure_link` a los segmentos HLS.
 
 ### Comprobación
 
@@ -116,7 +121,7 @@ para LTI porque el servidor Moodle no puede acceder a `/lti/keys`.
 |---|---|
 | Moodle no conecta | El servidor Moodle no llega a `/lti/keys`; probar desde esa máquina |
 | URLs generadas en HTTP | Falta `X-Forwarded-Proto: https` o `PUBLIC_URL` es incorrecta |
-| Subida responde 413 | `client_max_body_size` del edge es demasiado pequeño |
+| Subida responde 413 | Ajusta juntos `client_max_body_size`, `MAX_UPLOAD_SIZE` y `MAX_UPLOAD_BYTES` |
 | Subida local por Cloudflare se corta a 100 MB | Límite del plan gratuito del túnel |
 | Tailscale dice `tailnet only` | Está activo Serve, no Funnel |
 | Certificado rechazado | El dominio no coincide o la cadena del certificado está incompleta |

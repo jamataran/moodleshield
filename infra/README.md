@@ -1,191 +1,308 @@
-# Infraestructura
+# Despliegue de MoodleShield
 
-Tres entornos, cada uno con su carpeta, su `compose.yml` y su README:
+Los Compose de `test` y `prod` están preparados para **Docker Compose v2** y
+**Portainer sobre Docker Standalone**, tanto en `linux/amd64` como en
+`linux/arm64`. No son ficheros de Docker Swarm (`docker stack deploy`).
 
-| Entorno | Topología | Imágenes | Detalle |
-|---|---|---|---|
-| [`local/`](local/README.md) | CLOUDFLARE → tu equipo → contenedores | se **construyen** del código fuente | pruebas y depuración |
-| [`test/`](test/README.md) | INTERNET → tu nginx (TLS) → stack | `ghcr.io … :sha-<commit>` — cada push a `main` | réplica con marca visible |
-| [`prod/`](prod/README.md) | INTERNET → tu nginx (TLS) → stack | `ghcr.io … :vX.Y.Z` — **mismo digest** promocionado desde test | |
+| Entorno | Compose | Puerto HTTP predeterminado | Imagen |
+|---|---|---:|---|
+| Test | [`test/compose.yml`](test/compose.yml) | `43128` | `sha-<commit>` |
+| Producción | [`prod/compose.yml`](prod/compose.yml) | `43127` | versión promovida |
 
-```
-infra/
-├── nginx/          configuración de nginx (se hornea en la imagen `proxy`)
-├── local/          compose + .env + README
-├── test/           compose + .env.sample + .env.ci + README
-└── prod/           compose + .env.sample + .env.ci + README
-```
+## Topología: por qué hay dos nginx
 
-## Desplegar en Portainer
-
-El stack es **autocontenido**: sólo hace falta elegir el compose del repositorio
-y pegar el bloque de variables. No hay que clonar nada en el servidor, ni crear
-directorios, ni ajustar permisos por SSH.
-
-```
-1. Generar el .env   →  ./scripts/generate-env.sh prod
-2. Portainer         →  Stacks → Add stack → Repository
-3. Pegar el bloque   →  Environment variables → Advanced mode
-4. Deploy
+```text
+Internet
+   │ HTTPS
+   ▼
+nginx/Nginx Proxy Manager del servidor     termina TLS
+   │ HTTP al puerto 43127 o 43128
+   ▼
+servicio `proxy` del stack                 valida y sirve segmentos HLS
+   ├── /media/... ──▶ secure_link + sendfile
+   └── resto ───────▶ app:3000
 ```
 
-### 1. Generar el bloque de variables
+El nginx externo y `proxy` no hacen el mismo trabajo. El primero gestiona DNS y
+TLS; el segundo forma parte de MoodleShield y evita que un alumno pueda pedir
+arbitrariamente todos los segmentos A o B. El edge debe apuntar al puerto
+publicado por `proxy`, **nunca** a la IP dinámica de `app` ni directamente a
+`app:3000`.
 
-Desde un clon del repositorio **en tu equipo** (no en el servidor):
+## Recuperación inmediata: error PostgreSQL `28P01`
+
+En la versión anterior, el síntoma completo era:
+
+- `db` figura como `healthy`;
+- `app` termina con `password authentication failed` y código `28P01`;
+- `proxy` queda `unhealthy` con `connect() failed ... app:3000`.
+
+La causa es una contraseña nueva en Portainer con un `pgdata` ya inicializado.
+`POSTGRES_PASSWORD` sólo se aplica la primera vez que PostgreSQL crea una base
+vacía. Borrar o recrear el stack **no** cambia el usuario guardado en `pgdata`.
+El fallo del proxy es sólo la consecuencia de que `app` nunca abre el puerto.
+El Compose corregido hace una consulta autenticada: ante la misma discordancia,
+`db` quedará `unhealthy` y el resto no arrancará con un diagnóstico falso.
+
+### Conservar los datos — opción recomendada
+
+1. En Portainer, abre las variables del stack y localiza el valor actual de
+   `DB_PASSWORD`. No vuelvas a ejecutar `generate-env.sh`.
+2. Abre *Containers → db → Console*, selecciona `/bin/sh` y conecta:
+
+   ```bash
+   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+   ```
+
+3. Dentro de `psql`, cambia la contraseña del usuario conectado:
+
+   ```text
+   \password
+   ```
+
+   Pega dos veces exactamente el `DB_PASSWORD` del paso 1 y sal con `\q`.
+4. Comprueba la autenticación desde la misma consola:
+
+   ```bash
+   PGPASSWORD="$POSTGRES_PASSWORD" psql -h db \
+     -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc 'SELECT 1'
+   ```
+
+   Debe imprimir `1`.
+5. En Portainer, pulsa *Update the stack* con *Pull latest images* y
+   *Prune services* activados. Si no actualizas el Compose todavía, reinicia al
+   menos `app`, `worker` y `proxy`.
+
+Si conoces la contraseña original de la base, la alternativa más corta es
+restaurar ese valor como `DB_PASSWORD` en Portainer y redesplegar.
+
+### Instalación limpia — sólo si no hay nada que conservar
+
+No hace falta limpiar para resolver `28P01`. Si el primer despliegue no llegó a
+guardar ningún dato y quieres empezar de cero:
+
+1. Guarda el bloque de variables.
+2. Detén/elimina el stack **sin borrar datos** y comprueba que `db`, `app`,
+   `worker` y `proxy` ya no están ejecutándose.
+3. Elige un nombre de backup que todavía no exista, mueve la raíz y crea el
+   nuevo árbol:
 
 ```bash
-./scripts/generate-env.sh prod        # o: test
+MS_DATA_ROOT=/docker-apps/moodleshield-pro
+MS_DATA_BACKUP=/docker-apps/moodleshield-pro.bak-2026-08-07-2015
+test ! -e "$MS_DATA_BACKUP" || { echo "Ya existe: $MS_DATA_BACKUP" >&2; exit 1; }
+sudo mv "$MS_DATA_ROOT" "$MS_DATA_BACKUP"
+sudo mkdir -p "$MS_DATA_ROOT"/media "$MS_DATA_ROOT"/uploads "$MS_DATA_ROOT"/pgdata
+sudo chmod 700 "$MS_DATA_ROOT"
+sudo chown 1000:1000 "$MS_DATA_ROOT"/media "$MS_DATA_ROOT"/uploads
+sudo chown 70:70 "$MS_DATA_ROOT"/pgdata
+sudo chmod 755 "$MS_DATA_ROOT"/media
+sudo chmod 750 "$MS_DATA_ROOT"/uploads "$MS_DATA_ROOT"/pgdata
 ```
 
-Pregunta la URL pública, el usuario de administración y la contraseña (que no se
-muestra ni se guarda: se convierte en `ADMIN_PASSWORD_HASH`), genera los cinco
-secretos aleatorios y escribe el bloque por pantalla. Todo lo demás —avisos y
-preguntas— va por *stderr*, así que puedes mandarlo a un fichero limpio:
+4. Redespliega conservando exactamente el mismo bloque de variables.
+
+Mover `pgdata` con PostgreSQL activo no produce una copia consistente. Usa la
+ruta exacta de `DATA_ROOT`; no uses `docker system prune --volumes` ni borres
+otras rutas del host.
+
+### Quitar el antiguo contenedor `prepare`
+
+Los Compose actuales ya no declaran `prepare`. Al actualizar en Portainer marca
+*Prune services*. Si el stack viejo ya se borró y el contenedor quedó huérfano,
+localízalo antes de quitarlo:
 
 ```bash
-./scripts/generate-env.sh prod > moodleshield-prod.env
+docker ps -a \
+  --filter label=com.docker.compose.service=prepare \
+  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}'
 ```
 
-Sin terminal interactiva también vale, dando los valores por argumento:
+Tras comprobar el proyecto y el nombre, elimina únicamente ese ID:
+
+```bash
+docker rm ID_EXACTO
+```
+
+Eliminar el contenedor `prepare` no elimina los datos montados. No borres `db`,
+volúmenes ni directorios para hacer esta limpieza.
+
+## Primer despliegue
+
+### 1. Elegir `DATA_ROOT`
+
+`DATA_ROOT` es la única raíz persistente. Dentro viven absolutamente todos los
+datos de la aplicación:
+
+```text
+${DATA_ROOT}/
+├── pgdata/    base de datos PostgreSQL
+├── media/     vídeos/PDF procesados y publicados
+└── uploads/   subidas temporales pendientes de procesar
+```
+
+Elige una ruta absoluta válida en el servidor o NAS y pásala al generador:
 
 ```bash
 ./scripts/generate-env.sh prod \
-  --public-url https://video.midominio.com \
-  --admin-user profesor \
-  --sin-admin                 # y añade luego ADMIN_PASSWORD_HASH a mano
+  --data-root /volume1/docker/moodleshield-prod
 ```
 
-> ⚠️ **`WATERMARK_SECRET` es permanente.** Guárdalo en el gestor de contraseñas
-> ANTES del primer despliegue. Si se pierde o se cambia, ninguna filtración
-> anterior se puede atribuir a nadie. Y **no vuelvas a ejecutar el script**
-> contra un stack que ya rodó: generaría secretos nuevos.
+Antes del primer despliegue, crea esos tres subdirectorios con los UID indicados
+debajo, o ejecuta `bootstrap-host.sh` si tienes un clon en el servidor:
 
-Lo que sale es un bloque `CLAVE=valor` sin comentarios ni líneas en blanco a
-propósito: Portainer interpreta cada línea como una variable, y un `#` acabaría
-convertido en una variable con un nombre absurdo.
+```bash
+MS_DATA_ROOT=/volume1/docker/moodleshield-prod
+sudo mkdir -p "$MS_DATA_ROOT"/media "$MS_DATA_ROOT"/uploads "$MS_DATA_ROOT"/pgdata
+sudo chmod 700 "$MS_DATA_ROOT"
+sudo chown 1000:1000 "$MS_DATA_ROOT"/media "$MS_DATA_ROOT"/uploads
+sudo chown 70:70 "$MS_DATA_ROOT"/pgdata
+sudo chmod 755 "$MS_DATA_ROOT"/media
+sudo chmod 750 "$MS_DATA_ROOT"/uploads "$MS_DATA_ROOT"/pgdata
+```
 
-<details>
-<summary>Qué contiene el bloque</summary>
+Las imágenes nuevas vuelven a validar/ajustar las raíces al arrancar y después
+ejecutan Node como uid 1000; no hay contenedor `prepare`. Este paso previo
+mantiene además un rollout seguro mientras Portainer todavía pueda descargar
+una etiqueta de imagen anterior.
 
-| Variable | Qué es |
-|---|---|
-| `DATA_ROOT` | Dónde vive el estado en el host: `media`, `uploads`, `pgdata` |
-| `PUBLIC_URL` | La URL con la que Moodle ve la herramienta. **https** obligatorio |
-| `BIND_ADDRESS`, `HTTP_PORT` | Dónde publica el proxy del stack (por defecto sólo loopback) |
-| `DB_*` | Base de datos. `DB_PASSWORD` se genera |
-| `SESSION_SECRET` | Firma las sesiones LTI |
-| `WATERMARK_SECRET` | Deriva el patrón A/B de cada alumno. **Permanente** |
-| `MEDIA_KEY_SECRET` | Deriva las claves AES de HLS |
-| `MEDIA_LINK_SECRET` | Firma las URLs de segmento (`secure_link` de nginx). Compartido entre `app` y `proxy` |
-| `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET` | Consola de administración |
-| `LOG_LEVEL`, `MARK_ALPHA`, `WORKER_CPUS`, `WORKER_MEMORY`, `MAX_UPLOAD_SIZE` | Ajustes con valores razonables por entorno |
+La carpeta del NAS debe admitir permisos/propietarios POSIX. En NFS/CIFS con
+`root_squash` o sin ownership Unix, configura ACL equivalentes: uid 1000 con
+lectura/escritura en `media` y `uploads`, uid 101 con lectura/travesía en
+`media`, y uid 70 con control de `pgdata`.
 
-Opcional, no lo emite el script: `LTI_ADMIN_TOKEN` (registrar plataformas por
-API en vez de por la consola).
+Los sufijos `z`/`Z` de los bind mounts aplican además el contexto adecuado en
+hosts con SELinux; Docker los ignora donde SELinux no está activo.
 
-</details>
+El modo `700` de la raíz protege los ficheros frente a otras cuentas del host y
+es apropiado para Docker rootful/Portainer. En Docker rootless, haz que esa raíz
+pertenezca al usuario que ejecuta el daemon y aplica el mismo modo o una ACL
+equivalente.
 
-### 2. Dar de alta el stack
+No cambies `DATA_ROOT` en una actualización salvo que hayas copiado previamente
+la raíz completa con el stack detenido.
 
-Portainer → *Stacks → Add stack → Repository*:
+### 2. Generar y guardar las variables una sola vez
+
+Desde un clon del repositorio en tu equipo, con Node 22 y OpenSSL:
+
+```bash
+npm ci
+(umask 077; ./scripts/generate-env.sh prod > moodleshield-prod.env)
+# o: (umask 077; ./scripts/generate-env.sh test > moodleshield-test.env)
+```
+
+El script pregunta URL, usuario y contraseña de administración y genera los
+secretos. `umask 077` hace que el fichero sólo sea legible por su propietario;
+guárdalo en un gestor seguro y elimina la copia local cuando ya no la necesites.
+En especial:
+
+- `DB_PASSWORD` debe seguir coincidiendo con el usuario persistido en `pgdata`;
+- `WATERMARK_SECRET` es permanente: cambiarlo invalida la atribución histórica;
+- `MEDIA_LINK_SECRET` debe ser el mismo para `app` y `proxy`; el Compose ya lo
+  comparte automáticamente.
+
+No regeneres el bloque al actualizar un stack. Conserva siempre sus variables.
+
+### 3. Elegir cómo llega el nginx externo
+
+- Nginx nativo en el mismo host: `HTTP_BIND_ADDRESS=127.0.0.1`.
+- Nginx/Nginx Proxy Manager en otro contenedor: `127.0.0.1` apunta al propio
+  contenedor, no al host. Liga `HTTP_BIND_ADDRESS` a la IP LAN concreta del host
+  y úsala como upstream. Si necesitas `0.0.0.0`, restringe el puerto en
+  `DOCKER-USER`, firewall o security group.
+- Nginx en otra máquina: liga a la IP LAN del servidor Docker y permite el
+  puerto sólo desde la IP del edge.
+
+El generador acepta `--bind-address IP`. En test, PostgreSQL usa una
+variable separada, `DB_BIND_ADDRESS=127.0.0.1`, para no publicarlo por accidente.
+
+### 4. Crear el stack en Portainer
+
+*Stacks → Add stack → Repository*:
 
 | Campo | Valor |
 |---|---|
 | Repository URL | `https://github.com/jamataran/moodleshield` |
 | Reference | `refs/heads/main` |
-| Compose path | `infra/prod/compose.yml` (o `infra/test/compose.yml`) |
-| GitOps updates | ✅ recomendado (polling 5 min o webhook) |
-| Environment variables | *Advanced mode* → pega el bloque del paso 1 |
+| Compose path | `infra/prod/compose.yml` o `infra/test/compose.yml` |
+| GitOps updates | Activado; polling o webhook |
+| Environment variables | *Advanced mode* → pegar el bloque guardado |
 
-Y *Deploy the stack*.
+Si GHCR es privado, registra `ghcr.io` en Portainer con un token que tenga
+`read:packages`. Se descargan tres imágenes: `app`, `worker` y `proxy`.
 
-> Las imágenes de ghcr.io son privadas por defecto: hazlas públicas
-> (GitHub → Packages → cada paquete → *Change visibility*) o da de alta en
-> Portainer un registro con un PAT de `read:packages`. **Son tres paquetes**:
-> `app`, `worker` y `proxy`. `proxy` es nuevo, así que nace privado aunque los
-> otros dos ya fueran públicos; si se olvida, Portainer falla al descargarlo y
-> el stack se queda sin proxy.
+### 5. Configurar el nginx externo y comprobar
 
-> **La primera vez que se despliega este cambio**, la imagen `proxy` todavía no
-> existe en el registro. El orden es: push a `main` (el CI publica
-> `app`/`worker`/`proxy` con etiqueta `sha-…` y test se actualiza solo) y
-> después un tag `vX.Y.Z`, que crea `:latest` y `:vX.Y.Z` para las tres y
-> actualiza `infra/prod/compose.yml`. Desplegar prod antes de ese tag falla al
-> descargar `proxy:latest`, porque aún no se ha publicado.
-
-### 3. Comprobar
+El bloque completo está en [`test/README.md`](test/README.md#el-edge-tu-nginx)
+y sirve también para producción cambiando el puerto.
 
 ```bash
-curl -s localhost:43127/healthz        # prod (43128 en test)
-docker compose -p moodleshield ps      # prepare "exited (0)", el resto "running"
+curl -fsS http://127.0.0.1:43127/healthz
+curl -fsS http://127.0.0.1:43127/_proxy-healthz
+curl -fsS http://127.0.0.1:43127/readyz
+curl -fsS https://video.tudominio.com/readyz
+curl -fsS https://video.tudominio.com/lti/keys
 ```
 
-Falta el paso del **edge**: el stack habla HTTP en loopback y espera un proxy
-con TLS delante. Los requisitos (`X-Forwarded-Proto`, `client_max_body_size`,
-buffering) están en [`test/README.md`](test/README.md#el-edge-tu-nginx).
+En Portainer deben quedar `db`, `app`, `worker` y `proxy` en ejecución y sanos.
+`prepare` no debe existir.
 
-## Por qué el stack no monta nada del repositorio
+## Ejecutar o actualizar con Docker Compose, sin Portainer
 
-Hasta la versión anterior, el servicio `proxy` montaba `infra/nginx/` desde el
-host (`INFRA_ROOT`), lo que obligaba a mantener un clon del repositorio en una
-ruta fija del servidor. **Portainer clona el stack en su propio volumen**, no en
-una ruta estable del host: si nadie había clonado el repo a mano en esa ruta,
-Docker creaba el bind como un directorio vacío, nginx arrancaba con su
-configuración por defecto —sin `/healthz`, escuchando en el 80 en vez del
-8080— y el healthcheck lo dejaba en `unhealthy` para siempre. Aparentemente,
-«el proxy no arranca».
-
-Ahora la configuración de nginx viaja **dentro de la imagen** `proxy`
-([`docker/Dockerfile.proxy`](../docker/Dockerfile.proxy)), que se construye y se
-etiqueta junto a `app` y `worker`. Las tres imágenes de un despliegue llevan
-siempre la misma etiqueta: la plantilla de nginx y las rutas que sirve la app
-cambian juntas.
-
-Del mismo problema venía el otro fallo clásico —`EACCES` al subir el primer
-vídeo—: Docker crea los bind mounts que faltan como `root` y los contenedores
-corren como uid 1000. De eso se encarga ahora el servicio `prepare`, que crea el
-árbol de datos con el propietario correcto, termina, y bloquea el arranque de
-`app` y `worker` hasta haber salido con 0.
-
-## Flujo de promoción
-
-```
-PR ──▶ ci.yml (lint + tests + build sin push)
- │
- ▼ merge / push
-main ──▶ cd-main.yml ──▶ ghcr.io/...:sha-abc1234 ──▶ bump infra/test/compose.yml ──▶ Portainer TEST
-                                   │
-tag v1.2.0 ──▶ cd-promote.yml ─────┴──▶ re-etiqueta el MISMO digest como v1.2.0
-                                        ──▶ bump infra/prod/compose.yml ──▶ Portainer PROD
-```
-
-La promoción no reconstruye: `docker buildx imagetools create` copia el
-manifiesto de las tres imágenes. Test y prod ejecutan el mismo binario.
-
-## Reparto de variables (importante)
-
-| Dónde | Qué | ¿Versionado? |
-|---|---|---|
-| `infra/<env>/compose.yml` | Imágenes completas y tag (lo escribe el CI), defaults de rutas | **Sí** |
-| Variables del stack en Portainer | Todos los secretos | **No** |
-| `infra/<env>/.env.sample` | Plantilla de referencia, con defaults y secretos vacíos | Sí |
-| `infra/<env>/.env.ci` | Relleno `ci` para validar el compose sin secretos | Sí |
-
-Portainer sólo necesita leer el Compose y aportar los secretos como variables
-del stack. No dependemos de que Portainer cargue un `.env` del repositorio. El
-CI falla si detecta cualquier secreto con valor en un `.env.sample` versionado,
-o si un compose vuelve a montar algo del repositorio.
-
-Validar un compose sin secretos reales:
+Guarda el bloque generado en una ruta segura del host y usa siempre proyecto,
+fichero y variables explícitos. Si GHCR es privado, autentícate primero. Para
+actualizar también debes traer el Compose nuevo:
 
 ```bash
-docker compose --env-file infra/test/.env.sample --env-file infra/test/.env.ci \
-  -f infra/test/compose.yml config -q && echo OK
+docker login ghcr.io
+git -C /ruta/al/repo pull --ff-only
+
+docker compose \
+  --project-name moodleshield \
+  --env-file /ruta-segura/moodleshield-prod.env \
+  --file /ruta/al/repo/infra/prod/compose.yml \
+  pull
+
+docker compose \
+  --project-name moodleshield \
+  --env-file /ruta-segura/moodleshield-prod.env \
+  --file /ruta/al/repo/infra/prod/compose.yml \
+  up -d --remove-orphans
 ```
 
-## Ejecutar el stack a mano (sin Portainer)
+Para test usa otro nombre de proyecto, otro fichero y otro bloque de variables.
+No uses un `.env` de producción en test.
 
-```bash
-./scripts/generate-env.sh prod > infra/prod/.env     # gitignorado
-docker compose --env-file infra/prod/.env -f infra/prod/compose.yml up -d
+## Diagnóstico rápido
+
+| Síntoma | Comprobación o solución |
+|---|---|
+| `db` unhealthy tras actualizar variables | `DB_PASSWORD` no coincide con `pgdata`; aplica la recuperación `28P01` |
+| `app` no abre 3000 / `proxy` unhealthy | Mira primero los logs de `app`; el proxy suele ser sólo el síntoma |
+| Edge devuelve 502 | Comprueba `/readyz` en el puerto local y el caso host/contenedor de `HTTP_BIND_ADDRESS` |
+| Todos los segmentos responden 403 | `MEDIA_LINK_SECRET` cambió o las imágenes `app`/`proxy` no tienen la misma versión |
+| Subida responde 413 | Sube juntos `client_max_body_size` en el edge, `MAX_UPLOAD_SIZE` (nginx interno) y `MAX_UPLOAD_BYTES` (Node) |
+| URLs generadas como HTTP | `PUBLIC_URL` o `X-Forwarded-Proto https` incorrectos |
+| Worker falla con `EACCES` en un árbol antiguo | Ejecuta `bootstrap-host.sh` sobre `DATA_ROOT` |
+
+## Versiones y promoción
+
+Cada push a `main` construye manifiestos `linux/amd64` y `linux/arm64`, publica
+`app`, `worker` y `proxy` con la misma etiqueta y actualiza test. Producción se
+promueve reetiquetando esos mismos digest, sin reconstruirlos:
+
+```text
+PR → main → sha-abc1234 → TEST
+                │
+                └── tag v1.2.0 → mismo digest → PRODUCCIÓN
 ```
+
+Los detalles operativos de cada entorno están en
+[`test/README.md`](test/README.md) y [`prod/README.md`](prod/README.md).
+
+Para este cambio de infraestructura el orden es obligatorio: push/merge a
+`main`, esperar a que CD publique y despliegue el nuevo `sha-*` en test, ejecutar
+el workflow manual de Release con una versión `vX.Y.Z` y sólo entonces
+redesplegar producción. No despliegues producción con `latest` antiguo y el
+Compose nuevo.

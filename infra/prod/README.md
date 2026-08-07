@@ -1,113 +1,126 @@
-# Entorno de PRODUCCIÓN
+# Producción
 
-```
-INTERNET ──▶ nginx proxy (tu edge, TLS) ──▶ proxy del stack ──▶ contenedores
-              video.tudominio.com            127.0.0.1:43127     app · worker · db
-```
-
-Aquí sólo llegan **versiones etiquetadas**. Al crear un tag `vX.Y.Z`, el CI
-**no reconstruye nada**: re-etiqueta el mismo digest que ya rodó en test
-(`docker buildx imagetools create`) para las tres imágenes —`app`, `worker` y
-`proxy`— y actualiza las referencias en este `compose.yml`. Lo que se probó en
-test es, bit a bit, lo que llega aquí.
-
-```
-push a main ──▶ imagen sha-abc1234 ──▶ TEST
-                     │ (mismo digest)
-tag v1.2.0  ──▶ re-etiqueta v1.2.0 ──▶ PROD
+```text
+Internet ──HTTPS──▶ nginx externo (TLS) ──HTTP──▶ proxy del stack ──▶ app
+                    video.tudominio.com           puerto 43127
 ```
 
-Rollback = `git revert` del commit `deploy(prod): …` y push. Portainer vuelve a
-la versión anterior.
+El `proxy` del stack es el gateway multimedia que valida las URLs firmadas y
+sirve HLS. No termina TLS y no sustituye al nginx del servidor. El nginx externo
+debe apuntar al puerto publicado por `proxy`, no directamente a `app:3000`.
 
-## El edge: tu nginx
+La guía canónica de alta, almacenamiento, recuperación del error PostgreSQL
+`28P01` y limpieza del antiguo `prepare` está en [`../README.md`](../README.md).
 
-Idéntico a test pero apuntando a `127.0.0.1:43127`. Producción vive en un
-servidor público y por diseño no incluye `cloudflared` ni `tailscale`. Lo
-crítico:
+## El edge: nginx con TLS
+
+Para nginx instalado en el mismo host usa `HTTP_BIND_ADDRESS=127.0.0.1` y este
+bloque, ajustando dominio y certificados:
 
 ```nginx
-proxy_set_header X-Forwarded-Proto https;   # sin esto, la app genera URLs http y LTI falla
-client_max_body_size 4g;                    # ≥ MAX_UPLOAD_SIZE del stack
-proxy_request_buffering off;
-proxy_read_timeout 3600s;
+server {
+    listen 80;
+    server_name video.tudominio.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name video.tudominio.com;
+
+    ssl_certificate     /ruta/fullchain.pem;
+    ssl_certificate_key /ruta/privkey.pem;
+
+    client_max_body_size 4g;
+    client_body_timeout 3600s;
+
+    location / {
+        proxy_pass http://127.0.0.1:43127;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
 ```
 
-## Alta en Portainer (una vez)
+Si nginx/Nginx Proxy Manager corre en otro contenedor, su `127.0.0.1` no es el
+host Docker. Liga `HTTP_BIND_ADDRESS` a la IP LAN concreta, apunta a
+`IP-PRIVADA-DEL-HOST:43127` y limita ese puerto al edge. Usa `0.0.0.0` sólo si
+también filtras el puerto. No uses la IP dinámica del contenedor `proxy`.
 
-Igual que test cambiando el entorno. **No hace falta tocar el servidor**: ni
-clonar el repositorio, ni crear directorios, ni ajustar permisos.
+## Alta en Portainer
 
-1. **Variables**, desde un clon del repositorio en tu equipo:
+1. Genera el bloque una única vez y guárdalo:
 
    ```bash
-   ./scripts/generate-env.sh prod
+   (umask 077; ./scripts/generate-env.sh prod > moodleshield-prod.env)
    ```
 
-   Pregunta URL pública, usuario y contraseña de administración, y genera el
-   bloque completo. Detalle en [`../README.md`](../README.md#desplegar-en-portainer).
+   Define una raíz absoluta con `--data-root /ruta/absoluta`. Dentro quedarán
+   `pgdata`, `media` y `uploads`. Prepárala una vez con los UID descritos en la
+   [guía canónica](../README.md#1-elegir-data_root); no existe `prepare`. Las
+   imágenes nuevas vuelven a validar los permisos al arrancar.
 
-   > ⚠️ **`WATERMARK_SECRET` es permanente.** Guárdalo en el gestor de
-   > contraseñas ANTES del primer despliegue: si se pierde o se cambia, todas
-   > las trazas forenses anteriores dejan de poder atribuirse.
+2. Crea un stack desde el repositorio:
 
-2. **Portainer** → *Add stack → Repository* con *Compose path* =
-   `infra/prod/compose.yml`, GitOps activado (webhook → secreto
-   `PORTAINER_WEBHOOK_PROD` en GitHub), y el bloque del paso 1 pegado en
-   *Environment variables → Advanced mode*.
+   | Campo | Valor |
+   |---|---|
+   | Reference | `refs/heads/main` |
+   | Compose path | `infra/prod/compose.yml` |
+   | Environment variables | contenido de `moodleshield-prod.env` |
+   | GitOps updates | polling o webhook |
 
-   El compose trae `DATA_ROOT=/docker-apps/moodleshield-pro` por defecto; el
-   bloque generado lo incluye explícitamente para que se vea dónde acaban los
-   datos. Cámbialo ahí si el disco grande está en otro sitio.
+3. Despliega con *Pull latest images* y *Prune services*. En GHCR privado,
+   registra los paquetes `app`, `worker` y `proxy` con `read:packages`.
 
-3. **Deploy**. El servicio `prepare` crea `${DATA_ROOT}/{media,uploads}` con el
-   propietario correcto y termina; `app` y `worker` no arrancan hasta que ha
-   salido con 0.
+Nunca vuelvas a generar los secretos al actualizar. Cambiar `DB_PASSWORD` no
+cambia automáticamente el rol de un PostgreSQL ya inicializado; cambiar
+`WATERMARK_SECRET` invalida la atribución histórica.
 
-## Publicar una versión
-
-La forma recomendada es **GitHub → Actions → Release · promoción manual de test a producción → Run
-workflow**. Introduce una versión como `v0.1.0` y pulsa **Run workflow**. El
-workflow encuentra la imagen actualmente desplegada en test, crea el tag y
-promueve el mismo digest.
-
-Como alternativa, desde la terminal:
+## Comprobación
 
 ```bash
-git log --oneline -5           # localiza el commit antes de deploy(test)
-git tag v0.1.0 <sha-del-commit-de-codigo>
-git push origin v0.1.0
+curl -fsS http://127.0.0.1:43127/_proxy-healthz
+curl -fsS http://127.0.0.1:43127/readyz
+curl -fsS https://video.tudominio.com/readyz
+curl -fsS https://video.tudominio.com/lti/keys
 ```
 
-El SHA debe ser el que aparece en el resumen de `cd-main.yml` como
-`sha-<commit>` (el commit padre del `deploy(test): ...` automático), no el
-`deploy(test)` más reciente. En <1 minuto de Actions, la imagen que ya estaba en test queda
-etiquetada `v0.1.0` + `latest` y `infra/prod/compose.yml` apunta a ella.
+Portainer debe mostrar sólo `db`, `app`, `worker` y `proxy`; los cuatro sanos.
+Si `db` no está sano, revisa primero la sección [`28P01`](../README.md#recuperación-inmediata-error-postgresql-28p01).
 
-Sólo se pueden etiquetar commits que hayan pasado por `main` (su imagen
-`sha-…` debe existir); si no, el workflow falla con un mensaje claro en vez de
-construir algo no probado.
+## Versiones, actualización y rollback
+
+Producción usa una versión promovida desde la imagen ya probada en test. GitHub
+Actions reetiqueta el mismo digest de `app`, `worker` y `proxy`; no reconstruye.
+
+Para publicar este cambio: primero espera al nuevo `sha-*` desplegado en test y
+después ejecuta Release. No redespliegues producción con el Compose nuevo
+apuntando todavía a una imagen `latest` anterior.
+
+Publicación recomendada: *GitHub → Actions → Release · promoción manual de test
+a producción → Run workflow*. Para volver atrás, revierte el commit automático
+`deploy(prod): ...` y deja que Portainer redespliegue.
+
+Una actualización sólo debe descargar las nuevas imágenes y recrear servicios.
+No borres ni cambies `DATA_ROOT` y no sustituyas las variables guardadas por
+otro bloque.
 
 ## Copias de seguridad
 
-| Qué | Cómo | Cuándo |
-|---|---|---|
-| `WATERMARK_SECRET` y demás secretos | Gestor de contraseñas | Antes del primer despliegue |
-| Base de datos | `docker compose -p moodleshield exec -T db pg_dump -U moodleshield moodleshield \| gzip > backup.sql.gz` | Diaria (cron) |
-| `${DATA_ROOT}/media` | rsync / snapshot | Semanal |
+| Qué | Método recomendado |
+|---|---|
+| Secretos, especialmente `WATERMARK_SECRET` | gestor de contraseñas |
+| PostgreSQL | `pg_dump` desde el contenedor `db` |
+| `${DATA_ROOT}` completo | snapshot o copia en frío |
 
-Los originales se borran tras transcodificar: si pierdes `media/`, toca pedir
-los vídeos otra vez. Y prueba una restauración al menos una vez — la copia que
-nunca se restauró no es una copia.
-
-## Operación y diagnóstico
-
-```bash
-P="docker compose -p moodleshield"
-$P ps && $P logs --tail=100 app worker      # `prepare` sale con 0: es normal
-$P up -d --scale worker=2               # más transcodificación en paralelo
-df -h ${DATA_ROOT}                      # los segmentos ocupan ~2× el re-encode
-```
-
-La tabla de síntomas de [`../test/README.md`](../test/README.md#diagnóstico)
-aplica igual aquí.
+Los originales se eliminan tras procesarse. Una copia de `media` sin su base de
+datos, o una base sin `media`, no constituye una restauración completa.

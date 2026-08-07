@@ -19,7 +19,7 @@
  * árbol antiguo. Un player abierto tendrá que recargar la playlist.
  *
  *   node scripts/migrate-media-layout.mjs
- *   docker compose -p moodleshield exec worker node scripts/migrate-media-layout.mjs
+ *   docker compose -p moodleshield exec -u node worker node scripts/migrate-media-layout.mjs
  */
 import { migrateLegacyMediaLayout } from '../src/media/layout-migration.js'
 import { ensureDirs } from '../src/media/storage.js'

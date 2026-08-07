@@ -28,3 +28,6 @@ secrets/
 # volcado de la conversación que originó el proyecto. Se queda en tu disco.
 # Si prefieres publicarlo, borra esta línea.
 init.md
+
+# Claude
+.claude/worktrees

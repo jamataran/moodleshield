@@ -76,11 +76,11 @@ services:
       POSTGRES_USER: moodleshield
       POSTGRES_PASSWORD: ${DB_PASSWORD:-moodleshield-local}
     volumes:
-      - ./data/pgdata:/var/lib/postgresql/data
+      - "${DATA_ROOT:-./data}/pgdata:/var/lib/postgresql/data:Z"
     ports:
       - "127.0.0.1:55432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U moodleshield"]
+      test: ["CMD-SHELL", "PGPASSWORD=\"$${POSTGRES_PASSWORD}\" psql -h db -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -Atqc 'SELECT 1' | grep -qx 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -98,8 +98,8 @@ services:
         condition: service_healthy
     environment: *app-env
     volumes:
-      - ./data/media:/data/media
-      - ./data/uploads:/data/uploads
+      - "${DATA_ROOT:-./data}/media:/data/media:z"
+      - "${DATA_ROOT:-./data}/uploads:/data/uploads:z"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null 2>&1 || exit 1"]
       interval: 15s
@@ -119,10 +119,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      app:
+        condition: service_healthy
     environment: *app-env
     volumes:
-      - ./data/media:/data/media
-      - ./data/uploads:/data/uploads
+      - "${DATA_ROOT:-./data}/media:/data/media:z"
+      - "${DATA_ROOT:-./data}/uploads:/data/uploads:z"
 
   # Igual que en test y prod, la configuración de nginx va DENTRO de la imagen.
   # Se construye aquí en vez de montarla para que lo que se prueba en local sea
@@ -143,14 +145,10 @@ services:
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:-local-inseguro-medialink-00000000000000000000}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
     volumes:
-      - ./data/media:/srv/media:ro
+      - "${DATA_ROOT:-./data}/media:/srv/media:ro,z"
     ports:
       - "127.0.0.1:${HTTP_PORT:-8088}:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    # Healthcheck definido en docker/Dockerfile.proxy.
 
   # --- Túnel efímero: URL https aleatoria de trycloudflare.com, sin cuenta ---
   # La URL cambia en cada arranque → hay que actualizar PUBLIC_URL (ver README).

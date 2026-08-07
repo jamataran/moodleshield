@@ -198,8 +198,10 @@ node scripts/register-platform.mjs \
   --issuer https://aula.tudominio.com \
   --client-id <Client ID del paso 3> \
   --deployment-id <Deployment ID del paso 3>
-# (dentro del stack: docker compose exec app node scripts/register-platform.mjs …)
 ```
+
+En un stack Portainer, ejecuta el mismo `node scripts/register-platform.mjs …`
+desde *Containers → app → Console*, seleccionando el usuario `node`.
 
 **5.** Prueba como profesor: curso → *Añadir una actividad* → **Herramienta
 externa** → elegir MoodleShield → *Seleccionar contenido* → subir un MP4 corto
@@ -215,6 +217,29 @@ veces es la Redirection URI o el registro del paso 4.
 ---
 
 ## Desplegar
+
+Los stacks permanentes funcionan con Docker Compose v2 o Portainer sobre
+Docker Standalone, en servidores/NAS `amd64` y `arm64`. Todo el estado vive bajo
+el único `DATA_ROOT` configurado (`pgdata`, `media` y `uploads`) y no existe un
+contenedor `prepare`.
+
+```bash
+npm ci
+(umask 077; ./scripts/generate-env.sh prod > moodleshield-prod.env)
+# Portainer: Repository → infra/prod/compose.yml → pegar el bloque → Deploy
+```
+
+En el estado actual del repositorio, primero entra el cambio en `main`, espera a
+que CD publique el nuevo `sha-*` en test y ejecuta el workflow Release con una
+versión `vX.Y.Z`; después redespliega producción. Así `app`, `worker` y `proxy`
+siempre corresponden al mismo build.
+
+El nginx del servidor termina TLS y reenvía al puerto HTTP del gateway del
+stack (`43127` en producción, `43128` en test). No debe apuntar directamente a
+`app:3000`, porque el gateway protege los segmentos HLS.
+
+Guía completa, configuración nginx y recuperación de PostgreSQL `28P01`:
+[`infra/README.md`](infra/README.md).
 
 Tres entornos bajo `infra/`, cada uno con su carpeta, su compose y su README:
 

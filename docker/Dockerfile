@@ -23,6 +23,7 @@ ENV NODE_ENV=production \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
 WORKDIR /app
+RUN apk add --no-cache su-exec
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY migrations ./migrations
@@ -32,6 +33,7 @@ COPY src ./src
 # propósito, porque son para el host (generar secretos, arrancar el servidor).
 COPY scripts/*.mjs ./scripts/
 COPY tools ./tools
+COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/moodleshield-entrypoint
 
 # Los datos van en volúmenes; se crean aquí para fijar el propietario.
 RUN mkdir -p /data/media /data/uploads && chown -R node:node /data /app
@@ -41,7 +43,7 @@ ENV APP_VERSION=${APP_VERSION} \
     MEDIA_ROOT=/data/media \
     UPLOAD_ROOT=/data/uploads
 
-USER node
+ENTRYPOINT ["/usr/local/bin/moodleshield-entrypoint"]
 
 # ---------------------------------------------------------------------------
 FROM base AS app
@@ -69,7 +71,6 @@ FROM base AS worker
 #   ghostscript   → normalización con -dSAFER
 USER root
 RUN apk add --no-cache ffmpeg qpdf poppler-utils ghostscript
-USER node
 
 ENV NODE_OPTIONS="--max-old-space-size=192"
 

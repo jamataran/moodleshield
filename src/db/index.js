@@ -39,6 +39,10 @@ export async function many (text, params) {
   return rows
 }
 
+export function isDatabaseConfigurationError (err) {
+  return ['28P01', '28000', '3D000'].includes(err?.code)
+}
+
 /** Ejecuta `fn` dentro de una transacción, con rollback automático si lanza. */
 export async function transaction (fn) {
   const client = await pool.connect()
@@ -62,6 +66,16 @@ export async function waitForDatabase ({ attempts = 30, delayMs = 2000 } = {}) {
       await pool.query('SELECT 1')
       return
     } catch (err) {
+      // Estas condiciones no se arreglan esperando. En particular, reintentar
+      // 60 segundos un 28P01 ocultaba el diagnóstico real bajo el mensaje
+      // genérico «base de datos no disponible».
+      if (isDatabaseConfigurationError(err)) {
+        logger.error(
+          { err, code: err.code },
+          'PostgreSQL rechazó las credenciales o la base configurada; revisa DB_NAME, DB_USER y DB_PASSWORD'
+        )
+        throw err
+      }
       if (i === attempts) throw err
       logger.warn({ attempt: i, attempts }, 'Base de datos no disponible todavía, reintentando')
       await new Promise((r) => setTimeout(r, delayMs))

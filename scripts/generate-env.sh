@@ -3,9 +3,9 @@
 #
 #   ./scripts/generate-env.sh prod                     # pregunta lo que falta
 #   ./scripts/generate-env.sh test
-#   ./scripts/generate-env.sh prod > moodleshield.env  # a fichero, sin ruido
+#   (umask 077; ./scripts/generate-env.sh prod > moodleshield.env)
 #   ./scripts/generate-env.sh prod --public-url https://video.midominio.com \
-#                                  --admin-user profesor --sin-admin
+#                                  --admin-user profesor --bind-address 192.168.1.20
 #
 # Sólo el bloque `CLAVE=valor` sale por stdout; los avisos y las preguntas van
 # por stderr. Así, redirigir la salida da un fichero limpio y el copiar-pegar no
@@ -24,6 +24,7 @@ ENVIRONMENT=prod
 PUBLIC_URL=""
 ADMIN_USER=""
 DATA_ROOT=""
+HTTP_BIND_ADDRESS="127.0.0.1"
 PEDIR_HASH=1
 
 uso () {
@@ -32,7 +33,8 @@ Uso: ./scripts/generate-env.sh [prod|test] [opciones]
 
   --public-url URL   URL pública del stack (la que verá Moodle)
   --admin-user NOMBRE  usuario de la consola de administración
-  --data-root RUTA   dónde vive el estado en el host
+  --data-root RUTA   raíz absoluta de todos los datos persistentes
+  --bind-address IP  IP donde publicar HTTP (por defecto 127.0.0.1)
   --sin-admin        no pedir contraseña: deja ADMIN_PASSWORD_HASH vacío
   -h, --help         esta ayuda
 EOF
@@ -44,6 +46,7 @@ while [ $# -gt 0 ]; do
     --public-url)  PUBLIC_URL="${2:?falta el valor de --public-url}"; shift ;;
     --admin-user)  ADMIN_USER="${2:?falta el valor de --admin-user}"; shift ;;
     --data-root)   DATA_ROOT="${2:?falta el valor de --data-root}"; shift ;;
+    --bind-address) HTTP_BIND_ADDRESS="${2:?falta el valor de --bind-address}"; shift ;;
     --sin-admin)   PEDIR_HASH=0 ;;
     -h|--help)     uso; exit 0 ;;
     *) echo "Opción desconocida: $1" >&2; uso >&2; exit 2 ;;
@@ -61,6 +64,7 @@ if [ "$ENVIRONMENT" = prod ]; then
   WORKER_CPUS=2
   WORKER_MEMORY=1536m
   MAX_UPLOAD_SIZE=4g
+  MAX_UPLOAD_BYTES=4294967296
 else
   DEFAULT_DATA_ROOT=/docker-apps/moodleshield-test
   HTTP_PORT=43128
@@ -69,8 +73,19 @@ else
   WORKER_CPUS=1
   WORKER_MEMORY=1024m
   MAX_UPLOAD_SIZE=2g
+  MAX_UPLOAD_BYTES=2147483648
 fi
+
 DATA_ROOT="${DATA_ROOT:-$DEFAULT_DATA_ROOT}"
+case "$DATA_ROOT" in
+  /*) ;;
+  *) echo "--data-root debe ser una ruta absoluta" >&2; exit 2 ;;
+esac
+if [ "$DATA_ROOT" = / ]; then
+  echo "--data-root no puede ser /" >&2
+  exit 2
+fi
+DATA_ROOT="${DATA_ROOT%/}"
 
 # `read -p` escribe el prompt en stderr, así que no ensucia el bloque aunque se
 # redirija stdout a un fichero.
@@ -120,7 +135,7 @@ gen () { openssl rand -hex 32; }
 cat <<EOF
 DATA_ROOT=$DATA_ROOT
 PUBLIC_URL=$PUBLIC_URL
-BIND_ADDRESS=127.0.0.1
+HTTP_BIND_ADDRESS=$HTTP_BIND_ADDRESS
 HTTP_PORT=$HTTP_PORT
 DB_NAME=moodleshield
 DB_USER=moodleshield
@@ -139,8 +154,9 @@ MARK_ALPHA=$MARK_ALPHA
 WORKER_CPUS=$WORKER_CPUS
 WORKER_MEMORY=$WORKER_MEMORY
 MAX_UPLOAD_SIZE=$MAX_UPLOAD_SIZE
+MAX_UPLOAD_BYTES=$MAX_UPLOAD_BYTES
 EOF
-[ "$ENVIRONMENT" = test ] && echo "DB_PORT_HOST=55432"
+[ "$ENVIRONMENT" = test ] && printf '%s\n' "DB_BIND_ADDRESS=127.0.0.1" "DB_PORT_HOST=55432"
 
 cat >&2 <<EOF
 
@@ -154,4 +170,14 @@ Pega ese bloque en Portainer → Stack → Environment variables → Advanced mo
 Si el stack YA estaba desplegado, no pegues secretos nuevos: conserva los que
 tenía. Este script sirve para el primer despliegue.
 ────────────────────────────────────────────────────────────────────────────
+EOF
+
+cat >&2 <<EOF
+
+Todo el estado quedará bajo:
+  $DATA_ROOT/{pgdata,media,uploads}
+
+Antes del primer despliegue prepara la raíz (también mantiene compatibilidad
+con imágenes publicadas anteriores al nuevo entrypoint):
+  sudo ./scripts/bootstrap-host.sh "$DATA_ROOT" "$ENVIRONMENT"
 EOF

@@ -181,12 +181,11 @@ node scripts/register-platform.mjs \
   --deployment-id 3
 ```
 
-Dentro del contenedor:
+En Portainer, abre la consola del contenedor `app` como usuario `node`:
 
 ```bash
-docker compose -p moodleshield exec app \
-  node scripts/register-platform.mjs \
-    --issuer https://aula.tudominio.com --client-id AbCdEf123456 --deployment-id 3
+node scripts/register-platform.mjs \
+  --issuer https://aula.tudominio.com --client-id AbCdEf123456 --deployment-id 3
 ```
 
 Comprobar:
@@ -299,8 +298,11 @@ a internet o la tiene filtrada. La salida es prescindir de la descarga y
 configurar la clave a mano:
 
 ```bash
-docker compose -p moodleshield exec app node scripts/public-key-pem.mjs
+node scripts/public-key-pem.mjs
 ```
+
+Ejecuta ese comando desde la consola Portainer del contenedor `app` como
+usuario `node`.
 
 En la herramienta, *Tipo de clave pública* → **RSA key**, y pegar ese PEM en
 *Clave pública*. Sirve además como diagnóstico: si con el PEM funciona y con la

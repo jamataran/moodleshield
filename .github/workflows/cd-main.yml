@@ -88,7 +88,7 @@ jobs:
   release:
     name: Publicar sha y desplegar test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     needs: verify
     steps:
       - uses: actions/checkout@v5
@@ -100,6 +100,10 @@ jobs:
           echo "repo=$repo" >> "$GITHUB_OUTPUT"
           echo "sha_tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -109,8 +113,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Una invocación para las tres imágenes: worker reutiliza todas las capas
-      # de app, y la caché GHA hace que un push con package-lock intacto tarde
-      # 1-2 minutos. `proxy` es nginx + la configuración de infra/nginx.
+      # de app. `proxy` es nginx + la configuración de infra/nginx. Se publican
+      # manifiestos amd64 y arm64 para servidores y NAS de ambas arquitecturas.
       - name: Bake y push (app + worker + proxy)
         uses: docker/bake-action@v6
         with:
@@ -120,12 +124,12 @@ jobs:
           set: |
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
-            *.platform=linux/amd64
         env:
           REGISTRY: ghcr.io
           REPO: ${{ steps.meta.outputs.repo }}
           TAGS: ${{ steps.meta.outputs.sha_tag }},edge
           APP_VERSION: ${{ steps.meta.outputs.sha_tag }}
+          PLATFORMS: linux/amd64,linux/arm64
 
       - name: Desplegar en test (bump de infra/test/compose.yml)
         env:
@@ -145,8 +149,6 @@ jobs:
             git fetch origin main
             git checkout -B main origin/main
 
-            # `app` aparece dos veces (servicios app y prepare): el sed sin /1
-            # las cambia las dos, que es justo lo que hay que hacer.
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${SHA_TAG}|"       infra/test/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${SHA_TAG}|" infra/test/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${SHA_TAG}|"   infra/test/compose.yml

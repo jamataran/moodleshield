@@ -14,8 +14,8 @@
 #   - Los secretos se definen en las variables de entorno del stack en
 #     Portainer, NUNCA en este repositorio. Las referencias de imagen de abajo
 #     son el estado desplegado; el CI actualiza sus tags directamente aquí.
-#   - Todo el estado vive bajo ${DATA_ROOT}; con eso y la base de datos hay
-#     copia de seguridad completa.
+#   - Todo el estado persistente vive bajo ${DATA_ROOT}: pgdata, media y
+#     uploads. Cambiar de host sólo exige copiar esa raíz y conservar el .env.
 #
 # Para generar el bloque de variables que hay que pegar en Portainer:
 #   ./scripts/generate-env.sh prod
@@ -76,38 +76,6 @@ x-app-env: &app-env
 
 services:
   # ---------------------------------------------------------------------------
-  # Prepara el árbol de datos y termina. Existe para que el despliegue no exija
-  # tocar el host por SSH: Docker crea los bind mounts que faltan como root, y
-  # app y worker corren como uid 1000, así que sin esto la primera subida muere
-  # con EACCES. Es idempotente y sale en milisegundos cuando ya está bien.
-  prepare:
-    image: ghcr.io/jamataran/moodleshield/app:latest
-    user: root
-    restart: "no"
-    command:
-      - sh
-      - -c
-      - |
-        set -e
-        for d in /data/media /data/uploads; do
-          mkdir -p "$$d"
-          # Recursivo sólo la primera vez: en un árbol de medios con miles de
-          # segmentos, un chown -R en cada despliegue cuesta minutos.
-          [ "$$(stat -c %u "$$d")" = "1000" ] || chown -R 1000:1000 "$$d"
-        done
-        # media lo lee TAMBIÉN el worker de nginx, que corre como uid 101: con
-        # 750 no puede atravesar el directorio y todos los segmentos dan 403.
-        # Los ficheros que publica el worker ya salen 644 por el umask.
-        chmod 755 /data/media
-        chmod 750 /data/uploads
-        echo "Árbol de datos listo"
-    volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/data/media
-      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/uploads:/data/uploads
-    logging: *logging
-    networks: [internal]
-
-  # ---------------------------------------------------------------------------
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -118,9 +86,14 @@ services:
       # Acelera la escritura de segmentos sin afectar a la durabilidad del WAL.
       POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/pgdata:/var/lib/postgresql/data
+      - "${DATA_ROOT:?falta DATA_ROOT}/pgdata:/var/lib/postgresql/data:Z"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-moodleshield} -d ${DB_NAME:-moodleshield}"]
+      # pg_isready no autentica: con un pgdata antiguo y DB_PASSWORD nuevo
+      # devolvía healthy mientras app/worker fallaban con 28P01. Esta consulta
+      # prueba exactamente las credenciales que usan los demás servicios.
+      # `-h db` fuerza TCP por la red Docker y, por tanto, SCRAM. El socket
+      # local de la imagen usa trust y no serviría para validar la contraseña.
+      test: ["CMD-SHELL", "PGPASSWORD=\"$${POSTGRES_PASSWORD}\" psql -h db -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -Atqc 'SELECT 1' | grep -qx 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -137,12 +110,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      prepare:
-        condition: service_completed_successfully
     environment: *app-env
     volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/data/media
-      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/uploads:/data/uploads
+      - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
+      - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -164,12 +135,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      prepare:
-        condition: service_completed_successfully
+      # app prepara los mounts, aplica migraciones y confirma la base antes de
+      # que el worker empiece a reclamar trabajos.
+      app:
+        condition: service_healthy
     environment: *app-env
     volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/data/media
-      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/uploads:/data/uploads
+      - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
+      - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
     # ffmpeg necesita margen. Ajusta WORKER_CPUS al número de núcleos que
     # quieras cederle; el resto del host sigue respondiendo gracias al `nice`.
     cpus: ${WORKER_CPUS:-2}
@@ -186,20 +159,20 @@ services:
     restart: unless-stopped
     depends_on:
       app:
-        condition: service_started
+        # /healthz se reenvía a app:3000. No tiene sentido arrancar nginx hasta
+        # que la aplicación haya terminado migraciones y esté realmente lista.
+        condition: service_healthy
     environment:
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4g}
     volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-pro}/media:/srv/media:ro
+      - "${DATA_ROOT:?falta DATA_ROOT}/media:/srv/media:ro,z"
     ports:
       # Sólo en loopback: quien expone al mundo es el reverse proxy del host.
-      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-43127}:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      # BIND_ADDRESS queda como alias compatible con instalaciones anteriores.
+      - "${HTTP_BIND_ADDRESS:-${BIND_ADDRESS:-127.0.0.1}}:${HTTP_PORT:-43127}:8080"
+    # El healthcheck viaja dentro de la imagen. Así una actualización del
+    # Compose sigue siendo compatible durante el breve rollout de una imagen.
     mem_limit: 128m
     logging: *logging
     networks: [internal]

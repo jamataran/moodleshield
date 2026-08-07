@@ -15,7 +15,7 @@
  * Cada rotación obliga a volver a pegar la clave en Moodle.
  *
  *   node scripts/public-key-pem.mjs
- *   docker compose -p moodleshield exec app node scripts/public-key-pem.mjs
+ *   docker compose -p moodleshield exec -u node app node scripts/public-key-pem.mjs
  */
 import { importJWK, exportSPKI } from 'jose'
 import { getPublicJwks } from '../src/lti/keys.js'

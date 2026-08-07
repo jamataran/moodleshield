@@ -11,8 +11,8 @@
 ## Objetivo
 
 Que el sistema completo se levante desde Portainer apuntando a este repositorio,
-y que a partir de ahí funcione solo: migraciones, claves, reintentos y arranque
-en orden, sin que nadie entre por SSH.
+y funcione solo: permisos de `DATA_ROOT`, migraciones, claves, reintentos y
+arranque en orden.
 
 ## Contexto
 
@@ -27,10 +27,9 @@ concretas en el diseño, todas ya resueltas en el código:
 | Sin intervención tras un fallo | `restart: unless-stopped` y reintentos con retroceso |
 | Sin llenar el disco de logs | Rotación `json-file` con 10 MB × 3 |
 
-Y una particularidad de Portainer que condiciona los ficheros: **las rutas de
-volumen tienen que ser absolutas**. Portainer no ejecuta el compose desde un
-directorio estable, así que un `./datos` acaba en cualquier sitio. De ahí
-`${DATA_ROOT}`, siempre absoluta.
+Todo el estado persistente vive bajo el único `DATA_ROOT`, siempre absoluto:
+`pgdata`, `media` y `uploads`. Esto permite mover o respaldar la instalación como
+una unidad y evita rutas relativas dependientes del directorio de Portainer.
 
 Del mismo hecho sale una consecuencia más fuerte: **el stack no puede montar
 nada del repositorio**. Portainer clona en su propio volumen, así que un bind a
@@ -47,7 +46,7 @@ vacía; nginx arranca entonces con su configuración por defecto y se queda en
 - Límites de memoria y CPU por servicio.
 - Healthchecks y dependencias.
 - Publicación HTTP sólo hacia el reverse proxy del host.
-- Script de preparación del host.
+- Una única raíz de datos configurable, preparada por los entrypoints.
 
 **No incluye**
 
@@ -77,22 +76,21 @@ Detalle completo en el README del entorno:
    ./scripts/generate-env.sh prod
    ```
    Guardar `WATERMARK_SECRET` en el gestor de contraseñas **antes** de seguir.
-2. **Revisar** `infra/prod/compose.yml`: trae por defecto
-   `DATA_ROOT=/docker-apps/moodleshield-pro`. Sobrescribe ese valor en las
-   variables del stack si tu host usa otra ruta. Las imágenes completas y sus
-   tags están en el Compose; no dependen de `IMAGE_REPO` en un `.env`.
+2. **Revisar el almacenamiento**. Genera el bloque con
+   `--data-root /ruta/absoluta`; el Compose guarda bajo ella `pgdata`, `media` y
+   `uploads`.
 3. **Crear el stack en Portainer** desde el repositorio, con *Compose path* =
    `infra/prod/compose.yml`, pegando el bloque en *Environment variables →
    Advanced mode*.
 4. **Activar GitOps updates** (→ T15).
 
-El host no necesita preparación previa: el servicio `prepare` crea el árbol de
-datos con el propietario correcto en cada despliegue.
+No existe un servicio `prepare`: cada imagen ajusta su mount al arrancar y
+después ejecuta el proceso sin privilegios.
 
 ## Criterio de aceptación
 
-- [ ] El stack levanta desde Portainer sin tocar el servidor por SSH: elegir el
-      compose del repositorio, pegar el bloque de variables y desplegar.
+- [ ] El stack levanta desde Portainer eligiendo el Compose, pegando el bloque
+      de variables y desplegando.
 - [ ] `docker compose ps` muestra `db`, `app`, `worker` y `proxy`.
 - [ ] `https://<dominio>/readyz` devuelve `{"status":"ready"}`.
 - [ ] Reiniciar el servidor entero deja el sistema funcionando solo.
@@ -118,11 +116,9 @@ sudo reboot
 
 ## Riesgos y trampas
 
-- **Permisos de los volúmenes.** Los contenedores corren como `node` (uid 1000).
-  Si `${DATA_ROOT}/media` es de root, el worker no puede escribir y todos los
-  trabajos fallan con `EACCES`. De eso se encarga el servicio `prepare`, que
-  bloquea el arranque de `app` y `worker` hasta haber salido con 0;
-  `bootstrap-host.sh` queda como rescate para un árbol ya estropeado.
+- **Permisos de `DATA_ROOT`.** El entrypoint arranca como root, ajusta únicamente
+  las raíces `media`/`uploads` y ejecuta Node como uid 1000. Para reparar de
+  forma recursiva un árbol antiguo queda `bootstrap-host.sh`.
 - **Montar ficheros del repositorio.** No se puede: Portainer clona en su
   propio volumen. Todo lo que el stack necesite del repositorio va dentro de
   una imagen. El CI falla si un compose vuelve a mencionar `INFRA_ROOT`.

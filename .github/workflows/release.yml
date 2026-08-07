@@ -107,7 +107,7 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
-          for image in app worker; do
+          for image in app worker proxy; do
             source="ghcr.io/${REPO}/${image}:${SOURCE_TAG}"
             docker buildx imagetools inspect "$source" >/dev/null
             docker buildx imagetools create \
@@ -126,6 +126,7 @@ jobs:
           git checkout -B main origin/main
           sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
           sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
+          sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${VERSION}|"   infra/prod/compose.yml
           git add infra/prod/compose.yml
           git commit -m "deploy(prod): ${VERSION} [skip ci]"
           git push origin main

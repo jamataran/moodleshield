@@ -4,7 +4,11 @@
 # las variables propias de nginx ($uri, $arg_*, …) llegan intactas.
 
 upstream moodleshield_app {
-    server app:3000;
+    # Docker puede asignar otra IP a `app` al recrearla. Nginx 1.27 permite
+    # resolver el nombre periódicamente sin tener que reiniciar el gateway.
+    zone moodleshield_app 64k;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    server app:3000 resolve;
     keepalive 16;
 }
 
@@ -95,6 +99,13 @@ server {
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         include /etc/nginx/proxy_headers.conf;
+    }
+
+    # Salud del propio gateway. Docker consulta esta ruta para distinguir un
+    # nginx roto de una app que aún no está lista.
+    location = /_proxy-healthz {
+        access_log off;
+        return 204;
     }
 
     location = /healthz {

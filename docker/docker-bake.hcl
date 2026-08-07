@@ -12,12 +12,14 @@
 //
 // Uso local:
 //   docker buildx bake -f docker/docker-bake.hcl
-//   docker buildx bake -f docker/docker-bake.hcl --set '*.platform=linux/amd64' --push
+//   docker buildx bake -f docker/docker-bake.hcl --push
 
 variable "REGISTRY" { default = "ghcr.io" }
 variable "REPO"     { default = "moodleshield" }
 variable "TAGS"     { default = "dev" }   // lista separada por comas
 variable "APP_VERSION" { default = "dev" }
+// Local por defecto: una sola arquitectura permite usar `--load`. El CD
+// sobreescribe PLATFORMS al publicar los manifiestos multi-arquitectura.
 variable "PLATFORMS"   { default = "linux/amd64" }
 
 group "default" {

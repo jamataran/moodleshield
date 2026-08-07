@@ -7,8 +7,8 @@
 #   - Postgres publicado en localhost para poder inspeccionar la base de datos.
 #   - Menos memoria y CPU reservadas: aquí no hay carga real.
 #
-# Se despliega igual que producción (Portainer + GitOps) o en local con:
-#   docker compose --env-file .env.sample -f compose.yml up -d
+# Se despliega igual que producción (Portainer + GitOps) o en local con un
+# bloque real generado por scripts/generate-env.sh.
 #
 # Para generar el bloque de variables que hay que pegar en Portainer:
 #   ./scripts/generate-env.sh test
@@ -69,32 +69,6 @@ x-app-env: &app-env
   MATERIAL_ARCHIVE_RETENTION_DAYS: ${MATERIAL_ARCHIVE_RETENTION_DAYS:-90}
 
 services:
-  # Crea el árbol de datos con el propietario correcto y termina; sin esto los
-  # bind mounts que Docker crea son de root y app/worker (uid 1000) no escriben.
-  # Explicación larga en infra/prod/compose.yml.
-  prepare:
-    image: ghcr.io/jamataran/moodleshield/app:sha-c87b20a
-    user: root
-    restart: "no"
-    command:
-      - sh
-      - -c
-      - |
-        set -e
-        for d in /data/media /data/uploads; do
-          mkdir -p "$$d"
-          [ "$$(stat -c %u "$$d")" = "1000" ] || chown -R 1000:1000 "$$d"
-        done
-        # 755 en media: lo lee el worker de nginx (uid 101). Ver prod.
-        chmod 755 /data/media
-        chmod 750 /data/uploads
-        echo "Árbol de datos listo"
-    volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/data/media
-      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/uploads:/data/uploads
-    logging: *logging
-    networks: [internal]
-
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -103,11 +77,15 @@ services:
       POSTGRES_USER: ${DB_USER:-moodleshield}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
     volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/pgdata:/var/lib/postgresql/data
+      - "${DATA_ROOT:?falta DATA_ROOT}/pgdata:/var/lib/postgresql/data:Z"
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${DB_PORT_HOST:-55432}:5432"
+      # Nunca reutilizar el bind HTTP: poner el gateway en 0.0.0.0 no debe
+      # publicar PostgreSQL por accidente.
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${DB_PORT_HOST:-55432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-moodleshield} -d ${DB_NAME:-moodleshield}"]
+      # Valida usuario/contraseña además de disponibilidad. pg_isready solo no
+      # detecta un DB_PASSWORD distinto del que quedó guardado en pgdata.
+      test: ["CMD-SHELL", "PGPASSWORD=\"$${POSTGRES_PASSWORD}\" psql -h db -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -Atqc 'SELECT 1' | grep -qx 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -123,12 +101,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      prepare:
-        condition: service_completed_successfully
     environment: *app-env
     volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/data/media
-      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/uploads:/data/uploads
+      - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
+      - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -147,12 +123,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      prepare:
-        condition: service_completed_successfully
+      app:
+        condition: service_healthy
     environment: *app-env
     volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/data/media
-      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/uploads:/data/uploads
+      - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
+      - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
     cpus: ${WORKER_CPUS:-1}
     mem_limit: ${WORKER_MEMORY:-1024m}
     logging: *logging
@@ -165,19 +141,15 @@ services:
     restart: unless-stopped
     depends_on:
       app:
-        condition: service_started
+        condition: service_healthy
     environment:
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
     volumes:
-      - ${DATA_ROOT:-/docker-apps/moodleshield-test}/media:/srv/media:ro
+      - "${DATA_ROOT:?falta DATA_ROOT}/media:/srv/media:ro,z"
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-43128}:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - "${HTTP_BIND_ADDRESS:-${BIND_ADDRESS:-127.0.0.1}}:${HTTP_PORT:-43128}:8080"
+    # Healthcheck definido en la propia imagen `proxy`.
     mem_limit: 128m
     logging: *logging
     networks: [internal]

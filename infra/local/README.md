@@ -203,15 +203,18 @@ En este modo no hay nginx delante: `MEDIA_DELIVERY=app` en tu `.env` raíz.
 
 ## Datos y limpieza
 
-Todo el estado vive en `infra/local/data/` (gitignorado):
+Por defecto, todo el estado vive en `infra/local/data/` (gitignorado). Si
+defines `DATA_ROOT=/ruta/absoluta`, los mismos tres subdirectorios viven bajo
+esa raíz:
 
 ```
-data/pgdata/     base de datos
-data/media/      segmentos A/B, claves, posters
-data/uploads/    originales en tránsito (se borran al procesar)
+${DATA_ROOT:-data}/
+├── pgdata/      base de datos
+├── media/       segmentos A/B, claves, posters
+└── uploads/     originales en tránsito (se borran al procesar)
 ```
 
-Borrón y cuenta nueva:
+Borrón y cuenta nueva usando la ruta local por defecto:
 
 ```bash
 docker compose down
