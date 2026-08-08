@@ -104,8 +104,10 @@ export function createViewerShell ({ boot, title, description = '', kindLabel })
   })
 
   const setStatus = (text, isError = false) => {
-    statusEl.textContent = text
-    statusEl.classList.toggle('error-text', isError)
+    const message = String(text ?? '').trim()
+    statusEl.textContent = message
+    statusEl.hidden = !message
+    statusEl.classList.toggle('error-text', Boolean(message) && isError)
   }
 
   let downloadGeneration = 0

@@ -1,7 +1,7 @@
-import { createVideoView } from './video-component.js?v=video-controls-2'
+import { createVideoView } from './video-component.js?v=video-watermark-3'
 import { createPdfView } from './pdf-component.js?v=viewer-ux-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
-import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-header-2'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-status-3'
 
 /**
  * Visor de una colección: varios materiales dentro de UNA actividad Moodle.

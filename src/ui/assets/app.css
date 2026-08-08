@@ -638,6 +638,17 @@ body.viewer {
   text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
   white-space: nowrap;
 }
+.video-watermark {
+  /* Fallback por viewport y escala final por el ancho real del reproductor. */
+  max-width: calc(96% - var(--watermark-left, 0%));
+  overflow: hidden;
+  font-size: clamp(18px, 2vw, 30px);
+  font-size: clamp(18px, 3.2cqw, 30px);
+  font-weight: 750;
+  letter-spacing: .035em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+}
 .video-loader {
   position: absolute;
   z-index: 8;
@@ -789,8 +800,12 @@ body.viewer {
 .video-icon-button[data-unavailable="true"] { opacity: .55; }
 .video-icon-button svg { display: block; width: 100%; height: 100%; fill: currentColor; }
 .video-icon-button svg text {
-  fill: #090b0f;
-  font: 800 7px/1 system-ui, sans-serif;
+  fill: currentColor;
+  stroke: rgb(0 0 0 / .9);
+  stroke-width: .75px;
+  paint-order: stroke fill;
+  font: 900 8px/1 system-ui, sans-serif;
+  letter-spacing: -.04em;
 }
 .video-volume {
   width: clamp(3.5rem, 8vw, 5rem);

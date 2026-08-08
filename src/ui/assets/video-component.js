@@ -53,6 +53,11 @@ export function mediaProgress (currentTime, duration) {
   return Math.min(100, Math.max(0, (currentTime / duration) * 100))
 }
 
+export function visibleVideoIdentity (user) {
+  const identity = [user?.identity, user?.name].filter(Boolean).join(' · ') || 'sesión verificada'
+  return identity.toLocaleUpperCase('es-ES')
+}
+
 export function mediaShortcut (rawKey, { onButton = false } = {}) {
   const key = String(rawKey ?? '').toLowerCase()
   if (onButton && (key === ' ' || key === 'enter')) return null
@@ -123,8 +128,7 @@ export function createVideoView ({
   watermark.setAttribute('aria-hidden', 'true')
   // La marca visible disuade; la traza forense real sigue siendo el patrón A/B
   // de los segmentos y continúa presente también cuando se usa PiP.
-  watermark.textContent =
-    [user?.identity, user?.name].filter(Boolean).join(' · ') || 'sesión verificada'
+  watermark.textContent = visibleVideoIdentity(user)
 
   const loader = doc.createElement('div')
   loader.className = 'video-loader'
@@ -212,6 +216,7 @@ export function createVideoView ({
 
   const moveWatermark = () => {
     const [left, top] = WATERMARK_POSITIONS[watermarkIndex % WATERMARK_POSITIONS.length]
+    watermark.style.setProperty('--watermark-left', left)
     watermark.style.left = left
     watermark.style.top = top
     watermarkIndex++
@@ -399,7 +404,6 @@ export function createVideoView ({
   async function captureFrame () {
     if (!element.videoWidth || !element.videoHeight) return
     capture.disabled = true
-    status('Preparando captura marcada…')
     try {
       const scale = Math.min(1, 1920 / element.videoWidth)
       const width = Math.max(1, Math.round(element.videoWidth * scale))
@@ -410,16 +414,17 @@ export function createVideoView ({
       const context = canvas.getContext('2d', { alpha: false })
       context.drawImage(element, 0, 0, width, height)
 
-      const label = [user?.identity, user?.name, video.title].filter(Boolean).join(' · ')
+      const titleMark = String(video.title ?? '').trim().toLocaleUpperCase('es-ES')
+      const label = [visibleVideoIdentity(user), titleMark].filter(Boolean).join(' · ')
       const when = new Date().toLocaleString('es-ES')
-      const fontSize = Math.max(13, Math.round(width / 65))
+      const fontSize = Math.max(16, Math.round(width / 52))
       context.save()
       context.translate(width / 2, height / 2)
       context.rotate(-Math.PI / 8)
       context.fillStyle = 'rgba(255, 255, 255, .24)'
       context.font = `700 ${fontSize}px ui-monospace, monospace`
       context.textAlign = 'center'
-      context.fillText(label || 'sesión verificada', 0, 0, width * 0.9)
+      context.fillText(label, 0, 0, width * 0.9)
       context.restore()
 
       const barHeight = Math.max(30, Math.round(height * 0.07))
@@ -429,7 +434,7 @@ export function createVideoView ({
       context.font = `600 ${Math.max(11, Math.round(fontSize * 0.72))}px system-ui, sans-serif`
       context.textAlign = 'left'
       context.textBaseline = 'middle'
-      context.fillText(`${label || 'sesión verificada'} · ${when}`, 12, height - barHeight / 2, width - 24)
+      context.fillText(`${label} · ${when}`, 12, height - barHeight / 2, width - 24)
 
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
       if (!blob) throw new Error('el navegador no pudo crear la imagen')
@@ -439,7 +444,7 @@ export function createVideoView ({
       link.download = `${safeCaptureName(video.title)}-captura.png`
       link.click()
       setTimeout(() => win.URL.revokeObjectURL(url), 30_000)
-      status('Captura marcada descargada')
+      status('')
     } catch (err) {
       status(`No se pudo crear la captura: ${err?.message ?? 'error'}`, true)
     } finally {
@@ -450,6 +455,7 @@ export function createVideoView ({
   const onLoadedMetadata = () => {
     updateTimeline({ preserveThumb: false })
     updatePip()
+    status('')
   }
   const onLoadedData = () => {
     capture.disabled = false
@@ -476,7 +482,10 @@ export function createVideoView ({
     updateTimeline({ preserveThumb: false })
   }
   const onWaiting = () => root.classList.add('is-buffering')
-  const onCanPlay = () => root.classList.remove('is-buffering')
+  const onCanPlay = () => {
+    root.classList.remove('is-buffering')
+    status('')
+  }
   const onTimelineInput = () => {
     const total = duration()
     const next = Number(timeline.value)
@@ -574,7 +583,6 @@ export function createVideoView ({
   if (element.canPlayType('application/vnd.apple.mpegurl')) {
     // Safari e iOS reproducen HLS de forma nativa, incluido AES-128.
     element.src = playlistUrl
-    status('Listo')
   } else if (win.Hls?.isSupported()) {
     const HlsClass = win.Hls
     hls = new HlsClass({
@@ -585,10 +593,7 @@ export function createVideoView ({
     })
     hls.loadSource(playlistUrl)
     hls.attachMedia(element)
-    hls.on(HlsClass.Events.MANIFEST_PARSED, (_event, data) => {
-      const quality = data.levels.length === 1 ? '1 calidad' : `${data.levels.length} calidades`
-      status(`Listo · ${quality}`)
-    })
+    hls.on(HlsClass.Events.MANIFEST_PARSED, () => status(''))
     hls.on(HlsClass.Events.ERROR, (_event, data) => {
       if (!data.fatal) return
       if (data.type === HlsClass.ErrorTypes.NETWORK_ERROR) {

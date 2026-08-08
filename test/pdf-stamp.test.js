@@ -7,6 +7,7 @@ import {
   stampPdfForViewer,
   toWinAnsi,
   visiblePageFrame,
+  watermarkZoneLayout,
   PdfStampError
 } from '../src/media/pdf-stamp.js'
 
@@ -63,6 +64,72 @@ test('las páginas rotadas no rompen el sellado', async () => {
     const reloaded = await PDFDocument.load(stamped, { ignoreEncryption: true })
     assert.equal(reloaded.getPageCount(), 1, `rotación ${rotate}`)
     assert.equal(reloaded.getPage(0).getRotation().angle % 360, rotate % 360)
+  }
+})
+
+test('los sellos personales ocupan las zonas superior e inferior y dejan libre el centro', async () => {
+  const pdf = await PDFDocument.create()
+  const font = await pdf.embedFont(StandardFonts.HelveticaBold)
+
+  for (const [viewedWidth, viewedHeight] of [[595, 842], [842, 595], [500, 500]]) {
+    const marks = watermarkZoneLayout('11835034Q · Ana Pérez', font, {
+      viewedWidth,
+      viewedHeight
+    })
+    assert.deepEqual(marks.map(({ zone }) => zone), ['upper', 'lower'])
+
+    const upper = marks[0]
+    const lower = marks[1]
+    assert.ok(upper.bounds.bottom >= viewedHeight * 0.6,
+      `el sello superior invade el centro en ${viewedWidth}x${viewedHeight}`)
+    assert.ok(lower.bounds.top <= viewedHeight * 0.4,
+      `el sello inferior invade el centro en ${viewedWidth}x${viewedHeight}`)
+
+    for (const mark of marks) {
+      assert.ok(mark.bounds.left >= 0, `${mark.zone}: sale por la izquierda`)
+      assert.ok(mark.bounds.right <= viewedWidth, `${mark.zone}: sale por la derecha`)
+      assert.ok(mark.bounds.bottom >= 0, `${mark.zone}: sale por abajo`)
+      assert.ok(mark.bounds.top <= viewedHeight, `${mark.zone}: sale por arriba`)
+      assert.ok(mark.angle > 0 && mark.angle < 20, `${mark.zone}: la inclinación no es legible`)
+    }
+  }
+})
+
+test('una identidad larga se trunca sin ocupar la banda central', async () => {
+  const pdf = await PDFDocument.create()
+  const font = await pdf.embedFont(StandardFonts.HelveticaBold)
+  const marks = watermarkZoneLayout(
+    '11835034Q · Nombre extraordinariamente largo que no debería cruzar el centro ni salir del papel',
+    font,
+    { viewedWidth: 300, viewedHeight: 210 }
+  )
+
+  assert.equal(marks.length, 2)
+  assert.ok(marks.every(({ text }) => text.startsWith('11835034Q') && text.endsWith('…')))
+  assert.ok(marks.find(({ zone }) => zone === 'upper').bounds.bottom >= 210 * 0.6)
+  assert.ok(marks.find(({ zone }) => zone === 'lower').bounds.top <= 210 * 0.4)
+})
+
+test('la geometría por zonas usa el tamaño visible también con CropBox y rotación', async () => {
+  const pdf = await PDFDocument.create()
+  const font = await pdf.embedFont(StandardFonts.HelveticaBold)
+  const page = pdf.addPage([640, 900])
+  const crop = { x: 40, y: 70, width: 500, height: 700 }
+  page.setCropBox(crop.x, crop.y, crop.width, crop.height)
+
+  for (const rotate of [0, 90, 180, 270]) {
+    page.setRotation(degrees(rotate))
+    const frame = visiblePageFrame(page)
+    const marks = watermarkZoneLayout('11835034Q · Ana Pérez', font, frame)
+    assert.equal(marks.length, 2, `rotación ${rotate}`)
+
+    for (const mark of marks) {
+      const start = frame.toPage(mark.x, mark.y)
+      assert.ok(start.x >= crop.x && start.x <= crop.x + crop.width,
+        `${mark.zone}, rotación ${rotate}: origen x fuera de CropBox`)
+      assert.ok(start.y >= crop.y && start.y <= crop.y + crop.height,
+        `${mark.zone}, rotación ${rotate}: origen y fuera de CropBox`)
+    }
   }
 })
 

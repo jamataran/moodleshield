@@ -4,7 +4,8 @@ import {
   formatMediaTime,
   mediaProgress,
   mediaShortcut,
-  mediaTimeAfterSeek
+  mediaTimeAfterSeek,
+  visibleVideoIdentity
 } from '../src/ui/assets/video-component.js'
 
 test('el tiempo del reproductor se presenta como reloj legible', () => {
@@ -28,6 +29,14 @@ test('el progreso siempre queda entre cero y cien', () => {
   assert.equal(mediaProgress(180, 120), 100)
   assert.equal(mediaProgress(10, 0), 0)
   assert.equal(mediaProgress(10, Number.NaN), 0)
+})
+
+test('la identidad visible del vídeo se muestra en mayúsculas', () => {
+  assert.equal(
+    visibleVideoIdentity({ identity: '11835034q', name: 'José Muñoz' }),
+    '11835034Q · JOSÉ MUÑOZ'
+  )
+  assert.equal(visibleVideoIdentity({}), 'SESIÓN VERIFICADA')
 })
 
 test('los atajos siguen activos sin robar espacio o enter a un botón', () => {

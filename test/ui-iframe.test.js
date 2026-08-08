@@ -193,11 +193,15 @@ test('todos los visores muestran aviso, monitorización y descarga contextual', 
     for (const id of ['back-to-classroom', 'viewer', 'legal-copy', 'download-action', 'download-help']) {
       assert.ok(html.includes(`id="${id}"`), `${page} no declara ${id}`)
     }
+    assert.match(html, /id="status"[^>]*\shidden(?:\s|>)/,
+      `${page} debe reservar el estado visible para información accionable`)
   }
 
   const shell = await readFile(path.join(uiDir, 'assets/viewer-shell.js'), 'utf8')
   assert.match(shell, /window\.self === window\.top/, 'la vuelta al aula debe ocultarse dentro del iframe')
   assert.match(shell, /artículo 270 del Código Penal/, 'falta el aviso legal solicitado')
+  assert.match(shell, /statusEl\.hidden\s*=\s*!message/,
+    'un estado vacío no debe dejar texto ni espacio residual en el visor')
 })
 
 test('la cabecera de una actividad compuesta prioriza el título y compacta la monitorización', async () => {
@@ -240,6 +244,15 @@ test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua ca
   assert.match(code, /30_000/, 'la marca visible no debe moverse cada pocos segundos')
   assert.match(code, /prefers-reduced-motion/, 'la animación debe respetar movimiento reducido')
   assert.doesNotMatch(code, /setInterval\([^\n]+,\s*7000\)/, 'la marca todavía se mueve cada 7 segundos')
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /\.video-watermark\s*\{[^}]*font-size:\s*clamp\(18px,[^}]*30px\)/s,
+    'la marca visible del vídeo debe ser claramente mayor y seguir siendo responsive')
+  assert.match(css, /\.video-watermark\s*\{[^}]*text-transform:\s*uppercase/s,
+    'la marca visible del vídeo debe reforzarse en mayúsculas')
+  assert.match(code, /--watermark-left/,
+    'la marca ampliada debe ajustar su ancho a cada posición para no quedar recortada')
+  assert.doesNotMatch(code, /Preparando captura marcada|Captura marcada descargada|Listo(?:\s*·)?/,
+    'el reproductor no debe mostrar confirmaciones redundantes bajo el vídeo')
 
   const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
   assert.match(collection, /closest\?\.\('\.video-view'\)/,
@@ -249,9 +262,12 @@ test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua ca
   assert.match(player, /globalShortcuts:\s*true/,
     'los atajos deben funcionar al abrir un vídeo suelto, antes de enfocarlo')
 
-  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
   assert.match(css, /container:\s*video-player\s*\/\s*inline-size/,
     'los controles deben adaptarse al ancho real del reproductor')
+  assert.match(css, /\.video-icon-button svg text\s*\{[^}]*fill:\s*currentColor[^}]*paint-order:\s*stroke fill/s,
+    'el número 10 debe conservar contraste sobre el fondo y sobre la flecha')
+  assert.doesNotMatch(css, /\.video-icon-button svg text\s*\{[^}]*fill:\s*#090b0f/s,
+    'el número 10 no puede volver a dibujarse negro sobre el reproductor')
   assert.match(css, /@media \(pointer: coarse\)[\s\S]*?\.video-timeline\s*\{[^}]*height:\s*2rem/,
     'la barra necesita un objetivo táctil cómodo')
   assert.doesNotMatch(css, /\.video-volume-group\s*\{\s*display:\s*none/,

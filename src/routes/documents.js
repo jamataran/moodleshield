@@ -340,7 +340,7 @@ documentsRouter.head('/:id/content', requireSession, (req, res, next) =>
 /**
  * Copia descargable, sellada con la identidad de quien la pide.
  *
- * El sello (diagonal + pie en cada página) es disuasión visible, no marca
+ * El sello (dos marcas personales + pie en cada página) es disuasión visible, no marca
  * forense: quien sabe editar un PDF puede quitarlo (ADR-014 sigue vigente).
  * Se genera al vuelo con pdf-lib y por eso hay techo de tamaño: esto corre en
  * el proceso web y un documento enorme en memoria competiría con los launches.

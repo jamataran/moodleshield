@@ -4,9 +4,11 @@ import { PDFDocument, StandardFonts, degrees, rgb } from '@cantoo/pdf-lib'
 /**
  * Sello visible de la copia descargable de un PDF.
  *
- * Cada descarga se genera al vuelo con la identidad de quien la pide: una
- * diagonal translúcida en el centro de cada página, una línea al pie con
- * identidad y fecha y un aviso legal en el margen derecho visible. Además, la
+ * Cada descarga se genera al vuelo con la identidad de quien la pide: dos
+ * diagonales translúcidas en las zonas superior e inferior de cada página, una
+ * línea al pie con identidad y fecha y un aviso legal en el margen derecho
+ * visible. El centro queda libre para no tapar la marca corporativa que ya
+ * incorpora el documento fuente. Además, la
  * copia sale cifrada con una contraseña de propietario aleatoria que no se
  * guarda en ninguna parte: se abre y se imprime sin contraseña, pero los
  * visores respetuosos con los permisos bloquean editar, copiar y montar páginas,
@@ -99,6 +101,18 @@ const LEGAL_NOTICE_SUFFIX =
   'Ley de Propiedad Intelectual y al art. 270 del Código Penal.'
 const LEGAL_REQUIRED_REFERENCE =
   'Ley de Propiedad Intelectual y al art. 270 del Código Penal.'
+
+const WATERMARK_TARGET_WIDTH_RATIO = 0.7
+const WATERMARK_BASELINE_RISE_RATIO = 0.08
+const WATERMARK_MAX_FONT_SIZE = 64
+const WATERMARK_MAX_FONT_HEIGHT_RATIO = 0.08
+const WATERMARK_MIN_FONT_SIZE = 6
+const WATERMARK_PREFERRED_MIN_FONT_SIZE = 14
+const WATERMARK_SIDE_PADDING = 12
+const WATERMARK_ZONE_CENTERS = [
+  ['upper', 0.78],
+  ['lower', 0.22]
+]
 
 /** Texto del aviso legal que acompaña a cada copia descargable. */
 export function legalNoticeForViewer ({ identity, name, ip } = {}) {
@@ -256,6 +270,73 @@ export function visiblePageFrame (page) {
 }
 
 /**
+ * Calcula los dos sellos personales en coordenadas visibles.
+ *
+ * La subida de la línea base y la altura máxima de la fuente se limitan ambas
+ * al 8 % de la página. Al centrar los sellos en el 22 % y el 78 % de la altura,
+ * sus cajas quedan fuera de la banda central 40 %-60 %, incluso en páginas
+ * apaisadas o con identidades largas que haya que truncar.
+ */
+export function watermarkZoneLayout (text, font, { viewedWidth, viewedHeight }) {
+  if (!Number.isFinite(viewedWidth) || !Number.isFinite(viewedHeight) ||
+      viewedWidth <= 0 || viewedHeight <= 0) return []
+
+  const targetWidth = Math.min(
+    viewedWidth * WATERMARK_TARGET_WIDTH_RATIO,
+    viewedWidth - WATERMARK_SIDE_PADDING * 2
+  )
+  const maxSize = Math.min(
+    WATERMARK_MAX_FONT_SIZE,
+    viewedHeight * WATERMARK_MAX_FONT_HEIGHT_RATIO
+  )
+  if (targetWidth <= 0 || maxSize < WATERMARK_MIN_FONT_SIZE) return []
+
+  const referenceSize = 48
+  const widthAtReference = font.widthOfTextAtSize(text, referenceSize)
+  const naturalSize = widthAtReference > 0
+    // Un pequeño margen evita que el redondeo interno de la fuente convierta
+    // en truncado un texto que matemáticamente ocupa exactamente el objetivo.
+    ? referenceSize * targetWidth / widthAtReference * 0.98
+    : maxSize
+  const preferredMin = Math.min(WATERMARK_PREFERRED_MIN_FONT_SIZE, maxSize)
+  const size = Math.max(preferredMin, Math.min(maxSize, naturalSize))
+  const fittedText = fitTextWithEllipsis(text, font, size, targetWidth)
+  if (!fittedText) return []
+
+  const textWidth = font.widthOfTextAtSize(fittedText, size)
+  const baselineRise = viewedHeight * WATERMARK_BASELINE_RISE_RATIO
+  const angleRadians = Math.atan2(baselineRise, targetWidth)
+  const angle = (angleRadians * 180) / Math.PI
+  const sin = Math.sin(angleRadians)
+  const cos = Math.cos(angleRadians)
+
+  // Aproximamos la caja de Helvetica con la altura nominal de la fuente. La
+  // estimación es deliberadamente conservadora y mantiene también acentos y
+  // descendentes fuera de la zona central.
+  const horizontalSpan = textWidth * cos + size * sin
+  const verticalSpan = textWidth * sin + size * cos
+  const x = (viewedWidth - horizontalSpan) / 2 + size * sin
+
+  return WATERMARK_ZONE_CENTERS.map(([zone, centerRatio]) => {
+    const y = viewedHeight * centerRatio - verticalSpan / 2
+    return {
+      zone,
+      text: fittedText,
+      x,
+      y,
+      size,
+      angle,
+      bounds: {
+        left: x - size * sin,
+        right: x + textWidth * cos,
+        bottom: y,
+        top: y + verticalSpan
+      }
+    }
+  })
+}
+
+/**
  * @param {Uint8Array|Buffer|(() => Promise<Uint8Array|Buffer>)} source
  *   PDF normalizado (revisión publicada), o una función que lo lee: así el
  *   búfer no existe hasta que hay hueco en la compuerta.
@@ -293,28 +374,20 @@ async function stampNow (source, { identity, name, ip, date = new Date() } = {})
     const frame = visiblePageFrame(page)
     const { viewedWidth: vw, viewedHeight: vh } = frame
 
-    // Diagonal centrada: el tamaño se ajusta para cubrir ~3/4 de la diagonal,
-    // de modo que recortar los márgenes no se lleve el sello por delante.
-    const theta = Math.atan2(vh, vw)
-    const diagonal = Math.hypot(vw, vh)
-    let size = 48
-    const target = diagonal * 0.72
-    const width = bold.widthOfTextAtSize(label, size)
-    size = Math.max(14, Math.min(64, (size * target) / Math.max(width, 1)))
-    const finalWidth = bold.widthOfTextAtSize(label, size)
-    const start = frame.toPage(
-      vw / 2 - (finalWidth / 2) * Math.cos(theta),
-      vh / 2 - (finalWidth / 2) * Math.sin(theta)
-    )
-    page.drawText(label, {
-      x: start.x,
-      y: start.y,
-      size,
-      font: bold,
-      color: gray,
-      opacity: 0.16,
-      rotate: degrees(frame.rotation + (theta * 180) / Math.PI)
-    })
+    // Dos diagonales personales dejan libre el centro, donde los documentos
+    // fuente ya incorporan su propia marca corporativa.
+    for (const mark of watermarkZoneLayout(label, bold, frame)) {
+      const start = frame.toPage(mark.x, mark.y)
+      page.drawText(mark.text, {
+        x: start.x,
+        y: start.y,
+        size: mark.size,
+        font: bold,
+        color: gray,
+        opacity: 0.16,
+        rotate: degrees(frame.rotation + mark.angle)
+      })
+    }
 
     // Pie legible en la parte inferior de la página tal y como se ve.
     const footSize = Math.max(6.5, Math.min(8.5, vw / 75))
