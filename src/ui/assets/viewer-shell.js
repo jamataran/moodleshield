@@ -57,7 +57,10 @@ export function createViewerShell ({ boot, title, description = '', kindLabel })
   setTitle(title, description)
 
   const kindEl = document.getElementById('resource-kind')
-  if (kindEl) kindEl.textContent = kindLabel
+  if (kindEl) {
+    kindEl.textContent = kindLabel ?? ''
+    kindEl.hidden = !kindLabel
+  }
 
   const monitoring = []
   if (boot.user?.name) monitoring.push(`Nombre: ${boot.user.name}`)

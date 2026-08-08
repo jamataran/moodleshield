@@ -1,7 +1,7 @@
-import { createVideoView } from './video-component.js?v=viewer-ux-1'
+import { createVideoView } from './video-component.js?v=video-controls-2'
 import { createPdfView } from './pdf-component.js?v=viewer-ux-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
-import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-ux-1'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-header-2'
 
 /**
  * Visor de una colección: varios materiales dentro de UNA actividad Moodle.
@@ -23,7 +23,7 @@ const shell = createViewerShell({
   boot,
   title: boot.collection.title,
   description: boot.collection.description,
-  kindLabel: 'Colección'
+  kindLabel: ''
 })
 
 let items = boot.items ?? []
@@ -210,6 +210,7 @@ selectEl.addEventListener('change', () => { void show(Number(selectEl.value)) })
 document.addEventListener('keydown', (event) => {
   // Sin atajos mientras se escribe o mientras el foco está en el vídeo, donde
   // las flechas son el control de posición del propio player.
+  if (event.defaultPrevented || event.target?.closest?.('.video-view')) return
   const tag = document.activeElement?.tagName
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'VIDEO') return
   if (event.key === 'ArrowLeft' && index > 0) void show(index - 1)

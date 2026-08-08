@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Colección · MoodleShield</title>
+  <title>MoodleShield</title>
   <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
 </head>
 <body class="viewer viewer-collection">
   <header class="viewer-header">
     <button id="back-to-classroom" type="button" class="back-to-classroom" hidden>← Volver al aula</button>
     <div class="viewer-heading">
-      <p class="eyebrow" id="resource-kind">Colección</p>
+      <p class="eyebrow" id="resource-kind" hidden></p>
       <h1 id="title"></h1>
       <p class="muted" id="description" hidden></p>
     </div>
@@ -31,7 +31,7 @@
   <main class="viewer-shell collection-viewer-shell">
     <aside class="viewer-sidebar collection-sidebar">
       <nav class="collection-index" aria-label="Materiales de esta actividad">
-        <label class="only-mobile" for="item-select">Material de la colección</label>
+        <label class="only-mobile" for="item-select">Material de la actividad</label>
         <select id="item-select" class="only-mobile"></select>
         <ol id="item-list" class="only-desktop"></ol>
       </nav>

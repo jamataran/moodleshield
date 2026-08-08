@@ -507,7 +507,7 @@ body.viewer {
   align-items: center;
   gap: .75rem;
 }
-.viewer-heading { min-width: 0; }
+.viewer-heading { grid-column: 2; min-width: 0; }
 .viewer-heading h1,
 .viewer-heading #description {
   overflow: hidden;
@@ -515,21 +515,38 @@ body.viewer {
   white-space: nowrap;
 }
 .viewer-heading h1 { margin: 0; }
-.back-to-classroom { white-space: nowrap; }
+.back-to-classroom { grid-column: 1; white-space: nowrap; }
 .viewer-monitoring {
+  grid-column: 3;
   min-width: 0;
-  display: grid;
-  justify-items: end;
+  max-width: min(52vw, 48rem);
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  justify-self: end;
+  gap: .35rem;
   color: var(--muted);
   font-size: .75rem;
   line-height: 1.35;
   text-align: right;
+  white-space: nowrap;
 }
 .viewer-monitoring strong {
+  flex: none;
   color: var(--ok);
   font-size: .67rem;
   letter-spacing: .06em;
   text-transform: uppercase;
+}
+.viewer-monitoring strong::after {
+  content: " ·";
+  color: var(--muted);
+  letter-spacing: normal;
+}
+.viewer-monitoring span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .legal-warning {
@@ -585,19 +602,24 @@ body.viewer {
 
 /* ---- Reproductor de vídeo ---- */
 .video-view {
+  position: relative;
+  container: video-player / inline-size;
   width: 100%;
   height: 100%;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: .55rem;
+  display: block;
   background: #000;
   border-radius: var(--radius);
   overflow: hidden;
+  outline: none;
+}
+.video-view:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .video-stage {
   position: relative;
-  flex: 1;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   display: grid;
   place-items: center;
@@ -616,17 +638,184 @@ body.viewer {
   text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
   white-space: nowrap;
 }
-.video-quick-controls {
-  flex: none;
-  display: flex;
-  justify-content: center;
-  gap: .4rem;
-  flex-wrap: wrap;
-  padding: 0 .55rem .55rem;
-  background: #000;
+.video-loader {
+  position: absolute;
+  z-index: 8;
+  top: 50%;
+  left: 50%;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: -1.125rem 0 0 -1.125rem;
+  border: 3px solid rgb(255 255 255 / .28);
+  border-top-color: #fff;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
 }
-.video-quick-controls button { background: #171a21; border-color: #3b414d; color: #fff; }
-.video-view:fullscreen { padding: .75rem; border-radius: 0; }
+.video-view.is-buffering .video-loader {
+  opacity: 1;
+  animation: video-spin .8s linear infinite;
+}
+@keyframes video-spin { to { transform: rotate(360deg); } }
+
+.video-icon-button.video-center-play {
+  position: absolute;
+  z-index: 7;
+  top: 50%;
+  left: 50%;
+  width: 3.75rem;
+  height: 3.75rem;
+  min-width: 3.75rem;
+  padding: 1rem;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgb(255 255 255 / .24);
+  border-radius: 50%;
+  background: rgb(8 10 14 / .72);
+  color: #fff;
+  box-shadow: 0 8px 28px rgb(0 0 0 / .35);
+  transition: opacity .16s ease, transform .16s ease, background .16s ease;
+}
+.video-icon-button.video-center-play:hover:not(:disabled) {
+  transform: translate(-50%, -50%) scale(1.06);
+  background: rgb(18 22 29 / .9);
+}
+.video-icon-button.video-center-play svg { width: 100%; height: 100%; fill: currentColor; }
+.video-view.is-playing .video-center-play,
+.video-view.has-started:not(.has-ended) .video-center-play {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.video-controls {
+  --video-accent: #4f8cff;
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 3rem clamp(.55rem, 1.5vw, 1rem) .45rem;
+  background: linear-gradient(to bottom, transparent, rgb(0 0 0 / .78) 58%, rgb(0 0 0 / .92));
+  color: #fff;
+}
+.video-timeline {
+  --played: 0%;
+  --buffered: 0%;
+  display: block;
+  width: 100%;
+  height: 1rem;
+  margin: 0;
+  padding: .375rem 0;
+  appearance: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.video-timeline::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right,
+    var(--video-accent) 0,
+    var(--video-accent) var(--played),
+    rgb(255 255 255 / .5) var(--played),
+    rgb(255 255 255 / .5) var(--buffered),
+    rgb(255 255 255 / .25) var(--buffered),
+    rgb(255 255 255 / .25) 100%);
+}
+.video-timeline::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(to right,
+    var(--video-accent) 0,
+    var(--video-accent) var(--played),
+    rgb(255 255 255 / .5) var(--played),
+    rgb(255 255 255 / .5) var(--buffered),
+    rgb(255 255 255 / .25) var(--buffered),
+    rgb(255 255 255 / .25) 100%);
+}
+.video-timeline::-webkit-slider-thumb {
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: var(--video-accent);
+  box-shadow: 0 1px 5px rgb(0 0 0 / .55);
+  transform: scale(.85);
+  transition: transform .12s ease;
+}
+.video-timeline::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--video-accent);
+  box-shadow: 0 1px 5px rgb(0 0 0 / .55);
+}
+.video-timeline:hover::-webkit-slider-thumb,
+.video-timeline:focus-visible::-webkit-slider-thumb,
+.video-view.is-scrubbing .video-timeline::-webkit-slider-thumb { transform: scale(1); }
+.video-timeline:disabled { cursor: wait; opacity: .55; }
+
+.video-control-row,
+.video-control-group,
+.video-volume-group {
+  display: flex;
+  align-items: center;
+}
+.video-control-row { justify-content: space-between; gap: .5rem; min-width: 0; }
+.video-control-group { gap: .12rem; min-width: 0; }
+.video-volume-group { gap: 0; }
+.video-icon-button {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  min-width: 2.5rem;
+  padding: .55rem;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  line-height: 1;
+  transition: background .12s ease, transform .12s ease;
+}
+.video-icon-button:hover:not(:disabled),
+.video-icon-button[aria-pressed="true"] { background: rgb(255 255 255 / .14); }
+.video-icon-button:active:not(:disabled) { transform: scale(.92); }
+.video-icon-button:disabled { opacity: .35; }
+.video-icon-button[data-unavailable="true"] { opacity: .55; }
+.video-icon-button svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+.video-icon-button svg text {
+  fill: #090b0f;
+  font: 800 7px/1 system-ui, sans-serif;
+}
+.video-volume {
+  width: clamp(3.5rem, 8vw, 5rem);
+  height: 1.25rem;
+  margin: 0 .25rem 0 -.1rem;
+  accent-color: #fff;
+  cursor: pointer;
+}
+.video-time {
+  margin-left: .35rem;
+  color: rgb(255 255 255 / .9);
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+.video-view:fullscreen,
+.video-view:-webkit-full-screen { width: 100%; height: 100%; border-radius: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .video-view.is-buffering .video-loader { animation: none; }
+  .video-center-play,
+  .video-timeline::-webkit-slider-thumb,
+  .video-icon-button { transition: none; }
+}
 
 /* ---- Visor de colección ---- */
 .collection-sidebar { display: flex; flex-direction: column; padding: 0; }
@@ -715,12 +904,14 @@ body.viewer {
   .viewer-header .back-to-classroom { padding: .38rem .5rem; }
   .viewer-monitoring {
     grid-column: 1 / -1;
-    display: block;
+    max-width: 100%;
+    display: flex;
+    justify-content: flex-end;
+    justify-self: stretch;
     overflow-wrap: anywhere;
     font-size: .68rem;
-    text-align: left;
+    text-align: right;
   }
-  .viewer-monitoring strong { margin-right: .35rem; }
   .legal-warning { gap: .35rem; padding: .38rem .45rem; font-size: .68rem; line-height: 1.25; }
   .legal-warning p { margin-left: .2rem; }
   .viewer-shell {
@@ -749,9 +940,23 @@ body.viewer {
   .resource-actions h2 { grid-column: 1 / -1; margin: 0; }
   .only-mobile { display: block; }
   .only-desktop { display: none; }
-  .video-view { gap: .35rem; }
-  .video-quick-controls { gap: .25rem; padding: 0 .35rem .35rem; }
-  .video-quick-controls button { padding: .34rem .48rem; font-size: .78rem; }
+  .video-controls { padding: 2.6rem .4rem .3rem; }
+  .video-control-row { gap: .2rem; }
+  .video-control-group { gap: 0; }
+  .video-volume { width: 3rem; }
+  .video-time { margin-left: .2rem; font-size: .7rem; }
+  .video-icon-button {
+    width: 2.35rem;
+    height: 2.35rem;
+    min-width: 2.35rem;
+    padding: .48rem;
+  }
+  .video-icon-button.video-center-play {
+    width: 3.25rem;
+    height: 3.25rem;
+    min-width: 3.25rem;
+    padding: .82rem;
+  }
   .pdf-pages { max-height: none; padding: .4rem; }
 
   body.catalog-page {
@@ -821,11 +1026,49 @@ body.viewer {
   .collection-nav button { min-height: 44px; }
 }
 
+@media (max-width: 560px) {
+  .video-volume { display: none; }
+}
+
+@media (max-width: 400px) {
+  .video-controls { padding: 3.25rem .15rem .3rem; }
+  .video-control-row { gap: 0; }
+  .video-time {
+    position: absolute;
+    top: 2rem;
+    left: .55rem;
+    bottom: auto;
+    margin: 0;
+  }
+}
+
+/* El reproductor puede ser estrecho aunque el viewport sea ancho: el menú de
+   Moodle y la colección también consumen espacio. Estas reglas miran el ancho
+   real del vídeo, no sólo el de la ventana. */
+@container video-player (max-width: 34rem) {
+  .video-volume { display: none; }
+}
+
+@container video-player (max-width: 25rem) {
+  .video-controls { padding: 3.25rem .15rem .3rem; }
+  .video-control-row { gap: 0; }
+  .video-time {
+    position: absolute;
+    top: 2rem;
+    left: .55rem;
+    bottom: auto;
+    margin: 0;
+  }
+}
+
 /* Objetivos táctiles cómodos en cualquier pantalla táctil. */
 @media (pointer: coarse) {
   button, .btn { min-height: 44px; }
   button.icon, details.menu > summary { min-height: 44px; min-width: 44px; }
   .index-item { min-height: 44px; }
+  .video-icon-button { min-width: 44px; min-height: 44px; }
+  .video-timeline { height: 2rem; padding: .875rem 0; }
+  .video-volume { display: none; }
 }
 
 /* ---- Consola de administración ---- */

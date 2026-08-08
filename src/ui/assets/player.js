@@ -1,5 +1,5 @@
-import { createVideoView } from './video-component.js?v=viewer-ux-1'
-import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-ux-1'
+import { createVideoView } from './video-component.js?v=video-controls-2'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-header-2'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({
@@ -20,7 +20,8 @@ const view = createVideoView({
   sessionToken: boot.sessionToken,
   video: { ...boot.video, playlistUrl: boot.playlistUrl },
   user: boot.user,
-  onStatus: shell.setStatus
+  onStatus: shell.setStatus,
+  globalShortcuts: true
 })
 
 window.addEventListener('pagehide', () => view.destroy())

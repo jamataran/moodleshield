@@ -200,15 +200,62 @@ test('todos los visores muestran aviso, monitorización y descarga contextual', 
   assert.match(shell, /artículo 270 del Código Penal/, 'falta el aviso legal solicitado')
 })
 
-test('el vídeo ofrece saltos, captura marcada y una marca de agua calmada', async () => {
+test('la cabecera de una actividad compuesta prioriza el título y compacta la monitorización', async () => {
+  const html = await readFile(path.join(uiDir, 'collection.html'), 'utf8')
+  assert.match(html, /id="resource-kind"\s+hidden/, 'el alumno no debe ver la etiqueta Colección')
+  assert.doesNotMatch(html, />\s*Colección\s*</, 'Colección no es información útil para el alumno')
+  assert.match(html, /Material de la actividad/, 'la navegación móvil debe hablar de la actividad')
+
+  const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
+  assert.match(collection, /kindLabel:\s*''/, 'el script no debe volver a mostrar Colección')
+
+  const shell = await readFile(path.join(uiDir, 'assets/viewer-shell.js'), 'utf8')
+  assert.match(shell, /kindEl\.hidden\s*=\s*!kindLabel/, 'una etiqueta vacía debe liberar su espacio')
+
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /\.viewer-monitoring\s*\{[^}]*display:\s*flex/s,
+    'monitorización y usuario deben compartir una línea')
+  assert.match(css, /\.viewer-monitoring\s*\{[^}]*grid-column:\s*3/s,
+    'la monitorización debe conservar la columna derecha aunque Atrás esté oculto')
+  assert.match(css, /\.viewer-heading\s*\{[^}]*grid-column:\s*2/s,
+    'el título debe conservar la columna central aunque Atrás esté oculto')
+  assert.match(css, /\.viewer-monitoring strong::after\s*\{[^}]*content:\s*" ·"/s,
+    'falta el separador inline entre estado y usuario')
+})
+
+test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua calmada', async () => {
   const code = await readFile(path.join(uiDir, 'assets/video-component.js'), 'utf8')
   assert.match(code, /seekBy\(-10\)/, 'falta retroceder 10 segundos')
   assert.match(code, /seekBy\(10\)/, 'falta avanzar 10 segundos')
+  assert.match(code, /timeline\.type\s*=\s*'range'/, 'falta una barra de navegación temporal propia')
+  assert.match(code, /timeline\.step\s*=\s*'1'/, 'el teclado no debe avanzar décimas imperceptibles')
+  assert.match(code, /'timeupdate'/, 'la barra no sigue la reproducción')
+  assert.match(code, /'durationchange'/, 'la barra no reacciona a la duración disponible')
+  assert.match(code, /requestPictureInPicture/, 'falta restaurar Picture-in-Picture')
+  assert.match(code, /enterpictureinpicture/, 'PiP necesita sincronizar su estado visible')
+  assert.match(code, /webkitSetPresentationMode/, 'falta el fallback PiP de Safari')
+  assert.doesNotMatch(code, /disablepictureinpicture/i, 'PiP vuelve a estar deshabilitado en el vídeo')
   assert.match(code, /canvas\.toBlob/, 'falta generar la captura descargable')
   assert.match(code, /user\?\.identity/, 'la captura debe quedar atribuida al alumno')
   assert.match(code, /30_000/, 'la marca visible no debe moverse cada pocos segundos')
   assert.match(code, /prefers-reduced-motion/, 'la animación debe respetar movimiento reducido')
   assert.doesNotMatch(code, /setInterval\([^\n]+,\s*7000\)/, 'la marca todavía se mueve cada 7 segundos')
+
+  const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
+  assert.match(collection, /closest\?\.\('\.video-view'\)/,
+    'las flechas del player no deben cambiar de material dentro de una colección')
+
+  const player = await readFile(path.join(uiDir, 'assets/player.js'), 'utf8')
+  assert.match(player, /globalShortcuts:\s*true/,
+    'los atajos deben funcionar al abrir un vídeo suelto, antes de enfocarlo')
+
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /container:\s*video-player\s*\/\s*inline-size/,
+    'los controles deben adaptarse al ancho real del reproductor')
+  assert.match(css, /@media \(pointer: coarse\)[\s\S]*?\.video-timeline\s*\{[^}]*height:\s*2rem/,
+    'la barra necesita un objetivo táctil cómodo')
+  assert.doesNotMatch(css, /\.video-volume-group\s*\{\s*display:\s*none/,
+    'ocultar el volumen no debe eliminar también el botón de silencio')
 })
 
 test('el player y los visores se sirven sin CDN', async () => {

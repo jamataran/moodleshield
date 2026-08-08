@@ -1,6 +1,6 @@
 import { createPdfView } from './pdf-component.js?v=viewer-ux-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
-import { createViewerShell } from './viewer-shell.js?v=viewer-ux-1'
+import { createViewerShell } from './viewer-shell.js?v=viewer-header-2'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({
