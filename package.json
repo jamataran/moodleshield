@@ -4,6 +4,27 @@
   "private": true,
   "type": "module",
   "description": "Herramienta LTI 1.3 que sirve vídeo HLS cifrado con marca de agua forense A/B por alumno",
+  "keywords": [
+    "moodle",
+    "lti",
+    "lti-1.3",
+    "watermark",
+    "forensic-watermarking",
+    "video-protection",
+    "hls",
+    "drm-alternative",
+    "e-learning",
+    "self-hosted"
+  ],
+  "homepage": "https://github.com/jamataran/moodleshield#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jamataran/moodleshield.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jamataran/moodleshield/issues"
+  },
+  "author": "José Antonio Matarán <jose@mataran.dev> (https://mataran.dev)",
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=22.11.0"

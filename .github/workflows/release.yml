@@ -48,7 +48,13 @@ jobs:
             exit 1
           }
 
-          deploy_commit=$(git log --format='%H %s' origin/main | awk -v tag="$sha_tag" '$0 ~ "deploy\\(test\\): " tag " \\[skip ci\\]" {print $1; exit}')
+          # Filtra git, no awk. Con `git log | awk '{print; exit}'`, awk cierra
+          # la tubería en cuanto encuentra la línea y git muere con SIGPIPE
+          # (141) al escribir el resto; `pipefail` lo propaga y el paso aborta.
+          # Sólo se nota cuando la salida pasa de 4 KB (el buffer de stdio),
+          # así que funcionó hasta que la historia creció lo suficiente.
+          deploy_commit=$(git log -n 1 --format='%H' --fixed-strings \
+            --grep="deploy(test): ${sha_tag} [skip ci]" origin/main)
           [[ -n "$deploy_commit" ]] || {
             echo "::error::No se encontró el commit deploy(test) de $sha_tag en main"
             exit 1
@@ -149,7 +155,7 @@ jobs:
           SOURCE_TAG: ${{ steps.meta.outputs.sha_tag }}
         run: |
           {
-            echo "### Producción → `${VERSION}`"
+            echo "### Producción → \`${VERSION}\`"
             echo ""
-            echo "Promocionado desde `${SOURCE_TAG}` sin reconstruir."
+            echo "Promocionado desde \`${SOURCE_TAG}\` sin reconstruir."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -29,5 +29,7 @@ secrets/
 # Si prefieres publicarlo, borra esta línea.
 init.md
 
-# Claude
+# Claude: worktrees de agentes y ajustes locales de cada máquina.
+# .claude/settings.json (compartido) sí se versiona si algún día existe.
 .claude/worktrees
+.claude/settings.local.json

@@ -3,7 +3,9 @@ import globals from 'globals'
 
 export default [
   {
-    ignores: ['node_modules/**', '.data/**', 'coverage/**', 'src/ui/vendor/**']
+    // `.claude/**` son worktrees y ajustes locales de agentes: copias del
+    // repositorio que se colarían en el informe como errores duplicados.
+    ignores: ['node_modules/**', '.data/**', 'coverage/**', 'src/ui/vendor/**', '.claude/**']
   },
   js.configs.recommended,
   {

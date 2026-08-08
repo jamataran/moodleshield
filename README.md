@@ -1,67 +1,188 @@
-# MoodleShield
+<div align="center">
 
-Herramienta LTI 1.3 que sirve **vídeo y PDF** a los alumnos de Moodle con
-**marca de agua forense por alumno** en el vídeo, sin transcodificar en cada
-visionado.
+# 🛡️ MoodleShield
 
-Cada vídeo se procesa **una sola vez** a dos variantes HLS cifradas con una
-diferencia imperceptible. La playlist de cada alumno mezcla segmentos de una y
-otra siguiendo un patrón derivado de su identidad. Si un vídeo se filtra, ese
-patrón dice de quién salió. En tiempo de reproducción no se ejecuta ffmpeg: se
-genera texto.
+### Marca de agua forense por alumno para vídeo y PDF en Moodle
 
-Encima va una capa visible —el DNI del alumno flotando sobre el vídeo— que es lo
-que disuade de la grabación de pantalla. La marca A/B es la red de seguridad
-para quien sepa borrar ese elemento del DOM.
+**Protección de contenido autohospedada y de código abierto para Moodle, vía LTI 1.3.**
+Cada alumno recibe el vídeo con una **mezcla de segmentos distinta**, diseñada para que una
+filtración se pueda rastrear hasta su origen.
+Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de tu servidor.
 
-```
-Moodle ──LTI 1.3──▶ MoodleShield ──▶ HLS cifrado, personalizado por alumno
-                         │
-                         └─▶ ffmpeg ×2 por vídeo (una vez), nunca por visionado
-```
+[![Licencia: AGPL v3](https://img.shields.io/badge/licencia-AGPL--3.0-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
+[![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
+[![Tests](https://img.shields.io/badge/tests-164-success)](docs/desarrollo.md#tests)
+[![Sin dependencias de frontend](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
+[![Autohospedado](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
-- **Sin licencias.** Todo open source.
-- **Sin salir de Moodle.** El profesor sube el material y lo inserta en el curso
-  desde el propio editor, con Deep Linking.
-- **Biblioteca propia.** Carpetas personales por profesor, búsqueda y
-  colecciones que agrupan varios materiales en **una sola actividad**.
-- **Actualizable sin romper nada.** Sustituir un fichero crea una revisión
-  nueva; el identificador que Moodle tiene incrustado no cambia y la versión
-  anterior se sigue sirviendo hasta que la nueva está validada.
-- **Poca memoria.** El servicio web ocupa unos 45 MB de RSS; el resto de la
-  máquina queda para transcodificar.
+**Español** · [English](README.en.md)
 
-> **PDF: hasta dónde llega.** El visor controla el acceso y muestra la identidad
-> del alumno, pero el documento autorizado viaja al navegador para renderizarse.
-> No es DRM y **no** deja marca forense: a diferencia del vídeo, una filtración
-> de PDF no es atribuible. Ver [`docs/arquitectura.md`](docs/arquitectura.md).
+</div>
 
----
-
-## Estado
-
-**12 tareas del MVP completadas**: handshake LTI, pipeline A/B, playlists
-personalizadas, entrega firmada, Deep Linking, catálogo. **4 tareas de biblioteca**
-(carpetas, colecciones, PDF, revisiones) completadas el 6 de agosto.
-
-Lo que falta:
-- **T13 roto**: El trazado forense es incorrecto; necesita revisión del algoritmo.
-- **T11 parcial**: El player funciona en desarrollo; falta matriz de navegadores.
-- **T22 prioritaria**: Corrige un hueco en los leases del worker.
-- **T14–T16 parciales**: Infraestructura existe pero faltan alertas, backup, auditoría.
-
-Detalle, estado y orden recomendado: [`docs/tasks/README.md`](docs/tasks/README.md).  
-Resumen ejecutivo: [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md).
+> [!WARNING]
+> **Versión 0.x — léelo antes de desplegarlo con alumnos reales.** El pipeline de vídeo, la
+> integración LTI y la biblioteca funcionan y están probados. Pero una
+> [auditoría de seguridad interna](docs/auditoria-seguridad-contenido-y-plan.md) de agosto
+> de 2026 encontró 16 hallazgos abiertos, y dos afectan directamente a lo que promete este
+> README:
+>
+> - **El trazador forense no es fiable todavía** (F-07). El mecanismo A/B está construido,
+>   pero el lector de patrones clasifica mal y la marca se elimina recortando los bordes.
+>   **Hoy no debe usarse para atribuir una filtración a una persona concreta.**
+> - **El perfil de desarrollo (`infra/local`) lleva secretos conocidos** y ahora son
+>   públicos (F-01). Vale para desarrollo en `localhost`; **nunca** lo expongas a Internet.
+>
+> El estado real, hallazgo a hallazgo, está en [`docs/README.md`](docs/README.md#estado-del-proyecto).
+> Se documenta aquí a propósito: un proyecto de seguridad que esconde su propia auditoría
+> no merece confianza.
 
 ---
 
-## Empezar en local
+## El problema
 
-Necesitas Node ≥ 22 y Docker. ffmpeg **no** hace falta en el host si vas a usar
-el contenedor del worker.
+Subes las clases grabadas a Moodle. A la semana están en un grupo de Telegram.
+
+Las respuestas habituales no sirven o cuestan demasiado:
+
+- **DRM (Widevine, FairPlay)** — caro, atado a un proveedor, y no impide grabar la pantalla con un móvil.
+- **Vídeo "privado" en YouTube o Vimeo** — un enlace se reenvía en dos segundos.
+- **Plataformas SaaS de vídeo protegido** — cobran por reproducción o por GB y tus clases viven en su nube.
+- **No hacer nada** — la opción más común.
+
+Ninguna responde a la pregunta que de verdad importa cuando ya ha pasado: **¿quién lo filtró?**
+
+## La respuesta: marca de agua forense A/B
+
+MoodleShield transcodifica cada vídeo **una sola vez** a dos variantes HLS cifradas,
+imperceptiblemente distintas: la variante `A` lleva un recuadro casi invisible abajo a la
+derecha, la `B` abajo a la izquierda. Ambos cortes de segmento son idénticos, así que los
+segmentos son intercambiables.
+
+Cuando un alumno abre la actividad, se genera **su** playlist: cada segmento apunta a `A`
+o a `B` siguiendo un patrón derivado por HMAC de su identidad. Ese patrón es la firma.
+
+```
+Vídeo original ──ffmpeg ×2 (una vez, al subir)──▶  A: ▓▓▓▓▓▓▓▓▓▓   marca abajo dcha.
+                                                   B: ░░░░░░░░░░   marca abajo izda.
+
+Ana  → A A B B B A A B A B  ─┐
+Luis → B A A B A B B A A A   ├─ 2⁴¹ combinaciones en un vídeo de 3 minutos
+Marta→ A B B A A A B B A B  ─┘
+```
+
+Si aparece una copia pirata, `tools/trace.mjs` lee el patrón de los píxeles y lo compara
+con la lista de quien vio ese vídeo. Así se ve una traza:
+
+```text
+Coincid.  Aciertos   Alumno                              DNI          1 entre
+----------------------------------------------------------------------------
+  100.0%   41/41     Ana García Pérez                    12345678Z    2.199.023.255.552
+   53.7%   22/41     Luis Martín Ruiz                    87654321X    5
+
+Origen más probable: Ana García Pérez (12345678Z) — 100.0% de coincidencia.
+```
+
+> [!CAUTION]
+> **Esa última parte todavía no es de fiar.** El pipeline que genera las variantes y las
+> playlists divergentes está construido y probado; el **lector** que interpreta el patrón de
+> vuelta, no: clasifica incorrectamente y la marca desaparece si se recortan los bordes
+> ([T13](docs/README.md#hoja-de-ruta) y [F-07](docs/auditoria-seguridad-contenido-y-plan.md)).
+> Arreglarlo bien implica códigos resistentes a colusión (Tardos), marcas repartidas por el
+> fotograma y una batería de decodificación que falle cerrada. Es la contribución más
+> valiosa que puede hacer alguien ahora mismo.
+
+**Coste en CPU por visionado: cero ffmpeg.** Reproducir es reescribir un fichero de texto
+(microsegundos) y servir estáticos con nginx. Da igual que tengas 10 alumnos o 10.000.
+
+> [!IMPORTANT]
+> **Esto no es DRM y no pretende serlo.** MoodleShield no impide copiar el vídeo:
+> hace que la copia sea **atribuible**. Es una diferencia deliberada de enfoque,
+> y en la práctica disuade más que un candado que se puede rodear con un móvil.
+
+---
+
+## Qué incluye
+
+| | |
+|---|---|
+| 🎬 **Vídeo con marca forense** | HLS + AES-128, dos variantes, patrón A/B por alumno derivado por HMAC |
+| 👁️ **Overlay de identidad** | El DNI del alumno flotando sobre el vídeo y sobre el PDF: lo que disuade de la grabación con móvil |
+| 📄 **PDF protegido** | Validado y normalizado (fuera JavaScript, acciones y adjuntos), servido con control de acceso y `Range` |
+| 📥 **Descarga sellada de PDF** | Copia oficial con la identidad del alumno en cada página y cifrada con permisos bloqueados |
+| 🔌 **LTI 1.3 nativo** | Sin plugins ni parches en Moodle. Un alta de administrador y listo |
+| 🔗 **Deep Linking** | El profesor sube e inserta el material sin salir del editor del curso |
+| 📁 **Biblioteca del profesor** | Explorador de archivos con carpetas anidadas, búsqueda y material archivado |
+| 🗂️ **Colecciones** | Varios materiales agrupados en **una sola actividad** de Moodle |
+| ♻️ **Revisiones** | Sustituye un fichero sin cambiar el UUID que Moodle lleva incrustado; rollback incluido |
+| 🏢 **Multiinstancia** | Varios Moodle y varios profesores aislados por `platform_id` + `owner_sub` |
+| 🪶 **Ligero** | El servicio web consume ~45 MB de RSS. Cabe en un NAS |
+| 🔍 **Trazado forense** | CLI que compara el patrón contra quien vio el vídeo y **se niega a concluir** si la muestra no da. 🚧 El lector aún no es fiable ([T13](docs/README.md#hoja-de-ruta)) |
+
+## Qué protege y qué no
+
+Un proyecto de seguridad que exagera lo que hace es peor que no tener ninguno.
+Esta tabla es el contrato:
+
+| | Vídeo | PDF |
+|---|---|---|
+| Control de acceso por alumno | ✅ | ✅ |
+| Cifrado en tránsito y en reposo | ✅ AES-128 por revisión | ✅ (no expuesto como estático) |
+| Disuasión visible | ✅ Overlay | ✅ Overlay + sello en la descarga |
+| **Atribuir una filtración** | 🚧 **Patrón A/B construido, lector no fiable aún** | ❌ **No** — el sello es removible |
+| Impedir la copia | ❌ No es DRM | ❌ No es DRM |
+
+**Protege de:** reenviar el enlace de un vídeo · descargar un `.ts` suelto · bajarse una
+variante entera para escapar de la traza · grabar la pantalla y redistribuir (queda el DNI
+a la vista y el patrón en los píxeles) · borrar el overlay del DOM (el patrón sigue ahí) ·
+abrir un material con el token de otra actividad.
+
+**No protege de:** recortar los bordes del vídeo, que elimina las marcas · colusión (dos
+alumnos comparando copias para fabricar una tercera) · la captura en sí.
+
+Las dos primeras tienen solución conocida —marcas en varias posiciones, códigos de
+Tardos— y están en la [hoja de ruta](docs/README.md#hoja-de-ruta).
+
+---
+
+## Alternativas y en qué se diferencia
+
+MoodleShield existe porque el mercado de protección de vídeo para e-learning está lleno de
+SaaS de pago por reproducción. Si necesitas DRM certificado por un estudio, o atribución
+forense **en producción y hoy**, compra un producto comercial: eso está maduro ahí y aquí
+no. Si lo que buscas es una base autohospedada, auditable y sin coste por alumno sobre la
+que construir eso, esto sí.
+
+| | **MoodleShield** | **VdoCipher** | **Kaltura / Panopto** | **Vimeo / YouTube privado** |
+|---|---|---|---|---|
+| Modelo | Autohospedado, AGPL-3.0 | SaaS de pago | SaaS / on-prem, licencia | SaaS |
+| Dónde viven tus vídeos | **En tu servidor** | Su nube | Su nube | Su nube |
+| Coste por reproducción | **0 €** | Por GB / plan | Por licencia | Plan |
+| Marca de agua forense por alumno | 🚧 **A/B en píxeles, en desarrollo** | ✅ (dinámica, según plan) | Según producto | ❌ |
+| DRM (Widevine / FairPlay) | ❌ | ✅ | Según producto | Parcial |
+| Integración con Moodle | **LTI 1.3 nativo** | Plugin / embed | Plugin | Embed |
+| Código auditable | ✅ **Todo** | ❌ | Parcial | ❌ |
+| Datos de alumnos a un tercero | **Ninguno** | Sí | Sí | Sí |
+
+*Los productos comerciales evolucionan; contrasta esta tabla con su documentación antes de
+decidir. Lo que sí es estructural: MoodleShield no puede ofrecer DRM (no hay CDM libre) y
+ellos no pueden ofrecerte que el vídeo no salga de tu máquina.*
+
+**Sobre protección de datos.** Al ser autohospedado, ni los vídeos ni la identidad de los
+alumnos salen de tu infraestructura, lo que simplifica bastante el encaje con el RGPD:
+no hay transferencia a terceros ni encargado del tratamiento que auditar. La contrapartida
+es que el responsable del tratamiento eres tú, incluido el registro de visionados
+(`view_event`) que hace posible el trazado.
+
+---
+
+## Empezar en 5 minutos
+
+Necesitas **Node ≥ 22** y **Docker**. `ffmpeg` no hace falta en el host si usas el
+contenedor del worker.
 
 ```bash
-git clone <este-repo> moodleshield && cd moodleshield
+git clone https://github.com/jamataran/moodleshield.git && cd moodleshield
 npm ci
 
 cp .env.example .env
@@ -71,7 +192,7 @@ docker compose -f compose.dev.yml up -d      # sólo Postgres
 npm run dev                                   # → http://localhost:3000
 ```
 
-Comprobación:
+Comprueba que respira:
 
 ```bash
 curl -s localhost:3000/readyz     # {"status":"ready","version":"0.1.0"}
@@ -85,332 +206,86 @@ En otra terminal, el transcodificador (esto sí necesita `ffmpeg` en el host):
 npm run dev:worker
 ```
 
-Si prefieres no instalar ffmpeg, levanta el stack completo en contenedores
-(build desde el código fuente, con nginx delante):
+¿Prefieres no instalar nada? El stack completo en contenedores, con nginx delante:
 [`infra/local/README.md`](infra/local/README.md).
 
-### Tests y lint
+### Ver la marca A/B funcionando, sin Moodle
+
+Levanta el stack completo y lanza el recorrido de extremo a extremo: genera un vídeo de
+prueba, lo sube, espera a que se transcodifique y comprueba las cinco cosas que hacen que
+esto funcione.
 
 ```bash
-npm test        # 49 comprobaciones, sin dependencias externas
-npm run lint
+cd infra/local && docker compose up -d --build && cd -
+./scripts/demo-local.sh
 ```
 
-Los tests unitarios no tocan Postgres a propósito: son rápidos y deterministas.
-El CI valida las migraciones aparte, contra un Postgres real.
-
----
-
-## Probar el pipeline de vídeo sin Moodle
-
-Verificación completa del núcleo del sistema —transcodificación A/B, cifrado y
-playlists divergentes— dentro del contenedor, sin ffmpeg en el host:
-
-```bash
-docker buildx bake -f docker/docker-bake.hcl --load
-
-docker run --rm -u root -e MEDIA_ROOT=/data/media -e MARK_ALPHA=0.5 \
-  --entrypoint sh ghcr.io/moodleshield/worker:dev -c '
-    ffmpeg -loglevel error -y -f lavfi -i "testsrc=size=640x360:rate=24:duration=40" \
-      -f lavfi -i "sine=frequency=440:duration=40" \
-      -c:v libx264 -preset ultrafast -c:a aac -shortest /tmp/in.mp4
-    node --input-type=module -e "
-      const { transcodeVideo } = await import(\"/app/src/media/transcode.js\")
-      const { buildUserPlaylist } = await import(\"/app/src/media/playlist.js\")
-      const { revisionDir } = await import(\"/app/src/media/storage.js\")
-      const id  = \"11111111-2222-3333-4444-555555555555\"
-      const rev = \"22222222-3333-4444-5555-666666666666\"
-      const dir = revisionDir(\"video\", id, rev)
-      const meta = await transcodeVideo(id, \"/tmp/in.mp4\", { outputDir: dir, revisionId: rev })
-      const p = (x) => Array.from(x, b => b ? \"B\" : \"A\").join(\"\")
-      const scope = { videoId: id, revisionId: rev, layout: \"revision\", patternScope: id + \":\" + rev }
-      const ana  = await buildUserPlaylist({ ...scope, userSub: \"ana\",  keyToken: \"t\" })
-      const luis = await buildUserPlaylist({ ...scope, userSub: \"luis\", keyToken: \"t\" })
-      console.log(\"segmentos:\", meta.segmentCount)
-      console.log(\"ana :\", p(ana.pattern))
-      console.log(\"luis:\", p(luis.pattern))
-    "
-  '
-```
-
-Salida esperada: dos patrones distintos, del estilo `AABBBAAAAA` y `BBABABBAAB`.
-Eso es la marca forense funcionando.
+Verifica que ffmpeg corre exactamente dos veces, que dos alumnos reciben mezclas A/B
+distintas, que los segmentos van cifrados, que nginx devuelve **403** al pedir un segmento
+que no toca según tu patrón, y que el trazado forense identifica al alumno correcto.
+Más detalle en [`docs/desarrollo.md`](docs/desarrollo.md#ver-la-marca-ab-sin-moodle).
 
 ---
 
 ## Conectar con Moodle
 
-Moodle **exige HTTPS** para LTI 1.3 y no acepta certificados autofirmados. Ni
-siquiera para desarrollo vale `localhost`. Test y producción se publican desde
-un servidor conectado a Internet, con TLS en el reverse proxy del host:
+Lo hace **el administrador del sitio una sola vez**; después todos los profesores pueden
+usar la herramienta sin configurar nada.
 
-```text
-INTERNET ──HTTPS──▶ nginx/Nginx Proxy Manager ──HTTP──▶ proxy del stack
-```
+Moodle **exige HTTPS** para LTI 1.3 y no acepta certificados autofirmados: ni siquiera en
+desarrollo vale `localhost`. Para probar contra un Moodle real desde tu portátil, usa un
+túnel (Cloudflare Tunnel o Tailscale Funnel) — [`docs/https-tunel.md`](docs/https-tunel.md).
 
-Los compose permanentes no incluyen `cloudflared` ni `tailscale`. En desarrollo
-local sí puedes usar Cloudflare Tunnel o Tailscale Funnel para conectar un
-Moodle real sin desplegar un servidor.
+Con la herramienta ya accesible por HTTPS, el resumen es:
 
-Guía completa del edge y de los túneles locales:
-[`docs/https-tunel.md`](docs/https-tunel.md).
+1. Moodle → *Administración del sitio → Extensiones → Herramienta externa → Configurar
+   una herramienta manualmente*, con los valores que la propia herramienta publica en
+   `https://TU-DOMINIO/lti/config`.
+2. Guardar, **volver a editar** y marcar *Supports Deep Linking* (Moodle sólo muestra esa
+   opción tras el primer guardado).
+3. Anotar `Client ID` y `Deployment ID` de los detalles de configuración.
+4. Registrar ese Moodle en la consola `https://TU-DOMINIO/admin` y pulsar **Probar conexión**.
 
-### El alta en Moodle, en seis pasos
-
-Lo hace **el administrador una sola vez**; después todos los profesores del
-sitio pueden usar la herramienta sin configurar nada. Con la herramienta ya
-accesible por HTTPS (sustituye `TU-DOMINIO`):
-
-**1.** En Moodle: *Administración del sitio → Extensiones → Herramienta externa
-→ Gestionar herramientas → Configurar una herramienta manualmente*, con
-exactamente estos valores (también en `https://TU-DOMINIO/lti/config`):
-
-| Campo de Moodle | Valor |
-|---|---|
-| Nombre de la herramienta | MoodleShield |
-| URL de la herramienta | `https://TU-DOMINIO/lti/launch` |
-| Versión LTI | **LTI 1.3** |
-| Tipo de clave pública | **Keyset URL** |
-| Keyset URL | `https://TU-DOMINIO/lti/keys` |
-| Initiate login URL | `https://TU-DOMINIO/lti/login` |
-| Redirection URI(s) | `https://TU-DOMINIO/lti/launch` ← exacta, sin barra final |
-| Contenedor de lanzamiento | Ventana embebida |
-| Parámetros personalizados | `dni=$Person.sourcedId` |
-| Privacidad → compartir nombre | Siempre |
-
-**2.** Guarda, **vuelve a editar** la herramienta y marca *Supports Deep
-Linking* (Moodle sólo muestra esa opción tras el primer guardado), con
-*Content Selection URL* = `https://TU-DOMINIO/lti/launch`.
-
-**3.** En la lista de herramientas, pulsa el icono de **detalles de
-configuración** de MoodleShield y anota `Client ID` y `Deployment ID`.
-
-**4.** Registra tu Moodle en MoodleShield desde `https://TU-DOMINIO/admin`:
-
-- crea la instancia con el issuer, Client ID y Deployment ID del paso 3;
-- revisa los endpoints de Moodle que propone el formulario;
-- guarda y pulsa **Probar conexión**.
-
-La API bearer y el script siguen disponibles para automatización:
-
-```bash
-node scripts/register-platform.mjs \
-  --issuer https://aula.tudominio.com \
-  --client-id <Client ID del paso 3> \
-  --deployment-id <Deployment ID del paso 3>
-```
-
-En un stack Portainer, ejecuta el mismo `node scripts/register-platform.mjs …`
-desde *Containers → app → Console*, seleccionando el usuario `node`.
-
-**5.** Prueba como profesor: curso → *Añadir una actividad* → **Herramienta
-externa** → elegir MoodleShield → *Seleccionar contenido* → subir un MP4 corto
-→ esperar a "listo" → *Insertar*.
-
-**6.** Prueba como alumno: *Cambiar rol a… → Estudiante* y abre la actividad.
-Debe salir el player con el DNI flotando.
-
-Si algo falla, la tabla de síntomas está en
-[`docs/moodle-setup.md`](docs/moodle-setup.md#diagnóstico) — el 90 % de las
-veces es la Redirection URI o el registro del paso 4.
+**Los seis pasos con capturas, los valores exactos y la tabla de diagnóstico
+(«el 90 % de las veces es la Redirection URI»): [`docs/moodle-setup.md`](docs/moodle-setup.md).**
 
 ---
 
-## Desplegar
-
-Los stacks permanentes funcionan con Docker Compose v2 o Portainer sobre
-Docker Standalone, en servidores/NAS `amd64` y `arm64`. Todo el estado vive bajo
-el único `DATA_ROOT` configurado (`pgdata`, `media` y `uploads`) y no existe un
-contenedor `prepare`.
-
-```bash
-npm ci
-(umask 077; ./scripts/generate-env.sh prod > moodleshield-prod.env)
-# Portainer: Repository → infra/prod/compose.yml → pegar el bloque → Deploy
-```
-
-En el estado actual del repositorio, primero entra el cambio en `main`, espera a
-que CD publique el nuevo `sha-*` en test y ejecuta el workflow Release con una
-versión `vX.Y.Z`; después redespliega producción. Así `app`, `worker` y `proxy`
-siempre corresponden al mismo build.
-
-El nginx del servidor termina TLS y reenvía al puerto HTTP del gateway del
-stack (`43127` en producción, `43128` en test). No debe apuntar directamente a
-`app:3000`, porque el gateway protege los segmentos HLS.
-
-Guía completa, configuración nginx y recuperación de PostgreSQL `28P01`:
-[`infra/README.md`](infra/README.md).
-
-Tres entornos bajo `infra/`, cada uno con su carpeta, su compose y su README:
-
-| Entorno | Topología | Qué corre |
-|---|---|---|
-| [`infra/local`](infra/local/README.md) | Cloudflare → tu equipo → contenedores | build desde el código fuente |
-| [`infra/test`](infra/test/README.md) | Internet → tu nginx (TLS) → stack | `:sha-<commit>` de cada push a `main` |
-| [`infra/prod`](infra/prod/README.md) | Internet → tu nginx (TLS) → stack | `:vX.Y.Z` — el **mismo digest** que test |
-
-El flujo es *build once, promote up*: cada push a `main` construye una vez,
-publica `sha-abc1234` y despliega test; crear un tag `vX.Y.Z` **no
-reconstruye** — re-etiqueta ese mismo digest (`docker buildx imagetools
-create`) y despliega prod en menos de un minuto de Actions. Rollback =
-`git revert` del commit de deploy. Sin claves de servidor en GitHub: Portainer
-tira del repositorio (GitOps).
-
-```bash
-git push origin main          # → test, automático
-# El tag debe apuntar al commit de código que cd-main construyó; ver la
-# instrucción exacta en «Publicar producción».
-```
-
-Visión general y reparto de variables/secretos: [`infra/README.md`](infra/README.md).
-
-### Flujo Git / GitOps / CI/CD
-
-La regla sencilla es: **las ramas de trabajo entran en `main` mediante PR y
-`main` es la única rama que despliega**. Producción no se construye aparte: se
-promueve a partir de la imagen que ya ha pasado por test.
-
-```text
-feature/* ── PR ──▶ CI ──▶ merge a main
-                              │
-                              ├─ cd-main.yml: lint, tests, migraciones,
-                              │  validación Compose y build
-                              ├─ publica app/worker/proxy:sha-<commit> en GHCR
-                              ├─ actualiza las imágenes en infra/test/compose.yml
-                              └─ Portainer detecta el commit y despliega TEST
-
-main ── tag vX.Y.Z ──▶ cd-promote.yml
-                       ├─ comprueba que existe :sha-<commit> en GHCR
-                       ├─ crea :vX.Y.Z y :latest con el mismo digest
-                       ├─ actualiza las imágenes en infra/prod/compose.yml
-                       └─ Portainer detecta el commit y despliega PROD
-```
-
-#### Qué rama usar
-
-Para cada cambio, parte de la punta de `main` y crea una rama corta, por
-ejemplo `feature/lti-deep-linking`, `fix/player-403` o `chore/dependencias`.
-Haz commits pequeños, sube la rama y abre un PR contra `main`:
-
-```bash
-git switch main
-git pull --ff-only origin main
-git switch -c feature/mi-cambio
-
-# editar, probar y hacer commits
-npm run lint
-npm test
-git add .
-git commit -m "feat: describe el cambio"
-git push -u origin feature/mi-cambio
-```
-
-El PR ejecuta `CI · PR: validar código, infraestructura y build` (`ci.yml`): lint, tests unitarios e integración con Postgres,
-migraciones idempotentes, validación de los tres Compose, comprobación de que
-no hay secretos y una construcción Docker sin publicar. Si todo está verde,
-se revisa y se hace merge a `main` (preferiblemente *squash merge*). No se
-trabaja directamente sobre `main`, salvo para operaciones automáticas o de
-emergencia.
-
-#### Qué ocurre después del merge
-
-Cada push de código a `main` ejecuta `cd-main.yml`. El workflow vuelve a
-verificar el commit, construye una vez las imágenes `app`, `worker` y `proxy`
-(nginx con su configuración horneada: el stack no puede montar ficheros del
-repositorio, ver [`infra/README.md`](infra/README.md)), las publica en GHCR como
-`sha-<commit corto>` y cambia sólo las referencias `image:` en
-`infra/test/compose.yml`. Ese cambio automático se commitea como
-`deploy(test): ... [skip ci]`.
-
-Portainer tiene el repositorio configurado con la rama `main` y el Compose del
-entorno correspondiente. Por eso Git es la fuente de verdad de la versión:
-Portainer lee las referencias `image:` del Compose, descarga las imágenes y
-recrea el stack. No depende de que Portainer cargue un `.env` del repositorio.
-El webhook sólo acelera la detección; si no está configurado, funciona el
-polling de Portainer.
-
-Los cambios que sólo afectan a documentación, `LICENSE`, `.idea/` o
-`infra/local/` no publican imágenes ni despliegan test. Aun así, el CI puede
-lanzarse manualmente desde Actions si se quiere validar el cambio.
-
-#### Publicar producción
-
-Primero espera a que el commit esté desplegado y validado en test. La forma
-recomendada es usar el botón de GitHub: ve a **Actions → Release · promoción manual de test a producción
-→ Run workflow**, escribe la versión (`v0.1.0`) y pulsa **Run workflow**. El
-workflow localiza automáticamente la imagen que está en test, crea el tag
-correcto, promociona el mismo digest y actualiza producción.
-
-Si necesitas hacerlo desde la terminal, crea el tag sobre el commit de código
-que ya está en test y súbelo:
-
-```bash
-git switch main
-git pull --ff-only origin main
-git log --oneline -5           # localiza el commit justo antes de deploy(test)
-git tag v0.1.0 <sha-del-commit-de-codigo>
-git push origin v0.1.0
-```
-
-El `sha-del-commit-de-codigo` es el SHA que aparece en el resumen de
-`cd-main.yml` como `sha-<commit>` (o el commit padre del `deploy(test): ...`
-automático). Debe existir la imagen correspondiente en GHCR. Por ejemplo, si
-el historial termina así:
-
-```bash
-abc1234 deploy(test): sha-abc1234 [skip ci]
-def5678 feat: nueva funcionalidad
-git tag v0.1.0 def5678
-git push origin v0.1.0
-```
-
-`cd-promote.yml` no ejecuta otro build. Busca `sha-<commit>` en GHCR, falla si
-ese commit nunca pasó por `main`, y crea las etiquetas de versión y `latest`
-para el mismo digest. Luego actualiza las referencias `image:` en
-`infra/prod/compose.yml`; Portainer despliega producción desde ese cambio. No crees el tag desde una rama de trabajo ni
-reutilices una versión ya publicada.
-
-#### Rollback
-
-El historial de `infra/test/compose.yml` e `infra/prod/compose.yml` es también el historial
-de despliegues. En producción, para volver a la versión anterior, revierte el
-commit automático de producción y sube el revert:
-
-```bash
-git log --oneline -- infra/prod/compose.yml
-git revert <commit-deploy-prod>
-git push origin main
-```
-
-Portainer volverá a leer la referencia de imagen anterior. No borres ni edites a mano
-los commits `deploy(test): ...` o `deploy(prod): ...`: son los cambios que
-activan GitOps. Para deshacer código en test, revierte el commit de código (o
-abre un PR de rollback); `cd-main` construirá una nueva imagen `sha-*` con ese
-estado y la desplegará. Los secretos nunca van en Git; se mantienen en las variables
-del stack de Portainer, y `infra/<env>/.env.sample` sólo sirve como plantilla.
-
----
-
-## Trazar una filtración
-
-```bash
-node tools/trace.mjs --video <videoId> [--revision <revisionId>] --input pirata.mp4
-```
+## Arquitectura en un vistazo
 
 ```
-Coincid.  Aciertos   Alumno                              DNI          1 entre
-----------------------------------------------------------------------------
-  100.0%   41/41     Ana García Pérez                    12345678Z    2.199.023.255.552
-   53.7%   22/41     Luis Martín Ruiz                    87654321X    5
-
-Origen más probable: Ana García Pérez (12345678Z) — 100.0% de coincidencia,
-1 entre 2.199.023.255.552 por azar.
+┌─────────────┐
+│   Moodle    │  LTI 1.3 Platform
+└──────┬──────┘
+       │ launch (id_token firmado)
+       ▼
+┌──────────────────────────────────────────────────────────┐
+│ nginx (proxy)                                            │
+│   /media/**/seg_NNNN.ts  → estático + secure_link        │
+│   /media/**  (lo demás)  → 403                           │
+│   /*                     → proxy a app:3000              │
+└──────┬───────────────────────────────────────────────────┘
+       ▼
+┌──────────────────────┐        ┌────────────────────────┐
+│ app  (Node, 512 MB)  │        │ worker (Node, 1,5 GB)  │
+│  · handshake LTI     │        │  · cola en Postgres    │
+│  · biblioteca/subida │        │  · ffmpeg ×2 por vídeo │
+│  · playlist A/B      │        │  · qpdf/gs para PDF    │
+└──────┬───────────────┘        └───────────┬────────────┘
+       └────────────┬───────────────────────┘
+                    ▼
+        ┌───────────────────────┐   ┌──────────────────────┐
+        │ PostgreSQL 16         │   │ ${DATA_ROOT}/media   │
+        └───────────────────────┘   └──────────────────────┘
 ```
 
-El script se niega a concluir cuando la muestra es corta o cuando el segundo
-candidato está demasiado cerca: un falso positivo aquí tiene consecuencias sobre
-una persona real. Detalle y limitaciones (recorte de bordes, colusión):
-[`docs/tasks/T13`](docs/tasks/backlog/T13-trazado-forense.md).
+**Stack**: Node 22 · Express 5 · PostgreSQL 16 · nginx · ffmpeg · `jose` para LTI ·
+PDF.js y Ghostscript para PDF. **Cero frameworks de frontend**: DOM directo.
+**Sin ORM**: `pg` a secas. **Sin cookies**: sesiones por token HMAC, porque todo esto
+vive dentro de un iframe de Moodle.
+
+Detalle completo —flujos, modelo de datos, la tabla de endpoints, el modelo de seguridad
+capa por capa— en [`docs/arquitectura.md`](docs/arquitectura.md).
 
 ---
 
@@ -418,99 +293,151 @@ una persona real. Detalle y limitaciones (recorte de bordes, colusión):
 
 | Documento | Para qué |
 |---|---|
-| **[`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md)** | **Punto de entrada** — qué está hecho, qué no, por dónde empezar |
-| [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Qué se construye, en qué orden, con qué criterio de éxito |
-| [`docs/tasks/`](docs/tasks/README.md) | Una ficha por tarea: alcance, pasos, pruebas, trampas |
-| [`docs/arquitectura.md`](docs/arquitectura.md) | Referencia técnica: flujos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | Las decisiones que costaron pensarlas, y cómo revertirlas |
-| [`docs/https-tunel.md`](docs/https-tunel.md) | HTTPS público y túneles de desarrollo local |
-| [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle |
-| [`infra/README.md`](infra/README.md) | Los tres entornos y el flujo de promoción; cada uno tiene su propio README |
+| 🧭 [`docs/README.md`](docs/README.md) | **Índice de la documentación, estado del proyecto y hoja de ruta** |
+| 🏗️ [`docs/arquitectura.md`](docs/arquitectura.md) | Flujos, modelo de datos, endpoints, modelo de seguridad |
+| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…017: por qué cada decisión y cómo revertirla |
+| 💻 [`docs/desarrollo.md`](docs/desarrollo.md) | **Guía para desarrolladores**: entorno, tests, convenciones, depuración |
+| 🎓 [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle, en seis pasos, con diagnóstico |
+| 🔐 [`docs/https-tunel.md`](docs/https-tunel.md) | HTTPS público y túneles para desarrollo local |
+| 🚀 [`infra/README.md`](infra/README.md) | Los tres entornos (local, test, prod) y el flujo de promoción |
 
 ---
 
-## Estructura
+## Preguntas frecuentes
 
-```
-src/
-├── config.js          configuración validada al arrancar
-├── app.js             montaje de Express y cabeceras de seguridad
-├── server.js          entrada de la aplicación web
-├── worker.js          entrada del transcodificador
-├── session.js         tokens de sesión (sin cookies: va en iframe)
-├── lti/               handshake LTI 1.3 sobre `jose`
-├── media/             marca A/B, playlists, transcodificación, PDF, firma de URLs
-├── queue/             leases, heartbeat y fencing de trabajos Postgres
-├── routes/            HTTP: materiales, carpetas, colecciones, vídeos, PDFs, HLS, salud
-├── services/          acceso a datos, autorización por recurso y revisiones
-└── ui/                biblioteca, player, visor de PDF y visor de colección
+<details>
+<summary><b>¿Hace falta instalar un plugin en Moodle?</b></summary>
 
-migrations/            SQL plano, aplicado solo al arrancar
-infra/{local,test,prod}/  un compose autosuficiente por entorno, con su README
-docker/                Dockerfile con dos destinos + bake
-tools/trace.mjs        trazado forense
-test/                  tests unitarios y de integración con Postgres
-```
+No. MoodleShield es una herramienta externa LTI 1.3: se da de alta desde la administración
+del sitio como cualquier otra. No se modifica el código de Moodle ni se instala nada en su
+servidor.
+</details>
 
-## Configuración
+<details>
+<summary><b>¿Cuánta CPU consume por alumno?</b></summary>
 
-Todas las variables están documentadas en [`.env.example`](.env.example). Las
-que más se tocan:
+Ninguna que dependa del alumno. `ffmpeg` se ejecuta exactamente **dos veces por vídeo**,
+al subirlo, y nunca más. Generar la playlist personalizada es reescribir texto y firmar
+URLs: microsegundos. Los segmentos los sirve nginx con `sendfile`, sin pasar por Node.
+</details>
 
-| Variable | Por defecto | Qué hace |
-|---|---|---|
-| `PUBLIC_URL` | `http://localhost:3000` | URL tal y como la ve Moodle |
-| `MARK_ALPHA` | `0.06` | Opacidad de la marca A/B. Súbela a `0.5` para verla en la demo |
-| `SEGMENT_SECONDS` | `4` | Duración de segmento; también es la resolución del patrón |
-| `MEDIA_DELIVERY` | `app` | `signed` en producción (los segmentos los sirve nginx) |
-| `TRANSCODE_CONCURRENCY` | `1` | Súbelo sólo con aceleración hardware |
-| `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
-| `TRANSCODE_HEARTBEAT_MS` | `20000` | Renovación del lease y sondeo de cancelación |
-| `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas anteriores |
-| `ADMIN_USERNAME` | — | Usuario único de la consola `/admin`; obligatorio en producción |
-| `ADMIN_PASSWORD_HASH` | — | Hash generado con `node scripts/hash-admin-password.mjs`; nunca contraseña en claro |
-| `ADMIN_SESSION_SECRET` | — | Secreto aleatorio de al menos 32 caracteres para la consola |
+<details>
+<summary><b>¿Cuánto disco ocupa?</b></summary>
 
-## Coste de CPU y de disco
+Aproximadamente **el doble del re-encode**, porque se guardan las dos variantes y se borra
+el original. Con CRF 21 a 1080p, el re-encode ronda 1–2 GB/hora por variante. Frente a un
+original de cámara a 8 Mbps (3,6 GB/h) suele ocupar **menos** que el original; frente a uno
+ya comprimido, ≈ 2×. Subir `OUTPUT_CRF` a 23 ahorra ~30 % con pérdida visual mínima.
+</details>
 
-**CPU.** ffmpeg se ejecuta exactamente **dos veces por vídeo** (una por
-variante), al subirlo, y nunca más: ni por alumno, ni por visionado. Reproducir
-es reescribir un fichero de texto (microsegundos) y servir estáticos con
-nginx. El único otro uso de ffmpeg es `tools/trace.mjs`, bajo demanda, si
-investigas una filtración.
+<details>
+<summary><b>¿Se nota la marca de agua?</b></summary>
 
-**Disco.** Cada vídeo ocupa ≈ **2 × su re-encode** (las dos variantes; el
-original se borra al terminar de procesar). El re-encode con los ajustes por
-defecto (CRF 21, 24 fps) ronda 1–2 GB/hora a 1080p según el contenido, así que:
+Con el valor por defecto (`MARK_ALPHA=0.06`) no, es imperceptible. Para verla en una demo,
+súbela a `0.5`. Lo que sí se ve —a propósito— es el overlay con el DNI del alumno: esa es
+la capa disuasoria. La marca A/B es la red de seguridad para quien sepa borrar el overlay
+del DOM.
+</details>
 
-| Original de 1 h (1080p) | Tamaño original | En disco (A+B) | Ratio |
-|---|---|---|---|
-| Cámara/OBS a 8 Mbps | 3,6 GB | ≈ 2–3 GB | **menos** que el original |
-| Ya comprimido a 3 Mbps | 1,35 GB | ≈ 2–3 GB | ≈ 2× |
+<details>
+<summary><b>¿Y si el alumno recorta los bordes del vídeo?</b></summary>
 
-Es decir: «original × 2» sólo si el original ya estaba muy comprimido; con
-material de cámara suele ocupar *menos* que el original. Pico transitorio
-durante el procesado: original + ambas variantes. Para reducir: sube
-`OUTPUT_CRF` a 23 (~30 % menos disco, pérdida visual mínima).
+Elimina las marcas y la traza deja de funcionar. Es una limitación real y conocida. La
+solución —marcas en varias posiciones del fotograma— está en la hoja de ruta. Igual pasa
+con la colusión: dos alumnos que comparen sus copias pueden fabricar una tercera que no
+señale a ninguno, y ahí la respuesta son los códigos de Tardos.
+</details>
 
-## Qué protege esto y qué no
+<details>
+<summary><b>¿Puedo usarlo con Canvas, Blackboard u otro LMS?</b></summary>
 
-Conviene tenerlo claro antes de vender la solución a nadie.
+En teoría sí: la integración es LTI 1.3 estándar, no hay nada específico de Moodle en el
+handshake. En la práctica sólo está probado contra Moodle, y detalles como el parámetro
+personalizado del DNI (`$Person.sourcedId`) o la normalización a minúsculas de `custom`
+habrá que ajustarlos. Si lo pruebas en otro LMS, abre una issue: interesa.
+</details>
 
-**Protege de**: reenviar el enlace de un vídeo; descargar un `.ts` suelto;
-descargarse una variante entera para escapar de la traza; grabar la pantalla y
-reenviar el fichero (queda el DNI a la vista y el patrón en los píxeles); borrar
-el overlay del DOM (el patrón sigue ahí).
+<details>
+<summary><b>¿Por qué el PDF no lleva marca forense?</b></summary>
 
-**No protege de**: recortar los bordes del vídeo, que elimina las marcas;
-colusión, dos alumnos comparando copias para fabricar una tercera que no señale
-a ninguno; ni de la captura en sí — esto no es DRM. El sistema no impide copiar:
-hace que la copia sea atribuible.
+Porque el documento autorizado tiene que viajar entero al navegador para que PDF.js lo
+renderice. Marcarlo de verdad exigiría generar y custodiar una copia distinta por alumno,
+con su coste y su gestión de datos personales. Lo que sí hay es control de acceso, overlay
+visible, normalización con Ghostscript (fuera JavaScript, acciones y adjuntos) y una
+descarga oficial sellada con la identidad del alumno. Una filtración de PDF **no es
+atribuible**, y este proyecto no va a decir lo contrario.
+</details>
 
-Las dos primeras limitaciones tienen solución conocida (marcas en varias
-posiciones, códigos de Tardos) y están en la lista de evolución del
-[plan](docs/plan-implementacion.md#10-después-del-mvp).
+<details>
+<summary><b>¿Está listo para producción?</b></summary>
+
+Depende de contra qué. El núcleo —LTI, pipeline A/B, playlists, entrega firmada,
+biblioteca, PDF, revisiones— está implementado y verificado, y sirve material a alumnos
+reales con control de acceso.
+
+Lo que **no** está listo es la promesa forense y parte del endurecimiento: la
+[auditoría de agosto de 2026](docs/auditoria-seguridad-contenido-y-plan.md) dejó 16
+hallazgos abiertos, incluidos el token de sesión viajando en la URL con TTL de 4 h
+encadenable (F-02), tokens en los logs (F-03) y el trazador no fiable (F-07).
+
+Traducción práctica: úsalo para poner orden y disuadir, no para sostener un expediente
+disciplinario contra un alumno. Y despliégalo detrás del reverse proxy con
+`MEDIA_DELIVERY=signed`, nunca con el perfil de `infra/local`.
+</details>
+
+<details>
+<summary><b>¿Qué licencia tiene? ¿Puedo usarlo en mi academia?</b></summary>
+
+AGPL-3.0-or-later. Puedes usarlo, modificarlo y desplegarlo, incluso comercialmente. La
+condición de la AGPL es que si ofreces el servicio modificado a través de la red, tienes
+que publicar tus cambios.
+</details>
+
+---
+
+## Contribuir
+
+Se agradece cualquier ayuda, y hay trabajo claramente delimitado esperando.
+
+1. **Qué falta y qué está roto**: [`docs/README.md`](docs/README.md#hoja-de-ruta) — cada
+   tarea tiene su ficha con alcance, criterios de aceptación y trampas conocidas.
+2. **Cómo montar el entorno y qué convenciones seguir**: [`docs/desarrollo.md`](docs/desarrollo.md).
+3. **Cómo abrir un PR**: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Buenos primeros temas: la matriz de navegadores del player, el algoritmo de lectura del
+trazado forense (T13, hoy incorrecto), y probar el conjunto contra un Moodle real.
+
+¿Encontraste un fallo de seguridad? No abras una issue pública: [`SECURITY.md`](SECURITY.md).
+
+## Autor y contacto
+
+Creado y mantenido por **José Antonio Matarán**.
+
+[![Web](https://img.shields.io/badge/web-mataran.dev-000000?logo=firefox&logoColor=white)](https://mataran.dev)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-jamataran-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/jamataran/)
+[![Email](https://img.shields.io/badge/email-jose%40mataran.dev-EA4335?logo=gmail&logoColor=white)](mailto:jose@mataran.dev)
+
+- **¿Dudas técnicas o un fallo?** Mejor una [issue](../../issues): así queda para el
+  siguiente que se lo pregunte.
+- **¿Quieres desplegarlo en tu centro, o necesitas algo que el proyecto no hace?** Escribe
+  por [LinkedIn](https://www.linkedin.com/in/jamataran/) o a
+  [jose@mataran.dev](mailto:jose@mataran.dev).
+
+Si el proyecto te sirve, dale una ⭐ — ayuda a que lo encuentre quien lo necesita.
 
 ## Licencia
 
-AGPL-3.0-or-later.
+[AGPL-3.0-or-later](LICENSE).
+
+---
+
+<div align="center">
+<sub>
+
+**Palabras clave** · marca de agua Moodle · watermarking forense · protección de vídeo
+e-learning · LTI 1.3 · HLS cifrado AES-128 · alternativa a VdoCipher autohospedada ·
+antipiratería en cursos online · trazado de filtraciones · DRM alternativo ·
+protección de PDF en Moodle · marca de agua por alumno · vídeo seguro autohospedado
+
+</sub>
+</div>

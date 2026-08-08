@@ -300,8 +300,15 @@ promueve reetiquetando esos mismos digest, sin reconstruirlos:
 ```text
 PR → main → sha-abc1234 → TEST
                 │
-                └── tag v1.2.0 → mismo digest → PRODUCCIÓN
+                └── botón "Release" → mismo digest como v1.2.0 → PRODUCCIÓN
 ```
+
+La promoción se lanza desde *Actions → «Release · promoción manual de test a
+producción» → Run workflow*, escribiendo `vX.Y.Z`. **No crees el tag a mano**:
+el commit que queda arriba de `main` tras cada despliegue es
+`deploy(test): sha-* [skip ci]`, y etiquetar ahí no dispara nada (el `[skip ci]`
+salta también los pushes de tag) además de apuntar a una imagen que no existe.
+El workflow deriva el commit correcto de lo que está desplegado en test.
 
 Los detalles operativos de cada entorno están en
 [`test/README.md`](test/README.md) y [`prod/README.md`](prod/README.md).
