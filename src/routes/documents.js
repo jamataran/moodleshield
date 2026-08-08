@@ -61,7 +61,7 @@ documentsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
       q: req.query.q,
       cursor: req.query.cursor,
       limit: req.query.limit,
-      includeArchived: req.query.archived === '1'
+      archivedOnly: req.query.archived === '1'
     })
     res.json({ documents: page.materials, nextCursor: page.nextCursor })
   } catch (err) {
@@ -395,7 +395,8 @@ documentsRouter.get('/:id/download', requireSession, async (req, res, next) => {
     // turno no hay ningún búfer del documento en memoria.
     const stamped = await stampPdfForViewer(() => readFile(file), {
       identity: req.session.identity,
-      name: req.session.name
+      name: req.session.name,
+      ip: req.ip
     })
 
     res.set({

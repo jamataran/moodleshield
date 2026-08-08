@@ -1,24 +1,23 @@
-import { createPdfView } from './pdf-component.js'
+import { createPdfView } from './pdf-component.js?v=viewer-ux-1'
+import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
+import { createViewerShell } from './viewer-shell.js?v=viewer-ux-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
-
-const statusEl = document.getElementById('status')
-const noticeEl = document.getElementById('notice')
-
-document.getElementById('title').textContent = boot.document.title
-document.getElementById('viewer').textContent = [boot.user.name, boot.user.identity]
-  .filter(Boolean)
-  .join(' · ')
-
-if (boot.notice) {
-  noticeEl.hidden = false
-  noticeEl.textContent = boot.notice
-}
-
-function setStatus (text, isError = false) {
-  statusEl.textContent = text
-  statusEl.style.color = isError ? 'var(--err)' : ''
-}
+const shell = createViewerShell({
+  boot,
+  title: boot.document.title,
+  kindLabel: 'Documento PDF'
+})
+shell.setDownload({
+  available: Boolean(boot.downloadUrl),
+  label: boot.downloadUrl ? 'Descargar PDF marcado' : 'PDF no descargable',
+  help: boot.downloadHelp ?? 'La copia descargada incluye su identidad, IP y el aviso legal en cada página.',
+  onDownload: () => downloadPdfCopy({
+    sessionToken: boot.sessionToken,
+    document: { title: boot.document.title, downloadUrl: boot.downloadUrl },
+    onStatus: shell.setStatus
+  })
+})
 
 try {
   await createPdfView({
@@ -31,7 +30,7 @@ try {
       downloadUrl: boot.downloadUrl
     },
     user: boot.user,
-    onStatus: setStatus,
+    onStatus: shell.setStatus,
     onAccessibility: ({ hasText }) => {
       document.getElementById('accessibility-note').hidden = hasText
     }

@@ -1,5 +1,7 @@
-import { createVideoView } from './video-component.js'
-import { createPdfView } from './pdf-component.js'
+import { createVideoView } from './video-component.js?v=viewer-ux-1'
+import { createPdfView } from './pdf-component.js?v=viewer-ux-1'
+import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-ux-1'
 
 /**
  * Visor de una colección: varios materiales dentro de UNA actividad Moodle.
@@ -12,26 +14,25 @@ import { createPdfView } from './pdf-component.js'
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 
 const contentEl = document.getElementById('content')
-const statusEl = document.getElementById('status')
 const positionEl = document.getElementById('position')
 const listEl = document.getElementById('item-list')
 const selectEl = document.getElementById('item-select')
 const prevBtn = document.getElementById('prev')
 const nextBtn = document.getElementById('next')
-
-document.getElementById('title').textContent = boot.collection.title
-document.getElementById('description').textContent = boot.collection.description ?? ''
-document.getElementById('viewer').textContent = [boot.user.name, boot.user.identity]
-  .filter(Boolean)
-  .join(' · ')
+const shell = createViewerShell({
+  boot,
+  title: boot.collection.title,
+  description: boot.collection.description,
+  kindLabel: 'Colección'
+})
 
 let items = boot.items ?? []
 let index = 0
 let view = null
+let viewGeneration = 0
 
 function setStatus (text, isError = false) {
-  statusEl.textContent = text
-  statusEl.style.color = isError ? 'var(--err)' : ''
+  shell.setStatus(text, isError)
 }
 
 function describe (item) {
@@ -98,12 +99,18 @@ function destroyView () {
 
 async function show (nextIndex, { focus = true } = {}) {
   if (nextIndex < 0 || nextIndex >= items.length) return
+  const generation = ++viewGeneration
   const item = items[nextIndex]
   index = nextIndex
   renderIndex()
   destroyView()
 
   if (!item.available) {
+    shell.setDownload({
+      available: false,
+      label: 'No disponible',
+      help: 'Este material no está disponible ahora mismo.'
+    })
     const message = document.createElement('p')
     message.className = 'notice error'
     message.textContent =
@@ -116,31 +123,63 @@ async function show (nextIndex, { focus = true } = {}) {
 
   setStatus('Cargando…')
   try {
+    let candidate
+    const currentStatus = (text, isError = false) => {
+      if (generation === viewGeneration) setStatus(text, isError)
+    }
     if (item.kind === 'video') {
-      view = createVideoView({
+      shell.setDownload({
+        available: false,
+        label: 'Vídeo no descargable',
+        help: VIDEO_DOWNLOAD_HELP
+      })
+      candidate = createVideoView({
         container: contentEl,
         sessionToken: boot.sessionToken,
         video: { id: item.id, title: item.title, playlistUrl: `/hls/${item.id}/index.m3u8` },
         user: boot.user,
-        onStatus: setStatus
+        onStatus: currentStatus
       })
     } else {
-      view = await createPdfView({
+      const pdfDocument = {
+        id: item.id,
+        title: item.title,
+        contentUrl: `/documents/${item.id}/content`,
+        downloadUrl: `/documents/${item.id}/download`
+      }
+      const downloadAvailable = item.downloadAvailable !== false
+      shell.setDownload({
+        available: downloadAvailable,
+        label: downloadAvailable ? 'Descargar PDF marcado' : 'PDF no descargable',
+        help: downloadAvailable
+          ? 'La copia descargada incluye su identidad, IP y el aviso legal en cada página.'
+          : 'Este PDF es demasiado grande para generar una copia marcada. Sigue disponible en el visor.',
+        onDownload: downloadAvailable
+          ? () => downloadPdfCopy({
+              sessionToken: boot.sessionToken,
+              document: pdfDocument,
+              onStatus: currentStatus
+            })
+          : null
+      })
+      candidate = await createPdfView({
         container: contentEl,
         sessionToken: boot.sessionToken,
-        document: {
-          id: item.id,
-          title: item.title,
-          contentUrl: `/documents/${item.id}/content`,
-          downloadUrl: `/documents/${item.id}/download`
-        },
+        document: pdfDocument,
         user: boot.user,
-        onStatus: setStatus
+        onStatus: currentStatus
       })
     }
+    if (generation !== viewGeneration) {
+      candidate?.destroy()
+      return
+    }
+    view = candidate
     if (focus) view?.focus?.()
   } catch (err) {
-    setStatus(`No se pudo abrir «${item.title}»: ${err?.message ?? 'error'}`, true)
+    if (generation === viewGeneration) {
+      setStatus(`No se pudo abrir «${item.title}»: ${err?.message ?? 'error'}`, true)
+    }
   }
 }
 
@@ -158,8 +197,7 @@ async function refreshManifest () {
     const manifest = await res.json()
     if (Array.isArray(manifest.items) && manifest.items.length > 0) {
       items = manifest.items
-      document.getElementById('title').textContent = manifest.title
-      document.getElementById('description').textContent = manifest.description ?? ''
+      shell.setTitle(manifest.title, manifest.description)
       renderIndex()
     }
   } catch { /* se sigue con lo que trajo el launch */ }

@@ -42,7 +42,7 @@ videosRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
       q: req.query.q,
       cursor: req.query.cursor,
       limit: req.query.limit,
-      includeArchived: req.query.archived === '1'
+      archivedOnly: req.query.archived === '1'
     })
     // `videos` se conserva por compatibilidad con el catálogo anterior a T20.
     res.json({ videos: page.materials, materials: page.materials, nextCursor: page.nextCursor })

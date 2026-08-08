@@ -39,7 +39,8 @@ materialsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
       q: req.query.q,
       cursor: req.query.cursor,
       limit: req.query.limit,
-      includeArchived: req.query.archived === '1'
+      onlyReady: req.query.ready === '1',
+      archivedOnly: req.query.archived === '1'
     })
     res.json(page)
   } catch (err) {

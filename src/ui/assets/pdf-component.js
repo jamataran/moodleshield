@@ -18,6 +18,20 @@ pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs'
 /** Cuántas páginas alrededor de la visible se mantienen dibujadas. */
 const RENDER_MARGIN = 2
 
+function visibleLegalNotice (user) {
+  const label = [user?.identity, user?.name].filter(Boolean).join(' · ') || 'usuario autorizado'
+  return `Copia personal de ${label}. Recurso protegido. Difusión no autorizada: ` +
+    'Ley de Propiedad Intelectual y art. 270 del Código Penal.'
+}
+
+function pageLegalMark (user) {
+  const mark = window.document.createElement('span')
+  mark.className = 'pdf-page-legal'
+  mark.setAttribute('aria-hidden', 'true')
+  mark.textContent = visibleLegalNotice(user)
+  return mark
+}
+
 export async function createPdfView ({
   container,
   sessionToken,
@@ -35,68 +49,25 @@ export async function createPdfView ({
   pages.setAttribute('role', 'document')
   pages.setAttribute('aria-label', doc.title ?? 'Documento')
 
-  // Descarga de la copia sellada. Se hace con fetch + blob y no con un enlace
-  // ?st=: así el token viaja en cabecera y no queda en los logs del proxy, y
-  // funciona igual dentro del iframe de Moodle.
-  let toolbar = null
-  if (doc.downloadUrl) {
-    toolbar = window.document.createElement('div')
-    toolbar.className = 'pdf-toolbar'
-    const hint = window.document.createElement('span')
-    hint.className = 'muted'
-    hint.textContent = 'La copia descargada lleva tu identidad en cada página.'
-    const download = window.document.createElement('button')
-    download.type = 'button'
-    download.textContent = 'Descargar PDF'
-    download.addEventListener('click', async () => {
-      download.disabled = true
-      onStatus?.('Preparando tu copia…')
-      try {
-        const res = await fetch(doc.downloadUrl, {
-          headers: { Authorization: `Bearer ${sessionToken}` }
-        })
-        if (!res.ok) {
-          let message = `HTTP ${res.status}`
-          try { message = (await res.json()).error ?? message } catch { /* sin cuerpo JSON */ }
-          throw new Error(message)
-        }
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const link = window.document.createElement('a')
-        link.href = url
-        link.download = `${String(doc.title ?? 'documento')
-          .replace(/[\\/:*?"<>|]/g, '')
-          .trim()
-          .slice(0, 80) || 'documento'}.pdf`
-        link.click()
-        setTimeout(() => URL.revokeObjectURL(url), 30_000)
-        onStatus?.('Descarga iniciada')
-      } catch (err) {
-        onStatus?.(`No se pudo descargar: ${err?.message ?? 'error'}`, true)
-      } finally {
-        download.disabled = false
-      }
-    })
-    toolbar.append(hint, download)
-  }
-
   const watermark = window.document.createElement('div')
-  watermark.id = 'watermark'
-  watermark.className = 'pdf-watermark'
+  watermark.className = 'watermark pdf-watermark'
   watermark.setAttribute('aria-hidden', 'true')
   watermark.textContent =
     [user?.identity, user?.name].filter(Boolean).join(' · ') || 'sesión verificada'
 
-  if (toolbar) root.append(toolbar)
   root.append(pages, watermark)
   container.replaceChildren(root)
 
+  const positions = [['8%', '10%'], ['61%', '14%'], ['13%', '70%'], ['55%', '66%']]
+  let position = 0
   const moveWatermark = () => {
-    watermark.style.left = `${8 + Math.random() * 55}%`
-    watermark.style.top = `${10 + Math.random() * 70}%`
+    const [left, top] = positions[position++ % positions.length]
+    watermark.style.left = left
+    watermark.style.top = top
   }
   moveWatermark()
-  const watermarkTimer = setInterval(moveWatermark, 7000)
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const watermarkTimer = reducedMotion ? null : setInterval(moveWatermark, 30_000)
 
   const status = (text, isError = false) => onStatus?.(text, isError)
   status('Cargando documento…')
@@ -139,6 +110,7 @@ export async function createPdfView ({
     page.className = 'pdf-page'
     page.dataset.page = String(number)
     page.setAttribute('aria-label', `Página ${number} de ${pdf.numPages}`)
+    page.append(pageLegalMark(user))
     pages.append(page)
     placeholders.push(page)
   }
@@ -161,7 +133,7 @@ export async function createPdfView ({
       const render = page.render({ canvasContext: context, viewport })
       await render.promise
       if (destroyed) return
-      holder.replaceChildren(canvas)
+      holder.replaceChildren(canvas, pageLegalMark(user))
       rendered.set(number, { page, canvas })
     } catch (err) {
       rendered.delete(number)
@@ -174,7 +146,7 @@ export async function createPdfView ({
     for (const [number, entry] of rendered) {
       if (Math.abs(number - currentPage) <= RENDER_MARGIN || entry === 'pending') continue
       const holder = placeholders[number - 1]
-      if (holder) holder.replaceChildren()
+      if (holder) holder.replaceChildren(pageLegalMark(user))
       entry.canvas.width = 0
       entry.canvas.height = 0
       entry.page.cleanup?.()

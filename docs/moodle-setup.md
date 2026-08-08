@@ -53,7 +53,13 @@ herramientas → **Configurar una herramienta manualmente***.
 | Keyset URL | `https://video.tudominio.com/lti/keys` (**ojo**: el nuestro, no el `certs.php` de Moodle) |
 | Initiate login URL | `https://video.tudominio.com/lti/login` |
 | Redirection URI(s) | `https://video.tudominio.com/lti/launch` |
-| Contenedor de lanzamiento | **Ventana embebida** |
+| Contenedor de lanzamiento | **Nueva ventana** |
+
+Los nuevos materiales también solicitan `window` en la respuesta de Deep
+Linking. De este modo el alumno dispone de toda la pantalla y ve **Volver al
+aula**. Si una actividad antigua o una política de Moodle la abre incrustada,
+el visor lo detecta y oculta ese botón automáticamente para no duplicar la
+navegación de Moodle.
 
 > **Redirection URI es donde se falla.** Tiene que ser exactamente esa, sin
 > barra final y sin ser la raíz del dominio. Si no coincide, el síntoma es un
@@ -139,6 +145,33 @@ actividad, ve el catálogo, sube su vídeo, se procesa correctamente… y el alu
 se encuentra con `no_video`. En los logs se distingue al instante — todos los
 launches son `LtiResourceLinkRequest` y no aparece ni un
 `LtiDeepLinkingRequest`.
+
+### Hacer más grande el selector (opcional)
+
+Moodle abre el selector de contenido en un modal grande, pero es Moodle —no la
+herramienta cargada dentro del iframe— quien decide sus dimensiones. El
+navegador impide que MoodleShield modifique esa ventana padre porque están en
+orígenes distintos.
+
+En temas basados en Boost se puede aprovechar mejor la pantalla desde
+*Administración del sitio → Apariencia → Temas → Boost → Ajustes avanzados →
+SCSS sin procesar*:
+
+```scss
+/* Sólo afecta al modal LTI de selección de contenido. */
+.modal-dialog.modal-lg:has(#contentitem-container) {
+  width: min(96vw, 1440px);
+  max-width: min(96vw, 1440px);
+}
+
+#contentitem-page-iframe {
+  height: min(80vh, 900px) !important;
+}
+```
+
+Después de guardar, purga las cachés del tema. `:has()` permite limitar el
+cambio al selector LTI; si la política de navegadores de la organización no lo
+admite, se puede aplicar sólo la regla del iframe.
 
 ## 4. Anotar client_id y deployment_id
 
@@ -237,7 +270,11 @@ curl -X POST https://video.tudominio.com/lti/platforms \
 ### Como alumno
 
 *Cambiar rol a… → Estudiante*, abrir la actividad. Debe aparecer el reproductor
-con el nombre de usuario flotando.
+sin scroll exterior, con el aviso legal y los datos de monitorización visibles.
+En un vídeo, comprobar los saltos de ±10 segundos y descargar una captura
+marcada. En un PDF, descargar una copia y comprobar el aviso vertical del margen
+derecho. Si la actividad se abre en una página o pestaña nueva aparece **Volver
+al aula**; dentro del iframe no aparece.
 
 ### Comprobar que la marca es distinta por alumno
 

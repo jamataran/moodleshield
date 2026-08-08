@@ -28,6 +28,7 @@ import {
   collectionContains,
   createCollection,
   duplicateCollection,
+  listCollectionPage,
   listCollections,
   loadItems,
   publicItem,
@@ -434,6 +435,55 @@ test('T20: el catálogo pagina con cursor sin repetir ni saltarse filas', async 
   assert.equal(third.nextCursor, null)
 })
 
+test('T20: el cursor de materiales conserva microsegundos entre páginas', async () => {
+  const ids = []
+  for (let i = 0; i < 5; i++) ids.push(await readyVideo({ title: `Microsegundo ${i}` }))
+
+  // `pg` entrega timestamptz como Date y Date sólo conserva milisegundos. Si el
+  // cursor no usa la proyección textual exacta, la segunda página queda detrás
+  // de .123000 y se pierden los tres materiales restantes.
+  for (const [i, id] of ids.entries()) {
+    await query(
+      `UPDATE video
+          SET created_at = '2026-08-07T10:30:00.123456Z'::timestamptz
+                           - ($2 * interval '1 microsecond')
+        WHERE id = $1`,
+      [id, i]
+    )
+  }
+
+  const seen = []
+  let cursor = null
+  do {
+    const page = await listMaterials({ ...scopeA, limit: 2, cursor })
+    seen.push(...page.materials.map((material) => material.id))
+    cursor = page.nextCursor
+  } while (cursor)
+
+  assert.deepEqual([...seen].sort(), [...ids].sort())
+  assert.equal(new Set(seen).size, ids.length)
+})
+
+test('T20: onlyReady excluye materiales todavía en cola', async () => {
+  const readyId = await readyVideo({ title: 'Publicado' })
+  const queuedId = randomUUID()
+  await createVideoAndJob({
+    id: queuedId,
+    title: 'Todavía en cola',
+    platformId: scopeA.platformId,
+    ownerSub: scopeA.ownerSub,
+    ownerName: scopeA.ownerSub,
+    folderId: null,
+    sourcePath: `/tmp/${randomUUID()}.mp4`,
+    sizeBytes: 1024,
+    originalFilename: 'pendiente.mp4'
+  })
+
+  const page = await listMaterials({ ...scopeA, onlyReady: true })
+  assert.deepEqual(page.materials.map((material) => material.id), [readyId])
+  assert.ok(!page.materials.some((material) => material.id === queuedId))
+})
+
 // ===========================================================================
 // T18 · Colecciones
 // ===========================================================================
@@ -561,6 +611,77 @@ test('T18: archivar oculta la colección del catálogo sin romper el launch', as
   assert.equal(row.id, collection.id)
   assert.ok(row.archived_at)
   assert.equal((await loadItems(collection.id)).length, 1)
+})
+
+test('T18: las colecciones paginan por created_at e id sin saltos ni duplicados', async () => {
+  const videoId = await readyVideo()
+  const created = []
+  for (let i = 0; i < 5; i++) {
+    created.push(await createCollection({
+      ...scopeA,
+      title: `Colección ${i}`,
+      items: [{ kind: 'video', id: videoId }]
+    }))
+  }
+
+  // Todas caen dentro del mismo milisegundo, pero conservan microsegundos
+  // distintos. Un cursor construido desde `Date` perdería cuatro filas.
+  for (const [i, collection] of created.entries()) {
+    await query(
+      `UPDATE content_collection
+          SET created_at = '2026-08-07T10:30:00.123456Z'::timestamptz
+                           - ($2 * interval '1 microsecond')
+        WHERE id = $1`,
+      [collection.id, i]
+    )
+  }
+
+  const expected = (await listCollections(scopeA)).map((collection) => collection.id)
+  const seen = []
+  let cursor = null
+  do {
+    const page = await listCollectionPage({ ...scopeA, limit: 2, cursor })
+    seen.push(...page.collections.map((collection) => collection.id))
+    cursor = page.nextCursor
+  } while (cursor)
+
+  assert.deepEqual(seen, expected)
+  assert.equal(new Set(seen).size, created.length)
+})
+
+test('T18: paginar conserva los filtros de carpeta, búsqueda y archivo', async () => {
+  const videoId = await readyVideo()
+  const algebra = await createFolder({ ...scopeA, name: 'Álgebra' })
+  const geometria = await createFolder({ ...scopeA, name: 'Geometría' })
+  const create = (title, folderId) => createCollection({
+    ...scopeA, title, folderId, items: [{ kind: 'video', id: videoId }]
+  })
+
+  await create('Álgebra básica', algebra.id)
+  await create('Álgebra avanzada', algebra.id)
+  await create('Geometría analítica', algebra.id)
+  await create('Álgebra en otra carpeta', geometria.id)
+  const archived = await create('Álgebra archivada', algebra.id)
+  await archiveCollection({ id: archived.id, ...scopeA })
+
+  const first = await listCollectionPage({
+    ...scopeA, folderId: algebra.id, q: 'álgebra', limit: 1
+  })
+  const second = await listCollectionPage({
+    ...scopeA, folderId: algebra.id, q: 'álgebra', limit: 1, cursor: first.nextCursor
+  })
+  assert.ok(first.nextCursor)
+  assert.equal(second.nextCursor, null)
+  assert.deepEqual(
+    [...first.collections, ...second.collections].map((collection) => collection.title).sort(),
+    ['Álgebra avanzada', 'Álgebra básica']
+  )
+
+  const archivedPage = await listCollectionPage({
+    ...scopeA, folderId: algebra.id, q: 'álgebra', archived: true, limit: 10
+  })
+  assert.deepEqual(archivedPage.collections.map((collection) => collection.id), [archived.id])
+  assert.equal(archivedPage.nextCursor, null)
 })
 
 test('T18: duplicar crea un UUID nuevo con las mismas referencias', async () => {

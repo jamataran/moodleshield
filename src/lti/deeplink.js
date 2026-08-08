@@ -27,7 +27,11 @@ export function contentItemFor (material) {
       resourcekind: material.kind,
       resourceid: material.id
     },
-    presentation: { documentTarget: 'iframe' }
+    // El material se consume habitualmente como página propia: hay más espacio
+    // para vídeo/PDF y el visor ofrece una vuelta explícita al aula. Los enlaces
+    // antiguos o las plataformas que fuercen iframe siguen soportados; el botón
+    // de vuelta se oculta al detectar ese contexto.
+    presentation: { documentTarget: 'window' }
   }
 
   if (material.kind === 'video') {

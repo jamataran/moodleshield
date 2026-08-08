@@ -28,7 +28,9 @@ export function likePattern (raw) {
 
 /** Cursor opaco `createdAt|id`: estable aunque se inserte material mientras se pagina. */
 export function encodeCursor (row) {
-  const createdAt = row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at
+  const createdAt = row.cursor_created_at ?? (
+    row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at
+  )
   return Buffer.from(`${createdAt}|${row.id}`).toString('base64url')
 }
 
@@ -75,6 +77,7 @@ function folderCondition (folderId, params, alias) {
  * @param {number} [opts.limit]
  * @param {boolean} [opts.onlyReady]
  * @param {boolean} [opts.includeArchived]
+ * @param {boolean} [opts.archivedOnly]
  */
 export async function listMaterials ({
   platformId,
@@ -85,7 +88,8 @@ export async function listMaterials ({
   cursor,
   limit,
   onlyReady = false,
-  includeArchived = false
+  includeArchived = false,
+  archivedOnly = false
 } = {}) {
   if (!platformId || !ownerSub) return { materials: [], nextCursor: null }
 
@@ -105,12 +109,16 @@ export async function listMaterials ({
     cursorClause = ` AND (created_at, id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`
   }
   const readyClause = onlyReady ? " AND status = 'ready'" : ''
-  const archivedClause = includeArchived ? '' : ' AND archived_at IS NULL'
+  const archivedClause = archivedOnly
+    ? ' AND archived_at IS NOT NULL'
+    : includeArchived ? '' : ' AND archived_at IS NULL'
 
   const branch = (table, alias, kindLiteral, extraColumns) => `
     SELECT id, '${kindLiteral}'::text AS kind, title, description, status, folder_id,
            ${extraColumns}, error, archived_at, active_revision_id,
-           created_at, updated_at
+           created_at, updated_at,
+           to_char(created_at AT TIME ZONE 'UTC',
+             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at
       FROM ${table} ${alias}
      WHERE platform_id = $1 AND owner_sub = $2
        ${folderCondition(folderId, params, alias)}

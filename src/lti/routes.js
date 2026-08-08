@@ -98,6 +98,11 @@ ltiRouter.post('/launch', async (req, res, next) => {
       state: req.body?.state
     })
 
+    // El launch contiene datos personales y tokens de sesión. Además de no
+    // guardarlo en cachés compartidas, evitamos que «Atrás» enseñe una sesión
+    // anterior en un ordenador compartido.
+    res.set('Cache-Control', 'private, no-store')
+
     // Identificador visible del alumno: el parámetro personalizado configurado
     // en Moodle (por defecto el username) y, si no llega, lis_person_sourcedid.
     const identity = context.custom?.[config.lti.identityCustomParam] ?? context.lisPersonSourcedId ?? null
@@ -164,9 +169,23 @@ ltiRouter.post('/launch', async (req, res, next) => {
     }
 
     if (resource.kind === 'collection') {
-      return renderCollectionLaunch({ res, context, platform, identity, resource })
+      return renderCollectionLaunch({
+        res,
+        context,
+        platform,
+        identity,
+        resource,
+        clientIp: displayIp(req.ip)
+      })
     }
-    return renderMaterialLaunch({ res, context, platform, identity, resource })
+    return renderMaterialLaunch({
+      res,
+      context,
+      platform,
+      identity,
+      resource,
+      clientIp: displayIp(req.ip)
+    })
   } catch (err) {
     next(err)
   }
@@ -190,7 +209,32 @@ export function resourceFromCustom (custom = {}) {
   return null
 }
 
-async function renderMaterialLaunch ({ res, context, platform, identity, resource }) {
+/**
+ * El return_url lo firma la plataforma dentro del id_token, pero aun así no
+ * dejamos que una URL de otro origen acabe convertida en un botón de salida.
+ * Así el visor nunca se convierte en un redirector abierto si una plataforma
+ * queda mal configurada.
+ */
+export function safeReturnUrl (returnUrl, issuer) {
+  if (typeof returnUrl !== 'string' || typeof issuer !== 'string') return null
+  try {
+    const target = new URL(returnUrl)
+    const platform = new URL(issuer)
+    if (!['http:', 'https:'].includes(target.protocol)) return null
+    if (target.origin !== platform.origin) return null
+    return target.toString()
+  } catch {
+    return null
+  }
+}
+
+/** Dirección legible sin el prefijo IPv4-mapeado que añade Node. */
+export function displayIp (ip) {
+  const value = String(ip ?? '').trim()
+  return value.startsWith('::ffff:') ? value.slice(7) : value
+}
+
+async function renderMaterialLaunch ({ res, context, platform, identity, resource, clientIp }) {
   const material = resource.kind === 'pdf'
     ? await getDocumentForPlatform(resource.id, platform.id)
     : await getVideoForPlatform(resource.id, platform.id)
@@ -225,6 +269,11 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
     : null
 
   if (resource.kind === 'pdf') {
+    const documentSize = material.size_bytes === null || material.size_bytes === undefined
+      ? Number.NaN
+      : Number(material.size_bytes)
+    const downloadAvailable = Number.isFinite(documentSize) &&
+      documentSize <= config.pdf.downloadMaxBytes
     return res.type('html').send(
       await renderPage('pdf.html', {
         bootstrap: {
@@ -234,9 +283,15 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
             title: material.title,
             pageCount: material.page_count
           },
-          user: { name: context.name, identity },
+          user: { name: context.name, identity, ip: clientIp },
+          returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
           contentUrl: `${config.publicUrl}/documents/${material.id}/content`,
-          downloadUrl: `${config.publicUrl}/documents/${material.id}/download`,
+          downloadUrl: downloadAvailable
+            ? `${config.publicUrl}/documents/${material.id}/download`
+            : null,
+          downloadHelp: downloadAvailable
+            ? null
+            : 'Este PDF es demasiado grande para generar una copia marcada. Sigue disponible en el visor.',
           notice: archivedNotice
         }
       })
@@ -248,7 +303,8 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
       bootstrap: {
         sessionToken,
         video: { id: material.id, title: material.title },
-        user: { name: context.name, identity },
+        user: { name: context.name, identity, ip: clientIp },
+        returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
         playlistUrl: `${config.publicUrl}/hls/${material.id}/index.m3u8`,
         notice: archivedNotice
       }
@@ -261,7 +317,7 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
  * se resuelve en cada launch, así que añadir, quitar o reordenar se refleja al
  * volver a abrir la actividad sin editarla en Moodle.
  */
-async function renderCollectionLaunch ({ res, context, platform, identity, resource }) {
+async function renderCollectionLaunch ({ res, context, platform, identity, resource, clientIp }) {
   const collection = await getCollectionForPlatform(resource.id, platform.id)
   if (!collection) {
     throw new LtiError('La colección asociada a esta actividad ya no existe', {
@@ -294,7 +350,8 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
           description: collection.description
         },
         items: items.map(publicItem),
-        user: { name: context.name, identity },
+        user: { name: context.name, identity, ip: clientIp },
+        returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
         manifestUrl: `${config.publicUrl}/collections/${collection.id}/manifest`
       }
     })

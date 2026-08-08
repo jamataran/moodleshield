@@ -22,9 +22,13 @@ const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const el = (id) => document.getElementById(id)
 const noticeEl = el('notice')
 const emptyEl = el('empty')
+const emptyTitleEl = el('empty-title')
+const emptyDescriptionEl = el('empty-description')
 const searchEl = el('search')
 const crumbsEl = el('crumbs')
+const resultsEl = document.querySelector('.catalog-results')
 const loadMoreEl = el('load-more')
+const loadMoreCollectionsEl = el('load-more-collections')
 
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.mkv', '.m4v', '.webm', '.avi']
 
@@ -40,29 +44,61 @@ const STATUS_LABEL = {
 }
 
 const state = {
-  /** 'browse' (carpeta abierta), 'search' (búsqueda global) o 'archived'. */
-  view: 'browse',
+  /** 'all', 'browse' (carpeta abierta), 'search' o 'archived'. */
+  view: 'all',
   folderId: null, // null = raíz de la biblioteca
   query: '',
+  contentFilter: 'all',
   folders: [],
   root: null,
   materials: [],
   collections: [],
   nextCursor: null,
+  nextCollectionCursor: null,
+  navigationHistory: [],
   /** Borrador del editor de colección. `editing` guarda updatedAt para el
    *  control optimista del PATCH. */
   collectionDraft: { editing: null, items: [] },
   pickerResults: [],
+  pickerNextCursor: null,
   /** Elemento al que devolver el foco tras una mutación. */
   focusAfterReload: null
 }
 
 el('subtitle').textContent = boot.mode === 'deeplink'
-  ? 'Elige qué verá el alumno al abrir la actividad'
+  ? 'Elige un recurso o una colección y volverás automáticamente a Moodle'
   : `Sesión de ${boot.user.name || 'profesor'}`
+el('catalog-title').textContent = boot.mode === 'deeplink' ? 'Seleccionar contenido' : 'Biblioteca'
+el('catalog-context').textContent = boot.mode === 'deeplink'
+  ? 'Configurando una actividad de Moodle'
+  : 'Biblioteca del profesor'
 el('dl-token').value = boot.deepLinkToken ?? ''
-el('manage-hint').hidden = boot.mode !== 'manage'
-el('deeplink-banner').hidden = boot.mode !== 'deeplink'
+
+el('deeplink-help').hidden = boot.mode !== 'deeplink'
+el('manage-help').hidden = boot.mode !== 'manage'
+el('help-heading').textContent = boot.mode === 'deeplink'
+  ? 'Seleccionar contenido para la actividad'
+  : 'Organizar contenido y enlazarlo desde Moodle'
+
+function openHelp () {
+  abrirDialogo(el('help-dialog'))
+  el('help-close').focus()
+}
+
+el('help-open').addEventListener('click', openHelp)
+el('help-close').addEventListener('click', () => el('help-dialog').close())
+
+// La explicación importante aparece una vez por sesión de pestaña y queda
+// accesible después desde «Ayuda». Así no consume espacio permanentemente.
+try {
+  const helpKey = `moodleshield-help-${boot.mode}`
+  if (!sessionStorage.getItem(helpKey)) {
+    sessionStorage.setItem(helpKey, '1')
+    queueMicrotask(openHelp)
+  }
+} catch {
+  // Un navegador que bloquee storage sigue teniendo el botón de Ayuda.
+}
 
 /**
  * Sustitutos de `prompt()` y `confirm()`.
@@ -125,11 +161,25 @@ function askConfirm ({ heading, message, okLabel = 'Continuar' }) {
   })
 }
 
+let noticeTimer = null
 function notify (message, kind = 'ok') {
+  clearTimeout(noticeTimer)
   noticeEl.hidden = false
   noticeEl.className = `notice ${kind}`
   noticeEl.textContent = message
-  if (kind === 'ok') setTimeout(() => { noticeEl.hidden = true }, 6000)
+  if (kind === 'ok') noticeTimer = setTimeout(() => { noticeEl.hidden = true }, 6000)
+}
+
+/** Mensajes que deben permanecer en la capa superior del diálogo modal. */
+function dialogStatus (id, message = '', { error = false, focus = false } = {}) {
+  const node = el(id)
+  node.textContent = message
+  node.hidden = !message
+  node.classList.toggle('error-text', error)
+  if (message && focus) {
+    node.tabIndex = -1
+    node.focus()
+  }
 }
 
 function api (url, options = {}) {
@@ -170,6 +220,18 @@ function childrenOf (parentId) {
   return state.folders.filter((f) => (f.parentId ?? null) === (parentId ?? null))
 }
 
+function flattenedFolders () {
+  const out = []
+  const walk = (parentId) => {
+    for (const child of childrenOf(parentId)) {
+      out.push(child)
+      walk(child.id)
+    }
+  }
+  walk(null)
+  return out
+}
+
 /** Ancestros de la carpeta, de la raíz hacia abajo, incluida ella misma. */
 function pathOf (id) {
   const path = []
@@ -181,9 +243,9 @@ function pathOf (id) {
   return path
 }
 
-function pathName (id) {
+function pathName (id, rootLabel = 'Sin carpeta') {
   const path = pathOf(id)
-  return path.length === 0 ? 'Biblioteca' : path.map((f) => f.name).join(' / ')
+  return path.length === 0 ? rootLabel : path.map((f) => f.name).join(' / ')
 }
 
 function descendantsOf (id) {
@@ -229,11 +291,19 @@ function folderOptions ({ exclude = null, rootLabel = 'Biblioteca (raíz)' } = {
 // ---------------------------------------------------------------------------
 
 function renderCrumbs () {
-  crumbsEl.hidden = state.view !== 'browse'
-  if (crumbsEl.hidden) return
+  let parts
+  if (state.view === 'search') {
+    parts = [{ name: `Resultados para «${state.query}»` }]
+  } else if (state.view === 'archived') {
+    parts = [{ name: 'Archivados' }]
+  } else if (state.view === 'all') {
+    parts = [{ name: 'Todo el contenido' }]
+  } else if (state.folderId === null) {
+    parts = [{ id: 'all', name: 'Todo el contenido' }, { name: 'Sin carpeta' }]
+  } else {
+    parts = [{ id: 'all', name: 'Todo el contenido' }, ...pathOf(state.folderId)]
+  }
 
-  const path = pathOf(state.folderId)
-  const parts = [{ id: null, name: 'Biblioteca' }, ...path]
   crumbsEl.replaceChildren(...parts.flatMap((part, i) => {
     const last = i === parts.length - 1
     if (last) {
@@ -247,23 +317,65 @@ function renderCrumbs () {
     button.type = 'button'
     button.className = 'crumb linklike'
     button.textContent = part.name
-    button.addEventListener('click', () => openFolder(part.id))
+    button.addEventListener('click', () => {
+      if (part.id === 'all') openAll()
+      else openFolder(part.id)
+    })
     const sep = document.createElement('span')
     sep.className = 'crumb-sep'
     sep.setAttribute('aria-hidden', 'true')
     sep.textContent = '›'
     return [button, sep]
   }))
+
+  el('back').disabled = state.navigationHistory.length === 0 && state.view === 'all'
+}
+
+function locationSnapshot () {
+  return { view: state.view, folderId: state.folderId, query: state.query }
+}
+
+// Buscar y ver archivados son vistas globales: crear o subir desde ellas no
+// debe reutilizar silenciosamente la carpeta que quedó abierta anteriormente.
+function destinationFolderId () {
+  return state.view === 'browse' ? state.folderId : null
+}
+
+function navigate ({ view, folderId = null, query = '' }, { remember = true } = {}) {
+  reloadGeneration++
+  const current = locationSnapshot()
+  if (remember && (current.view !== view || current.folderId !== folderId || current.query !== query)) {
+    state.navigationHistory.push(current)
+    if (state.navigationHistory.length > 30) state.navigationHistory.shift()
+  }
+  state.view = view
+  state.folderId = folderId
+  state.query = query
+  searchEl.value = view === 'search' ? query : ''
+  state.nextCursor = null
+  state.nextCollectionCursor = null
+  resultsEl.scrollTop = 0
+  renderCrumbs()
+  void load()
+}
+
+function openAll () {
+  navigate({ view: 'all' })
 }
 
 function openFolder (id) {
-  state.view = 'browse'
-  state.folderId = id
-  state.query = ''
-  searchEl.value = ''
-  state.nextCursor = null
-  renderCrumbs()
-  void load()
+  navigate({ view: 'browse', folderId: id ?? null })
+}
+
+function goBack () {
+  const previous = state.navigationHistory.pop()
+  if (previous) {
+    navigate(previous, { remember: false })
+  } else if (state.view === 'browse' && state.folderId) {
+    navigate({ view: 'browse', folderId: folderById(state.folderId)?.parentId ?? null }, { remember: false })
+  } else {
+    navigate({ view: 'all' }, { remember: false })
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +409,23 @@ function actionMenu (label, actions) {
       if (other !== menu) other.open = false
     }
   })
+  menu.addEventListener('toggle', () => {
+    list.classList.toggle('floating-menu', menu.open)
+    if (!menu.open) return
+    requestAnimationFrame(() => {
+      if (!menu.open) return
+      const anchor = summary.getBoundingClientRect()
+      const popup = list.getBoundingClientRect()
+      const gap = 4
+      const left = Math.max(gap, Math.min(anchor.right - popup.width, window.innerWidth - popup.width - gap))
+      const roomBelow = window.innerHeight - anchor.bottom
+      const top = roomBelow >= popup.height + gap
+        ? anchor.bottom + gap
+        : Math.max(gap, anchor.top - popup.height - gap)
+      list.style.left = `${left}px`
+      list.style.top = `${top}px`
+    })
+  })
   return menu
 }
 
@@ -306,35 +435,51 @@ document.addEventListener('click', (event) => {
   }
 })
 
+// Un menú flotante no debe quedar separado de su tarjeta al desplazarse.
+document.addEventListener('scroll', () => {
+  for (const menu of document.querySelectorAll('details.menu[open]')) menu.open = false
+}, true)
+window.addEventListener('resize', () => {
+  for (const menu of document.querySelectorAll('details.menu[open]')) menu.open = false
+})
+
 // ---------------------------------------------------------------------------
 // Carpetas
 // ---------------------------------------------------------------------------
 
 function folderCard (folder) {
   const card = document.createElement('article')
-  card.className = 'folder-card'
+  card.className = `folder-card${state.view === 'browse' && state.folderId === folder.id ? ' current' : ''}`
+  card.setAttribute('role', 'listitem')
+  card.style.setProperty('--folder-depth', String(Math.max(0, pathOf(folder.id).length - 1)))
 
   const open = document.createElement('button')
   open.type = 'button'
   open.className = 'folder-open'
-  const icon = document.createElement('span')
-  icon.className = 'folder-icon'
-  icon.setAttribute('aria-hidden', 'true')
-  icon.textContent = '📁'
+  open.title = pathName(folder.id)
+  open.setAttribute('aria-label', `${pathName(folder.id)}; ${folder.materialCount} elemento${folder.materialCount === 1 ? '' : 's'}`)
+  if (state.view === 'browse' && state.folderId === folder.id) open.setAttribute('aria-current', 'page')
   const label = document.createElement('span')
   label.className = 'folder-label'
+  const text = document.createElement('span')
+  text.className = 'folder-text'
   const name = document.createElement('span')
   name.className = 'folder-name'
   name.textContent = folder.name
+  text.append(name)
+  if (state.view === 'search') {
+    const parentPath = pathOf(folder.id).slice(0, -1).map((part) => part.name).join(' / ') || 'Biblioteca'
+    const where = document.createElement('span')
+    where.className = 'folder-path'
+    where.textContent = parentPath
+    text.append(where)
+  }
   const counts = document.createElement('span')
-  counts.className = 'muted'
-  const bits = []
-  if (folder.folderCount) bits.push(`${folder.folderCount} carpeta${folder.folderCount === 1 ? '' : 's'}`)
-  bits.push(`${folder.materialCount} elemento${folder.materialCount === 1 ? '' : 's'}`)
-  if (state.view === 'search') bits.push(`en ${pathName(folder.parentId)}`)
-  counts.textContent = bits.join(' · ')
-  label.append(name, counts)
-  open.append(icon, label)
+  counts.className = 'folder-count'
+  counts.textContent = String(folder.materialCount)
+  counts.setAttribute('aria-label', `${folder.materialCount} elemento${folder.materialCount === 1 ? '' : 's'}`)
+  label.append(text, counts)
+  open.append(label)
   open.addEventListener('click', () => openFolder(folder.id))
 
   const menu = actionMenu(`Acciones de la carpeta ${folder.name}`, [
@@ -348,16 +493,17 @@ function folderCard (folder) {
 }
 
 async function createFolder () {
+  const parentId = destinationFolderId()
   const name = await askText({
     heading: 'Nueva carpeta',
-    label: `Nombre de la carpeta (se creará en «${pathName(state.folderId)}»)`,
+    label: `Nombre de la carpeta (se creará en «${pathName(parentId, 'Biblioteca')}»)`,
     okLabel: 'Crear'
   })
   if (name === null) return
   try {
     await apiJson('/folders', {
       method: 'POST',
-      body: JSON.stringify({ name, parentId: state.folderId })
+      body: JSON.stringify({ name, parentId })
     })
     notify('Carpeta creada')
     state.focusAfterReload = 'new-folder'
@@ -386,7 +532,7 @@ async function renameFolder (folder) {
 
 async function deleteFolder (folder) {
   const inside = folder.materialCount + folder.folderCount
-  const parentName = pathName(folder.parentId)
+  const parentName = pathName(folder.parentId, 'Biblioteca')
   const ok = await askConfirm({
     heading: `Eliminar «${folder.name}»`,
     message: inside > 0
@@ -399,6 +545,7 @@ async function deleteFolder (folder) {
     const result = await apiJson(`/folders/${folder.id}`, { method: 'DELETE' })
     notify(`Carpeta eliminada; su contenido está en «${parentName}»`)
     if (state.folderId === folder.id) state.folderId = result?.parentId ?? null
+    state.navigationHistory = state.navigationHistory.filter((location) => location.folderId !== folder.id)
     state.focusAfterReload = 'new-folder'
     await reload()
   } catch (err) {
@@ -456,6 +603,11 @@ function openMove ({ type, item }) {
 // Tarjetas de material
 // ---------------------------------------------------------------------------
 
+// Las tarjetas se reconstruyen al cambiar de pestaña o refrescar estados, pero
+// sus pósteres no: conservar las URL evita descargar decenas de imágenes cada
+// cinco segundos mientras se procesa un material.
+const posterCache = new Map()
+
 function thumbnail (item) {
   const img = document.createElement('img')
   img.src = item.kind === 'pdf' ? '/assets/pdf-placeholder.svg' : '/assets/poster-placeholder.svg'
@@ -465,19 +617,37 @@ function thumbnail (item) {
   const path = item.kind === 'pdf'
     ? `/documents/${item.id}/poster.jpg`
     : `/videos/${item.id}/poster.jpg`
-  api(path)
-    .then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return res.blob()
-    })
-    .then((blob) => {
-      const url = URL.createObjectURL(blob)
-      img.src = url
-      img.addEventListener('load', () => URL.revokeObjectURL(url), { once: true })
-    })
+  const key = `${item.kind}:${item.id}:${item.updatedAt ?? 'ready'}`
+  let cached = posterCache.get(key)
+  if (!cached) {
+    cached = api(path)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.blob()
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        posterCache.set(key, url)
+        return url
+      })
+      .catch((err) => {
+        posterCache.delete(key)
+        throw err
+      })
+    posterCache.set(key, cached)
+  }
+  Promise.resolve(cached)
+    .then((url) => { if (img.isConnected) img.src = url })
     .catch(() => { /* se queda el marcador */ })
   return img
 }
+
+window.addEventListener('pagehide', () => {
+  for (const cached of posterCache.values()) {
+    if (typeof cached === 'string') URL.revokeObjectURL(cached)
+  }
+  posterCache.clear()
+})
 
 function materialCard (item) {
   const card = document.createElement('article')
@@ -592,6 +762,13 @@ async function archiveMaterial (item) {
 function collectionCard (collection) {
   const card = document.createElement('article')
   card.className = 'card collection-card'
+  card.dataset.id = collection.id
+  card.dataset.kind = 'collection'
+
+  const visual = document.createElement('div')
+  visual.className = 'collection-visual'
+  visual.setAttribute('aria-hidden', 'true')
+  visual.textContent = '▤'
 
   const body = document.createElement('div')
   body.className = 'body'
@@ -690,7 +867,7 @@ function collectionCard (collection) {
     ]))
   }
 
-  card.append(body, actions)
+  card.append(visual, body, actions)
   return card
 }
 
@@ -773,11 +950,15 @@ async function deleteMaterial (item) {
 // ---------------------------------------------------------------------------
 
 let revisioning = null
+let revisionXhr = null
 
 async function openRevisions (item) {
   revisioning = item
   el('revisions-heading').textContent = `Versiones de «${item.title}»`
   el('revision-file').accept = item.kind === 'pdf' ? '.pdf,application/pdf' : VIDEO_EXTENSIONS.join(',')
+  el('revision-upload').reset()
+  el('revision-submit').disabled = false
+  dialogStatus('revision-status')
   abrirDialogo(el('revisions-dialog'))
   await renderRevisions()
 }
@@ -817,11 +998,11 @@ async function renderRevisions () {
               `/materials/${item.kind}/${item.id}/revisions/${revision.id}/activate`,
               { method: 'POST' }
             )
-            notify(`Publicada la revisión ${revision.number}`)
+            dialogStatus('revision-status', `Publicada la revisión ${revision.number}.`)
             await renderRevisions()
             await reload()
           } catch (err) {
-            notify(err.message, 'error')
+            dialogStatus('revision-status', err.message, { error: true, focus: true })
           }
         })
         li.append(activate)
@@ -837,10 +1018,10 @@ async function renderRevisions () {
               `/materials/${item.kind}/${item.id}/revisions/${revision.id}/discard`,
               { method: 'POST' }
             )
-            notify('Revisión descartada')
+            dialogStatus('revision-status', 'Revisión descartada.')
             await renderRevisions()
           } catch (err) {
-            notify(err.message, 'error')
+            dialogStatus('revision-status', err.message, { error: true, focus: true })
           }
         })
         li.append(discard)
@@ -849,14 +1030,18 @@ async function renderRevisions () {
       return li
     }))
   } catch (err) {
-    notify(err.message, 'error')
+    dialogStatus('revision-status', err.message, { error: true, focus: true })
   }
 }
 
 el('revision-upload').addEventListener('submit', (event) => {
   event.preventDefault()
   const file = el('revision-file').files?.[0]
-  if (!file) return notify('Selecciona un fichero', 'error')
+  if (!file) {
+    dialogStatus('revision-status', 'Selecciona un fichero', { error: true })
+    el('revision-file').focus()
+    return
+  }
   const item = revisioning
   const path = item.kind === 'pdf'
     ? `/documents/${item.id}/revisions`
@@ -865,32 +1050,51 @@ el('revision-upload').addEventListener('submit', (event) => {
   const data = new FormData()
   data.append('file', file)
   const xhr = new XMLHttpRequest()
+  revisionXhr = xhr
   xhr.open('POST', path)
   xhr.setRequestHeader('Authorization', `Bearer ${boot.sessionToken}`)
+  el('revision-submit').disabled = true
+  dialogStatus('revision-status', 'Preparando subida…')
   xhr.upload.addEventListener('progress', (e) => {
     if (e.lengthComputable) {
-      el('revision-status').textContent = `${Math.round((e.loaded / e.total) * 100)}%`
+      dialogStatus('revision-status', `Subiendo… ${Math.round((e.loaded / e.total) * 100)}%`)
     }
   })
   xhr.addEventListener('load', async () => {
-    el('revision-status').textContent = ''
+    revisionXhr = null
+    el('revision-submit').disabled = false
     if (xhr.status === 202) {
       // La versión anterior sigue publicándose mientras ésta se procesa.
-      notify('Nueva versión en cola. La versión publicada no cambia hasta que esté lista.')
+      dialogStatus('revision-status', 'Nueva versión en cola. La versión publicada sigue activa hasta que ésta esté lista.')
       el('revision-upload').reset()
       await renderRevisions()
       await reload()
     } else {
       let message = `HTTP ${xhr.status}`
       try { message = JSON.parse(xhr.responseText).error ?? message } catch { /* sin JSON */ }
-      notify(message, 'error')
+      dialogStatus('revision-status', message, { error: true, focus: true })
     }
   })
-  xhr.addEventListener('error', () => notify('Fallo de red durante la subida', 'error'))
+  xhr.addEventListener('error', () => {
+    revisionXhr = null
+    el('revision-submit').disabled = false
+    dialogStatus('revision-status', 'Fallo de red durante la subida', { error: true, focus: true })
+  })
   xhr.send(data)
 })
 
-el('revisions-close').addEventListener('click', () => el('revisions-dialog').close())
+el('revisions-close').addEventListener('click', () => {
+  if (revisionXhr) {
+    dialogStatus('revision-status', 'Espera a que termine la subida antes de cerrar.', { error: true, focus: true })
+    return
+  }
+  el('revisions-dialog').close()
+})
+el('revisions-dialog').addEventListener('cancel', (event) => {
+  if (!revisionXhr) return
+  event.preventDefault()
+  dialogStatus('revision-status', 'Espera a que termine la subida antes de cerrar.', { error: true, focus: true })
+})
 
 // ---------------------------------------------------------------------------
 // Subida
@@ -899,22 +1103,30 @@ el('revisions-close').addEventListener('click', () => el('revisions-dialog').clo
 let uploadXhr = null
 
 function openUpload () {
+  const folderId = destinationFolderId()
   el('upload-title').value = ''
   el('upload-file').value = ''
-  el('upload-status').textContent = ''
-  el('upload-target').textContent = `Se guardará en «${pathName(state.folderId)}».`
+  el('upload-btn').disabled = false
+  dialogStatus('upload-status')
+  el('upload-target').textContent = `Se guardará en «${pathName(folderId)}».`
+  el('upload-dialog').dataset.folderId = folderId ?? ''
   abrirDialogo(el('upload-dialog'))
   el('upload-title').focus()
 }
 
 el('upload-btn').addEventListener('click', () => {
   const file = el('upload-file').files?.[0]
-  if (!file || file.size === 0) return notify('Selecciona un fichero', 'error')
+  if (!file || file.size === 0) {
+    dialogStatus('upload-status', 'Selecciona un fichero', { error: true })
+    el('upload-file').focus()
+    return
+  }
 
   const extension = `.${file.name.split('.').pop()?.toLowerCase() ?? ''}`
   const isVideo = VIDEO_EXTENSIONS.includes(extension)
   if (!isVideo && extension !== '.pdf') {
-    return notify(`No se admiten ficheros ${extension}. Sube un vídeo o un PDF.`, 'error')
+    dialogStatus('upload-status', `No se admiten ficheros ${extension}. Sube un vídeo o un PDF.`, { error: true, focus: true })
+    return
   }
 
   // Los campos van antes que el fichero: así el servidor los conoce cuando
@@ -922,7 +1134,8 @@ el('upload-btn').addEventListener('click', () => {
   const data = new FormData()
   const title = el('upload-title').value.trim()
   if (title) data.append('title', title)
-  if (state.folderId) data.append('folderId', state.folderId)
+  const folderId = el('upload-dialog').dataset.folderId
+  if (folderId) data.append('folderId', folderId)
   data.append('file', file)
 
   // XHR y no fetch: es la única forma de tener barra de progreso en la subida.
@@ -934,7 +1147,7 @@ el('upload-btn').addEventListener('click', () => {
   el('upload-btn').disabled = true
   xhr.upload.addEventListener('progress', (e) => {
     if (!e.lengthComputable) return
-    el('upload-status').textContent = `${Math.round((e.loaded / e.total) * 100)}%`
+    dialogStatus('upload-status', `Subiendo… ${Math.round((e.loaded / e.total) * 100)}%`)
   })
   xhr.addEventListener('load', async () => {
     el('upload-btn').disabled = false
@@ -948,15 +1161,13 @@ el('upload-btn').addEventListener('click', () => {
     } else {
       let message = `HTTP ${xhr.status}`
       try { message = JSON.parse(xhr.responseText).error ?? message } catch { /* sin JSON */ }
-      el('upload-status').textContent = ''
-      notify(`Error subiendo el material: ${message}`, 'error')
+      dialogStatus('upload-status', `Error subiendo el material: ${message}`, { error: true, focus: true })
     }
   })
   xhr.addEventListener('error', () => {
     el('upload-btn').disabled = false
-    el('upload-status').textContent = ''
     uploadXhr = null
-    notify('Fallo de red durante la subida', 'error')
+    dialogStatus('upload-status', 'Fallo de red durante la subida', { error: true, focus: true })
   })
   xhr.send(data)
 })
@@ -971,23 +1182,45 @@ el('upload-cancel').addEventListener('click', () => {
   el('upload-dialog').close()
 })
 
+el('upload-dialog').addEventListener('cancel', (event) => {
+  if (!uploadXhr) return
+  event.preventDefault()
+  dialogStatus('upload-status', 'La subida sigue en curso. Pulsa «Cancelar» para detenerla.', { error: true, focus: true })
+})
+
 el('upload-open').addEventListener('click', openUpload)
 
 // ---------------------------------------------------------------------------
 // Editor de colección
 // ---------------------------------------------------------------------------
 
+function configureCollectionActions () {
+  const save = el('collection-save')
+  const saveInsert = el('collection-save-insert')
+  const isDeepLink = boot.mode === 'deeplink'
+  saveInsert.hidden = !isDeepLink
+  save.classList.toggle('primary', !isDeepLink)
+  saveInsert.classList.toggle('primary', isDeepLink)
+  saveInsert.textContent = 'Guardar e insertar en Moodle'
+}
+
+let collectionEditorGeneration = 0
+
 function openNewCollection () {
+  collectionEditorGeneration++
+  clearTimeout(pickerTimer)
   state.collectionDraft = { editing: null, items: [] }
   el('collection-heading').textContent = 'Nueva colección'
   el('collection-title').value = ''
   el('collection-description').value = ''
   el('collection-folder').replaceChildren(...folderOptions({ rootLabel: 'Biblioteca' }))
-  el('collection-folder').value = state.folderId ?? ''
+  el('collection-folder').value = destinationFolderId() ?? ''
   el('collection-save').textContent = 'Guardar'
-  el('collection-save-insert').hidden = boot.mode !== 'deeplink'
+  configureCollectionActions()
   el('collection-search').value = ''
   state.pickerResults = []
+  state.pickerNextCursor = null
+  dialogStatus('collection-error')
   renderCollectionItems()
   void loadPicker()
   abrirDialogo(el('collection-dialog'))
@@ -1002,8 +1235,11 @@ function openNewCollection () {
  * sobrescribir el trabajo del otro en silencio.
  */
 async function openCollectionEditor (collection) {
+  const generation = ++collectionEditorGeneration
   try {
+    clearTimeout(pickerTimer)
     const { collection: full } = await apiJson(`/collections/${collection.id}`)
+    if (generation !== collectionEditorGeneration) return
     state.collectionDraft = {
       editing: { id: full.id, updatedAt: full.updatedAt, title: full.title },
       items: full.items.map((item) => ({ kind: item.kind, id: item.id, title: item.title }))
@@ -1014,14 +1250,17 @@ async function openCollectionEditor (collection) {
     el('collection-folder').replaceChildren(...folderOptions({ rootLabel: 'Biblioteca' }))
     el('collection-folder').value = full.folderId ?? ''
     el('collection-save').textContent = 'Guardar cambios'
-    el('collection-save-insert').hidden = boot.mode !== 'deeplink'
+    configureCollectionActions()
     el('collection-search').value = ''
     state.pickerResults = []
+    state.pickerNextCursor = null
+    dialogStatus('collection-error')
     renderCollectionItems()
     void loadPicker()
     abrirDialogo(el('collection-dialog'))
     el('collection-title').focus()
   } catch (err) {
+    if (generation !== collectionEditorGeneration) return
     notify(err.message, 'error')
   }
 }
@@ -1074,18 +1313,33 @@ function renderCollectionItems () {
   }))
 }
 
-async function loadPicker () {
-  const params = new URLSearchParams({ limit: '60' })
+let pickerGeneration = 0
+
+async function loadPicker ({ append = false } = {}) {
+  const cursor = append ? state.pickerNextCursor : null
+  if (append && !cursor) return
+  const generation = ++pickerGeneration
+  const params = new URLSearchParams({ limit: '60', ready: '1' })
   const query = el('collection-search').value.trim()
   if (query) params.set('q', query)
+  if (cursor) params.set('cursor', cursor)
+  el('collection-picker-more').disabled = true
+  dialogStatus('collection-error')
   try {
     const data = await apiJson(`/materials?${params}`)
+    if (generation !== pickerGeneration) return
     // Sólo lo insertable: listo, con revisión publicada y sin archivar.
-    state.pickerResults = data.materials.filter((m) =>
+    const ready = data.materials.filter((m) =>
       m.status === 'ready' && !m.archived && m.hasActiveRevision)
+    const combined = append ? [...state.pickerResults, ...ready] : ready
+    state.pickerResults = [...new Map(combined.map((item) => [`${item.kind}:${item.id}`, item])).values()]
+    state.pickerNextCursor = data.nextCursor
     renderPicker()
   } catch (err) {
-    notify(err.message, 'error')
+    if (generation !== pickerGeneration) return
+    dialogStatus('collection-error', `No se pudieron cargar los materiales: ${err.message}`, { error: true, focus: true })
+  } finally {
+    if (generation === pickerGeneration) el('collection-picker-more').disabled = false
   }
 }
 
@@ -1118,13 +1372,18 @@ function renderPicker () {
     li.append(label, toggle)
     return li
   }))
+  el('collection-picker-more').hidden = !state.pickerNextCursor
 }
 
 let pickerTimer = null
 el('collection-search').addEventListener('input', () => {
   clearTimeout(pickerTimer)
-  pickerTimer = setTimeout(() => { void loadPicker() }, 300)
+  pickerTimer = setTimeout(() => {
+    state.pickerNextCursor = null
+    void loadPicker()
+  }, 300)
 })
+el('collection-picker-more').addEventListener('click', () => { void loadPicker({ append: true }) })
 
 /**
  * Guarda primero y sólo después envía a Moodle. Si el segundo paso falla, la
@@ -1133,8 +1392,20 @@ el('collection-search').addEventListener('input', () => {
  */
 async function saveCollection ({ insert = false } = {}) {
   const title = el('collection-title').value.trim()
-  if (!title) return notify('Ponle un título a la colección', 'error')
-  if (state.collectionDraft.items.length === 0) return notify('Añade al menos un material', 'error')
+  if (!title) {
+    dialogStatus('collection-error', 'Ponle un título a la colección.', { error: true })
+    el('collection-title').focus()
+    return
+  }
+  if (state.collectionDraft.items.length === 0) {
+    dialogStatus('collection-error', 'Añade al menos un material.', { error: true, focus: true })
+    return
+  }
+  if (collectionSaving) return
+  collectionSaving = true
+  el('collection-save').disabled = true
+  el('collection-save-insert').disabled = true
+  dialogStatus('collection-error')
 
   const body = {
     title,
@@ -1173,21 +1444,42 @@ async function saveCollection ({ insert = false } = {}) {
           'descartan tus cambios y se carga la versión actual.',
         okLabel: 'Cargar la versión actual'
       })
-      if (recargar) await openCollectionEditor(err.payload.collection)
+      if (recargar) {
+        el('collection-dialog').close()
+        await openCollectionEditor(err.payload.collection)
+      }
       return
     }
     if (err.payload?.code === 'items_unavailable') {
       const rotos = (err.payload.details?.items ?? []).length
-      notify(`${err.message}${rotos ? ` (${rotos} material(es) afectados)` : ''}`, 'error')
+      dialogStatus('collection-error', `${err.message}${rotos ? ` (${rotos} material(es) afectados)` : ''}`, { error: true, focus: true })
       return
     }
-    notify(err.message, 'error')
+    dialogStatus('collection-error', err.message, { error: true, focus: true })
+  } finally {
+    collectionSaving = false
+    el('collection-save').disabled = false
+    el('collection-save-insert').disabled = false
   }
 }
 
+let collectionSaving = false
+
 el('collection-save').addEventListener('click', () => { void saveCollection() })
 el('collection-save-insert').addEventListener('click', () => { void saveCollection({ insert: true }) })
-el('collection-cancel').addEventListener('click', () => el('collection-dialog').close())
+el('collection-cancel').addEventListener('click', () => {
+  if (collectionSaving) {
+    dialogStatus('collection-error', 'Espera a que termine el guardado.', { error: true, focus: true })
+    return
+  }
+  el('collection-dialog').close()
+})
+el('collection-dialog').addEventListener('cancel', (event) => {
+  if (!collectionSaving) return
+  event.preventDefault()
+  dialogStatus('collection-error', 'Espera a que termine el guardado.', { error: true, focus: true })
+})
+el('collection-dialog').addEventListener('close', () => { pickerGeneration++ })
 el('new-collection').addEventListener('click', openNewCollection)
 
 // ---------------------------------------------------------------------------
@@ -1216,103 +1508,228 @@ function normalizeQuery (text) {
 }
 
 function render () {
-  const showFolders = state.view !== 'archived'
-  const folders = !showFolders
-    ? []
-    : state.view === 'search'
-      ? state.folders.filter((f) => normalizeQuery(f.name).includes(normalizeQuery(state.query)))
-      : childrenOf(state.folderId)
-
-  el('section-folders').hidden = folders.length === 0
+  const folders = state.view === 'search'
+    ? flattenedFolders().filter((f) => normalizeQuery(f.name).includes(normalizeQuery(state.query)))
+    : flattenedFolders()
   el('folder-grid').replaceChildren(...folders.map(folderCard))
+  el('folder-empty').hidden = folders.length > 0
+  el('root-count').textContent = state.root?.materialCount ? String(state.root.materialCount) : ''
+
+  el('all-content').classList.toggle('current', state.view === 'all')
+  el('root-content').classList.toggle('current', state.view === 'browse' && state.folderId === null)
+  el('archived-toggle').classList.toggle('current', state.view === 'archived')
+
+  for (const tab of document.querySelectorAll('[data-content-filter]')) {
+    const selected = tab.dataset.contentFilter === state.contentFilter
+    tab.setAttribute('aria-selected', String(selected))
+    tab.tabIndex = selected ? 0 : -1
+    tab.classList.toggle('current', selected)
+  }
 
   el('collections-heading').textContent = state.view === 'archived'
     ? 'Colecciones archivadas'
     : 'Colecciones'
-  el('section-collections').hidden = state.collections.length === 0
+  const showCollections = state.contentFilter !== 'materials'
+  el('section-collections').hidden = !showCollections || state.collections.length === 0
   el('collection-grid').replaceChildren(...state.collections.map(collectionCard))
 
   el('materials-heading').textContent = state.view === 'archived'
     ? 'Materiales archivados'
     : 'Materiales'
-  el('section-materials').hidden = state.materials.length === 0
+  const showMaterials = state.contentFilter !== 'collections'
+  el('section-materials').hidden = !showMaterials || state.materials.length === 0
   el('material-grid').replaceChildren(...state.materials.map(materialCard))
 
-  loadMoreEl.hidden = !state.nextCursor
+  loadMoreEl.hidden = !showMaterials || !state.nextCursor
+  loadMoreCollectionsEl.hidden = !showCollections || !state.nextCollectionCursor
 
-  const allEmpty = folders.length === 0 && state.collections.length === 0 && state.materials.length === 0
+  const allEmpty = (!showCollections || state.collections.length === 0) &&
+    (!showMaterials || state.materials.length === 0)
   emptyEl.hidden = !allEmpty
   if (allEmpty) {
-    // Vacíos distintos: no es lo mismo una biblioteca recién creada que una
-    // búsqueda sin resultados o una carpeta sin contenido.
+    let title = 'No hay contenido aquí'
+    let description
     if (state.view === 'search') {
-      emptyEl.textContent = `Ningún resultado para «${state.query}» en toda la biblioteca.`
+      title = `No hay resultados para «${state.query}»`
+      description = 'Prueba con menos palabras o revisa otra ubicación.'
     } else if (state.view === 'archived') {
-      emptyEl.textContent = 'No hay nada archivado.'
+      title = 'No hay contenido archivado'
+      description = 'Lo que archives aparecerá aquí y podrás restaurarlo.'
     } else if (state.folderId !== null) {
-      emptyEl.textContent = 'Esta carpeta está vacía. Sube material aquí o mueve algo desde otra carpeta.'
+      title = 'Esta ubicación está vacía'
+      description = 'Sube un material aquí o mueve contenido desde otra carpeta.'
+    } else if (state.contentFilter === 'collections') {
+      title = 'No hay colecciones en esta ubicación'
+      description = 'Crea una para agrupar varios materiales en una única actividad.'
+    } else if (state.contentFilter === 'materials') {
+      title = 'No hay materiales en esta ubicación'
+      description = 'Sube un vídeo o un PDF para empezar.'
     } else {
-      emptyEl.textContent = 'Tu biblioteca está vacía. Empieza con «Subir material».'
+      description = 'Sube un vídeo o un PDF, o crea una colección.'
     }
+    emptyTitleEl.textContent = title
+    emptyDescriptionEl.textContent = description
+    el('empty-upload').hidden = state.view === 'archived' || state.view === 'search'
   }
 
-  el('archived-toggle').textContent = state.view === 'archived'
-    ? '← Volver a la biblioteca'
-    : 'Ver archivados'
-}
-
-let pollTimer = null
-
-async function loadFolders () {
-  const data = await apiJson('/folders')
-  state.folders = data.folders
-  state.root = data.root
   renderCrumbs()
 }
 
-async function load ({ append = false } = {}) {
-  try {
-    const params = new URLSearchParams({ limit: '60' })
-    const collectionParams = new URLSearchParams()
+let pollTimer = null
+let materialLoadGeneration = 0
+let collectionLoadGeneration = 0
+let folderLoadGeneration = 0
+let reloadGeneration = 0
 
-    if (state.view === 'archived') {
-      params.set('archived', '1')
-      collectionParams.set('archived', '1')
-    } else if (state.view === 'search') {
-      params.set('q', state.query)
-      collectionParams.set('q', state.query)
-    } else {
-      params.set('folderId', state.folderId ?? 'root')
-      collectionParams.set('folderId', state.folderId ?? 'root')
-    }
-    if (append && state.nextCursor) params.set('cursor', state.nextCursor)
+async function loadFolders () {
+  const generation = ++folderLoadGeneration
+  const data = await apiJson('/folders')
+  if (generation !== folderLoadGeneration) return false
+  state.folders = data.folders
+  state.root = data.root
+  renderCrumbs()
+  return true
+}
 
-    const [materials, collections] = await Promise.all([
-      apiJson(`/materials?${params}`),
-      apiJson(`/collections?${collectionParams}`)
-    ])
+function uniqueBy (items, keyOf) {
+  return [...new Map(items.map((item) => [keyOf(item), item])).values()]
+}
 
-    let page = materials.materials
-    // `archived=1` mezcla activos y archivados; aquí sólo interesan los últimos.
-    if (state.view === 'archived') page = page.filter((m) => m.archived)
-    state.materials = append ? [...state.materials, ...page] : page
-    state.nextCursor = materials.nextCursor
-    state.collections = collections.collections
-    render()
+function schedulePoll () {
+  clearTimeout(pollTimer)
+  pollTimer = null
+  const busy = state.materials.some((material) =>
+    ['uploaded', 'queued', 'processing'].includes(material.status))
+  if (busy) pollTimer = setTimeout(() => { void load({ refreshMaterials: true }) }, 5000)
+}
 
-    // Mientras haya algo procesándose refrescamos solos: obligar a recargar un
-    // iframe dentro de Moodle es justo lo que no queremos.
-    const busy = state.materials.some((m) => ['uploaded', 'queued', 'processing'].includes(m.status))
-    clearTimeout(pollTimer)
-    if (busy) pollTimer = setTimeout(() => { void load() }, 5000)
-  } catch (err) {
-    notify(`No se pudo cargar el catálogo: ${err.message}`, 'error')
+/**
+ * Refresca exactamente la ventana ya cargada, aunque abarque varias páginas.
+ * Así un material procesándose en la página 2 también puede pasar a «listo» y
+ * el polling no descarta lo que el profesor obtuvo con «Mostrar más».
+ */
+async function loadMaterialWindow (baseParams, wanted) {
+  const materials = []
+  let cursor = null
+  let nextCursor = null
+  do {
+    const params = new URLSearchParams(baseParams)
+    if (cursor) params.set('cursor', cursor)
+    const page = await apiJson(`/materials?${params}`)
+    materials.push(...page.materials)
+    nextCursor = page.nextCursor
+    cursor = nextCursor
+  } while (cursor && materials.length < wanted)
+  return { materials, nextCursor }
+}
+
+async function load ({ appendMaterials = false, appendCollections = false, refreshMaterials = false } = {}) {
+  if (appendMaterials && !state.nextCursor) return
+  if (appendCollections && !state.nextCollectionCursor) return
+  clearTimeout(pollTimer)
+  pollTimer = null
+  const wantsMaterials = !appendCollections
+  const wantsCollections = !appendMaterials && !refreshMaterials
+  const materialGeneration = wantsMaterials ? ++materialLoadGeneration : null
+  const collectionGeneration = wantsCollections ? ++collectionLoadGeneration : null
+
+  const params = new URLSearchParams({ limit: '60' })
+  const collectionParams = new URLSearchParams({ limit: '60' })
+
+  if (state.view === 'archived') {
+    params.set('archived', '1')
+    collectionParams.set('archived', '1')
+  } else if (state.view === 'search') {
+    params.set('q', state.query)
+    collectionParams.set('q', state.query)
+  } else if (state.view === 'browse') {
+    params.set('folderId', state.folderId ?? 'root')
+    collectionParams.set('folderId', state.folderId ?? 'root')
   }
+  if (appendMaterials && state.nextCursor) params.set('cursor', state.nextCursor)
+  if (appendCollections && state.nextCollectionCursor) {
+    collectionParams.set('cursor', state.nextCollectionCursor)
+  }
+
+  if (appendMaterials) loadMoreEl.disabled = true
+  if (appendCollections) loadMoreCollectionsEl.disabled = true
+
+  const materialRequest = wantsMaterials
+    ? (refreshMaterials
+        ? loadMaterialWindow(params, Math.max(60, state.materials.length))
+        : apiJson(`/materials?${params}`))
+    : null
+  const collectionRequest = wantsCollections ? apiJson(`/collections?${collectionParams}`) : null
+  const [materialResult, collectionResult] = await Promise.all([
+    materialRequest?.then((value) => ({ value })).catch((error) => ({ error })) ?? null,
+    collectionRequest?.then((value) => ({ value })).catch((error) => ({ error })) ?? null
+  ])
+
+  let changed = false
+  const errors = []
+  if (materialResult && materialGeneration === materialLoadGeneration) {
+    loadMoreEl.disabled = false
+    if (materialResult.error) {
+      errors.push(materialResult.error)
+      if (!appendMaterials && !refreshMaterials) {
+        state.materials = []
+        state.nextCursor = null
+        changed = true
+      }
+    } else if (refreshMaterials) {
+      const page = materialResult.value.materials
+      const renderKey = (item) => [
+        item.kind, item.id, item.title, item.status, item.updatedAt,
+        item.folderId, item.archived, item.error
+      ].join(':')
+      const before = state.materials.map(renderKey).join('|')
+      const after = page.map(renderKey).join('|')
+      state.materials = page
+      state.nextCursor = materialResult.value.nextCursor
+      changed = before !== after
+    } else {
+      const page = materialResult.value.materials
+      state.materials = appendMaterials
+        ? uniqueBy([...state.materials, ...page], (item) => `${item.kind}:${item.id}`)
+        : page
+      state.nextCursor = materialResult.value.nextCursor
+      changed = true
+    }
+  }
+  if (collectionResult && collectionGeneration === collectionLoadGeneration) {
+    loadMoreCollectionsEl.disabled = false
+    if (collectionResult.error) {
+      errors.push(collectionResult.error)
+      if (!appendCollections) {
+        state.collections = []
+        state.nextCollectionCursor = null
+        changed = true
+      }
+    } else {
+      const page = collectionResult.value.collections
+      state.collections = appendCollections
+        ? uniqueBy([...state.collections, ...page], (item) => item.id)
+        : page
+      state.nextCollectionCursor = collectionResult.value.nextCursor
+      changed = true
+    }
+  }
+
+  if (changed) render()
+  if (errors.length > 0) notify(`No se pudo cargar el catálogo: ${errors[0].message}`, 'error')
+  schedulePoll()
 }
 
 async function reload () {
-  await loadFolders()
+  const generation = ++reloadGeneration
+  // Invalida inmediatamente respuestas de la ubicación anterior mientras se
+  // actualiza el árbol, no después de que esa petición haya podido pintar.
+  materialLoadGeneration++
+  collectionLoadGeneration++
+  const foldersLoaded = await loadFolders()
+  if (!foldersLoaded || generation !== reloadGeneration) return
   await load()
+  if (generation !== reloadGeneration) return
   if (state.focusAfterReload) {
     el(state.focusAfterReload)?.focus()
     state.focusAfterReload = null
@@ -1327,25 +1744,58 @@ let searchTimer = null
 searchEl.addEventListener('input', () => {
   clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
-    state.query = searchEl.value.trim()
-    state.view = state.query ? 'search' : 'browse'
+    reloadGeneration++
+    const query = searchEl.value.trim()
+    if (query) {
+      if (state.view !== 'search') state.navigationHistory.push(locationSnapshot())
+      state.query = query
+      state.view = 'search'
+    } else if (state.view === 'search') {
+      const previous = state.navigationHistory.pop() ?? { view: 'all', folderId: null, query: '' }
+      state.view = previous.view
+      state.folderId = previous.folderId
+      state.query = previous.query
+    }
     state.nextCursor = null
+    state.nextCollectionCursor = null
+    resultsEl.scrollTop = 0
     renderCrumbs()
     void load()
   }, 300)
 })
 
 el('archived-toggle').addEventListener('click', () => {
-  state.view = state.view === 'archived' ? 'browse' : 'archived'
-  state.query = ''
-  searchEl.value = ''
-  state.nextCursor = null
-  renderCrumbs()
-  void load()
+  if (state.view === 'archived') return goBack()
+  navigate({ view: 'archived' })
 })
 
+el('all-content').addEventListener('click', openAll)
+el('root-content').addEventListener('click', () => openFolder(null))
+el('back').addEventListener('click', goBack)
 el('new-folder').addEventListener('click', () => { void createFolder() })
 el('refresh').addEventListener('click', () => { void reload() })
-loadMoreEl.addEventListener('click', () => { void load({ append: true }) })
+el('empty-upload').addEventListener('click', openUpload)
+loadMoreEl.addEventListener('click', () => { void load({ appendMaterials: true }) })
+loadMoreCollectionsEl.addEventListener('click', () => { void load({ appendCollections: true }) })
+
+const contentTabs = [...document.querySelectorAll('[data-content-filter]')]
+for (const tab of contentTabs) {
+  tab.addEventListener('click', () => {
+    state.contentFilter = tab.dataset.contentFilter
+    render()
+  })
+  tab.addEventListener('keydown', (event) => {
+    const current = contentTabs.indexOf(tab)
+    let next = null
+    if (event.key === 'ArrowLeft') next = (current - 1 + contentTabs.length) % contentTabs.length
+    if (event.key === 'ArrowRight') next = (current + 1) % contentTabs.length
+    if (event.key === 'Home') next = 0
+    if (event.key === 'End') next = contentTabs.length - 1
+    if (next === null) return
+    event.preventDefault()
+    contentTabs[next].click()
+    contentTabs[next].focus()
+  })
+}
 
 await reload()

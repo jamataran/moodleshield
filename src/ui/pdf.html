@@ -6,23 +6,44 @@
   <title>Documento · MoodleShield</title>
   <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
 </head>
-<body class="viewer">
-  <div id="content" class="viewer-content"></div>
-
-  <div class="player-meta">
-    <div>
+<body class="viewer viewer-single">
+  <header class="viewer-header">
+    <button id="back-to-classroom" type="button" class="back-to-classroom" hidden>← Volver al aula</button>
+    <div class="viewer-heading">
+      <p class="eyebrow" id="resource-kind">Documento PDF</p>
       <h1 id="title"></h1>
-      <p class="muted" id="viewer"></p>
     </div>
-    <p class="muted" id="status" role="status"></p>
-  </div>
+    <div class="viewer-monitoring" aria-label="Datos visibles de monitorización">
+      <strong>Sesión monitorizada</strong>
+      <span id="viewer"></span>
+    </div>
+  </header>
 
-  <p class="muted" id="notice" hidden></p>
-  <p class="muted" id="accessibility-note" hidden>
-    Este documento no tiene estructura de texto accesible. No se realiza
-    reconocimiento óptico de caracteres: si necesitas una versión accesible,
-    pídesela a tu profesor.
-  </p>
+  <section class="legal-warning" aria-labelledby="legal-heading">
+    <span class="legal-warning-icon" aria-hidden="true">⚠</span>
+    <div>
+      <strong id="legal-heading">Aviso de propiedad intelectual</strong>
+      <p id="legal-copy"></p>
+    </div>
+  </section>
+
+  <main class="viewer-shell">
+    <aside class="viewer-sidebar" aria-label="Acciones del recurso">
+      <h2>Acciones</h2>
+      <button id="download-action" type="button" class="sidebar-action primary">Descargar PDF marcado</button>
+      <p id="download-help" class="muted"></p>
+      <p id="notice" class="notice info" hidden></p>
+      <p id="accessibility-note" class="notice info" hidden>
+        Este documento no tiene estructura de texto accesible. No se realiza
+        reconocimiento óptico de caracteres: si necesitas una versión accesible,
+        pídesela a tu profesor.
+      </p>
+      <p id="status" class="viewer-status muted" role="status" aria-live="polite"></p>
+    </aside>
+    <section class="viewer-main" aria-label="Contenido del documento">
+      <div id="content" class="viewer-content"></div>
+    </section>
+  </main>
 
   <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
   <script type="module" src="/assets/pdf.js?v={{ASSET_VERSION}}"></script>

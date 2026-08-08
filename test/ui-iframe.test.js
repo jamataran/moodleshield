@@ -7,11 +7,11 @@ import { fileURLToPath } from 'node:url'
 /**
  * Reglas de la interfaz que sólo se rompen dentro del iframe de Moodle.
  *
- * MoodleShield se sirve SIEMPRE desde un origen distinto al de Moodle y pide
- * `documentTarget: iframe`. Ahí el navegador se comporta de forma distinta a
- * como se comporta abriendo la página suelta en una pestaña, que es como se
- * prueba durante el desarrollo. Estas comprobaciones son baratas y evitan
- * volver a enviar una interfaz que en local funciona y en Moodle no hace nada.
+ * MoodleShield se sirve SIEMPRE desde un origen distinto al de Moodle. El
+ * selector de contenido y las actividades antiguas pueden seguir abriéndose en
+ * iframe, donde el navegador se comporta de forma distinta a una pestaña
+ * independiente. Estas comprobaciones evitan volver a enviar una interfaz que
+ * en local funciona y en Moodle no hace nada.
  */
 
 const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/ui')
@@ -59,7 +59,7 @@ test('la interfaz no usa alert, confirm ni prompt', async () => {
 
 test('cada diálogo declara los botones que su código espera', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
-  for (const id of ['prompt-dialog', 'confirm-dialog', 'edit-dialog', 'revisions-dialog',
+  for (const id of ['help-dialog', 'prompt-dialog', 'confirm-dialog', 'edit-dialog', 'revisions-dialog',
     'move-dialog', 'upload-dialog', 'collection-dialog']) {
     assert.ok(html.includes(`id="${id}"`), `falta el diálogo ${id}`)
   }
@@ -68,6 +68,36 @@ test('cada diálogo declara los botones que su código espera', async () => {
   const dialogForms = html.match(/<form method="dialog"/g) ?? []
   assert.ok(dialogForms.length >= 3, 'los diálogos con formulario necesitan method="dialog"')
   assert.ok(html.includes('value="ok"'), 'los diálogos resuelven mirando returnValue === "ok"')
+})
+
+test('cada diálogo del catálogo tiene un nombre accesible existente', async () => {
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  const dialogs = [...html.matchAll(/<dialog\b([^>]*)>([\s\S]*?)<\/dialog>/g)]
+  assert.ok(dialogs.length > 0, 'el catálogo debe declarar sus diálogos')
+
+  for (const [, attributes, body] of dialogs) {
+    const dialogId = /\bid="([^"]+)"/.exec(attributes)?.[1] ?? '(sin id)'
+    const labelledBy = /\baria-labelledby="([^"]+)"/.exec(attributes)?.[1]
+    assert.ok(labelledBy, `${dialogId} necesita aria-labelledby`)
+    assert.ok(
+      body.includes(`id="${labelledBy}"`),
+      `${dialogId} referencia una etiqueta inexistente: ${labelledBy}`
+    )
+  }
+})
+
+test('las carpetas se anuncian como lista y no como un árbol sin interacción de árbol', async () => {
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+
+  assert.match(html, /id="folder-grid"[^>]*\brole="list"/,
+    'el contenedor de carpetas debe usar semántica de lista')
+  assert.match(code, /setAttribute\('role',\s*'listitem'\)/,
+    'cada carpeta debe anunciarse como elemento de la lista')
+  assert.doesNotMatch(html, /id="folder-grid"[^>]*\brole="tree"/,
+    'no debe anunciar un tree si no implementa su patrón de teclado')
+  assert.doesNotMatch(code, /setAttribute\('role',\s*'treeitem'\)/,
+    'no debe anunciar treeitem si no implementa su patrón de teclado')
 })
 
 test('el botón de cancelar de un diálogo cierra aunque el formulario no valide', async () => {
@@ -145,6 +175,42 @@ test('el catálogo permite componer y EDITAR colecciones, no sólo crearlas', as
   assert.ok(html.includes('id="collection-folder"'), 'falta el selector de carpeta de la colección')
 })
 
+test('el catálogo separa colecciones y materiales y permite volver atrás', async () => {
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  for (const id of ['back', 'help-open', 'all-content', 'tab-collections', 'tab-materials',
+    'section-collections', 'section-materials', 'load-more-collections']) {
+    assert.ok(html.includes(`id="${id}"`), `falta el control de navegación ${id}`)
+  }
+
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.match(code, /navigationHistory/, 'Atrás necesita conservar el historial del explorador')
+  assert.match(code, /nextCollectionCursor/, 'las colecciones necesitan paginación propia')
+})
+
+test('todos los visores muestran aviso, monitorización y descarga contextual', async () => {
+  for (const page of ['player.html', 'pdf.html', 'collection.html']) {
+    const html = await readFile(path.join(uiDir, page), 'utf8')
+    for (const id of ['back-to-classroom', 'viewer', 'legal-copy', 'download-action', 'download-help']) {
+      assert.ok(html.includes(`id="${id}"`), `${page} no declara ${id}`)
+    }
+  }
+
+  const shell = await readFile(path.join(uiDir, 'assets/viewer-shell.js'), 'utf8')
+  assert.match(shell, /window\.self === window\.top/, 'la vuelta al aula debe ocultarse dentro del iframe')
+  assert.match(shell, /artículo 270 del Código Penal/, 'falta el aviso legal solicitado')
+})
+
+test('el vídeo ofrece saltos, captura marcada y una marca de agua calmada', async () => {
+  const code = await readFile(path.join(uiDir, 'assets/video-component.js'), 'utf8')
+  assert.match(code, /seekBy\(-10\)/, 'falta retroceder 10 segundos')
+  assert.match(code, /seekBy\(10\)/, 'falta avanzar 10 segundos')
+  assert.match(code, /canvas\.toBlob/, 'falta generar la captura descargable')
+  assert.match(code, /user\?\.identity/, 'la captura debe quedar atribuida al alumno')
+  assert.match(code, /30_000/, 'la marca visible no debe moverse cada pocos segundos')
+  assert.match(code, /prefers-reduced-motion/, 'la animación debe respetar movimiento reducido')
+  assert.doesNotMatch(code, /setInterval\([^\n]+,\s*7000\)/, 'la marca todavía se mueve cada 7 segundos')
+})
+
 test('el player y los visores se sirven sin CDN', async () => {
   for (const file of await uiFiles('.html')) {
     const html = await readFile(file, 'utf8')
@@ -152,4 +218,15 @@ test('el player y los visores se sirven sin CDN', async () => {
     assert.deepEqual(external, [],
       `${path.basename(file)} carga recursos externos: la CSP los bloquea y el despliegue deja de ser autónomo`)
   }
+})
+
+test('los imports transitivos de JavaScript se revalidan tras un despliegue', async () => {
+  const app = await readFile(path.resolve(uiDir, '../app.js'), 'utf8')
+  assert.match(app, /path\.extname\(file\) === '\.js'[^\n]+Cache-Control/,
+    'los módulos sin ?v= no pueden conservar una versión anterior durante una hora')
+
+  const pdf = await readFile(path.join(uiDir, 'assets/pdf.js'), 'utf8')
+  const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
+  assert.match(pdf, /from '\.\/pdf-download\.js\?v=[^']+'/)
+  assert.match(collection, /from '\.\/pdf-download\.js\?v=[^']+'/)
 })

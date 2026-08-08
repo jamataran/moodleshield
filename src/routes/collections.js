@@ -8,7 +8,7 @@ import {
   duplicateCollection,
   getCollectionForPlatform,
   getOwnedCollection,
-  listCollections,
+  listCollectionPage,
   loadItems,
   publicCollection,
   publicItem,
@@ -20,14 +20,19 @@ export const collectionsRouter = Router()
 
 collectionsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
   try {
-    const rows = await listCollections({
+    const page = await listCollectionPage({
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
       folderId: req.query.folderId,
       q: req.query.q,
-      archived: req.query.archived === '1'
+      archived: req.query.archived === '1',
+      limit: req.query.limit,
+      cursor: req.query.cursor
     })
-    res.json({ collections: rows.map((row) => publicCollection(row)) })
+    res.json({
+      collections: page.collections.map((row) => publicCollection(row)),
+      nextCursor: page.nextCursor
+    })
   } catch (err) {
     next(err)
   }

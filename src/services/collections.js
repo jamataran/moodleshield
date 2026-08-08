@@ -133,7 +133,8 @@ export function loadItems (collectionId) {
             COALESCE(v.archived_at, d.archived_at)   AS archived_at,
             COALESCE(v.active_revision_id, d.active_revision_id) AS active_revision_id,
             v.duration_seconds,
-            d.page_count
+            d.page_count,
+            d.size_bytes
        FROM content_collection_item i
        LEFT JOIN video        v ON v.id = i.video_id
        LEFT JOIN pdf_document d ON d.id = i.document_id
@@ -143,7 +144,49 @@ export function loadItems (collectionId) {
   )
 }
 
-export async function listCollections ({ platformId, ownerSub, folderId, q, archived = false }) {
+/**
+ * Cursor opaco y estable por `(created_at, id)`.
+ *
+ * `pg` convierte `timestamptz` a `Date` y pierde los microsegundos que sí guarda
+ * Postgres. La consulta añade `cursor_created_at` como texto exacto para que dos
+ * altas dentro del mismo milisegundo no queden entre páginas. `created_at` es
+ * inmutable: editar una colección no puede moverla a través del cursor y hacer
+ * que otra desaparezca de «Mostrar más».
+ */
+export function encodeCollectionCursor (row) {
+  const createdAt = row.cursor_created_at ?? (
+    row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at
+  )
+  return Buffer.from(`${createdAt}|${row.id}`).toString('base64url')
+}
+
+export function decodeCollectionCursor (cursor) {
+  if (!cursor) return null
+  try {
+    const parts = Buffer.from(String(cursor), 'base64url').toString('utf8').split('|')
+    if (parts.length !== 2) return null
+    const [createdAt, id] = parts
+    if (!createdAt || !isUuid(id) || Number.isNaN(Date.parse(createdAt))) return null
+    return { createdAt, id }
+  } catch {
+    return null
+  }
+}
+
+function collectionPageSize (raw) {
+  const size = Number.parseInt(raw, 10)
+  if (!Number.isFinite(size) || size <= 0) return config.catalog.defaultPageSize
+  return Math.min(size, config.catalog.maxPageSize)
+}
+
+async function queryCollectionRows ({
+  platformId,
+  ownerSub,
+  folderId,
+  q,
+  archived = false,
+  cursor
+}, { rowLimit = null } = {}) {
   if (!platformId || !ownerSub) return []
   const params = [platformId, ownerSub]
   let clauses = ''
@@ -162,18 +205,56 @@ export async function listCollections ({ platformId, ownerSub, folderId, q, arch
   }
   clauses += archived ? ' AND c.archived_at IS NOT NULL' : ' AND c.archived_at IS NULL'
 
+  const page = decodeCollectionCursor(cursor)
+  if (page) {
+    params.push(page.createdAt, page.id)
+    clauses += ` AND (c.created_at, c.id) <
+      ($${params.length - 1}::timestamptz, $${params.length}::uuid)`
+  }
+
+  let limitClause = ''
+  if (rowLimit !== null) {
+    params.push(rowLimit)
+    limitClause = `LIMIT $${params.length}`
+  }
+
   return many(
     `SELECT c.*,
-            (SELECT count(*) FROM content_collection_item i WHERE i.collection_id = c.id) AS item_count,
-            (SELECT count(*) FROM content_collection_item i
-              WHERE i.collection_id = c.id AND i.video_id IS NOT NULL)    AS video_count,
-            (SELECT count(*) FROM content_collection_item i
-              WHERE i.collection_id = c.id AND i.document_id IS NOT NULL) AS document_count
+            to_char(c.created_at AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at,
+            counts.item_count,
+            counts.video_count,
+            counts.document_count
        FROM content_collection c
+       CROSS JOIN LATERAL (
+         SELECT count(*)                                                   AS item_count,
+                count(*) FILTER (WHERE i.video_id IS NOT NULL)             AS video_count,
+                count(*) FILTER (WHERE i.document_id IS NOT NULL)          AS document_count
+           FROM content_collection_item i
+          WHERE i.collection_id = c.id
+       ) counts
       WHERE c.platform_id = $1 AND c.owner_sub = $2 ${clauses}
-      ORDER BY c.updated_at DESC`,
+      ORDER BY c.created_at DESC, c.id DESC
+      ${limitClause}`,
     params
   )
+}
+
+/** Listado completo interno, conservado para los consumidores anteriores. */
+export function listCollections (options) {
+  return queryCollectionRows(options)
+}
+
+/** Página para la API HTTP; pide una fila extra para calcular `nextCursor`. */
+export async function listCollectionPage (options = {}) {
+  const size = collectionPageSize(options.limit)
+  const rows = await queryCollectionRows(options, { rowLimit: size + 1 })
+  const hasMore = rows.length > size
+  const collections = hasMore ? rows.slice(0, size) : rows
+  return {
+    collections,
+    nextCursor: hasMore ? encodeCollectionCursor(collections[collections.length - 1]) : null
+  }
 }
 
 export function getOwnedCollection ({ id, platformId, ownerSub }) {
@@ -383,6 +464,9 @@ export function publicCollection (row, items = null) {
 }
 
 export function publicItem (row) {
+  const sizeBytes = row.size_bytes === null || row.size_bytes === undefined
+    ? null
+    : Number(row.size_bytes)
   return {
     position: row.position,
     kind: row.kind,
@@ -394,6 +478,8 @@ export function publicItem (row) {
     durationSeconds: row.duration_seconds === null || row.duration_seconds === undefined
       ? null
       : Number(row.duration_seconds),
-    pageCount: row.page_count ?? null
+    pageCount: row.page_count ?? null,
+    sizeBytes,
+    downloadAvailable: row.kind === 'pdf' && sizeBytes !== null && sizeBytes <= config.pdf.downloadMaxBytes
   }
 }

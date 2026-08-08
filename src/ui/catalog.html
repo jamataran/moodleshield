@@ -6,77 +6,130 @@
   <title>Biblioteca · MoodleShield</title>
   <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
 </head>
-<body>
-  <header class="bar">
+<body class="catalog-page">
+  <header class="catalog-header">
     <div>
-      <h1>Biblioteca</h1>
+      <p class="eyebrow" id="catalog-context">Biblioteca del profesor</p>
+      <h1 id="catalog-title">Seleccionar contenido</h1>
       <p class="muted" id="subtitle"></p>
     </div>
-    <button id="refresh" type="button">Actualizar</button>
-  </header>
-
-  <div id="notice" hidden></div>
-
-  <div id="deeplink-banner" class="notice info" hidden>
-    <strong>Estás eligiendo el contenido de una actividad.</strong>
-    Pulsa <em>Insertar</em> sobre un material o una colección y volverás a Moodle
-    con la actividad ya enlazada.
-  </div>
-
-  <div id="manage-hint" class="notice" hidden>
-    <strong>Esta actividad todavía no tiene ningún material asignado.</strong>
-    Aquí puedes subirlo y ver cómo se procesa, pero el vínculo con la actividad
-    lo crea Moodle: cuando el material esté <em>listo</em>, vuelve al formulario
-    de la actividad y pulsa <strong>Seleccionar contenido</strong> para elegirlo.
-    Hasta entonces los alumnos verán un error al abrirla.
-    <br>
-    <span class="muted">Si no ves ese botón, al dar de alta la herramienta
-    falta marcar <em>Supports Deep Linking</em>.</span>
-  </div>
-
-  <div class="toolbar">
-    <input type="search" id="search" placeholder="Buscar en toda la biblioteca"
-           aria-label="Buscar en toda la biblioteca">
-    <div class="toolbar-actions">
-      <button id="new-folder" type="button">＋ Carpeta</button>
-      <button id="new-collection" type="button">＋ Colección</button>
+    <div class="catalog-header-actions">
+      <button id="help-open" type="button">? Ayuda</button>
+      <button id="refresh" type="button" aria-label="Actualizar la biblioteca">↻ Actualizar</button>
       <button id="upload-open" type="button" class="primary">⬆ Subir material</button>
     </div>
+  </header>
+
+  <div id="notice" role="status" aria-live="polite" hidden></div>
+
+  <div class="catalog-toolbar">
+    <input type="search" id="search" placeholder="Buscar carpetas, colecciones o materiales"
+           aria-label="Buscar en toda la biblioteca">
+    <button id="new-collection" type="button">＋ Nueva colección</button>
   </div>
 
-  <p class="muted concept-hint">
-    Las <strong>carpetas</strong> ordenan tu biblioteca y sólo las ves tú.
-    Una <strong>colección</strong> agrupa varios materiales y es lo que se
-    inserta en Moodle como una única actividad.
-  </p>
-
-  <nav id="crumbs" class="crumbs" aria-label="Ruta de carpetas"></nav>
-
-  <main>
-    <section id="section-folders" class="explorer-section" hidden>
-      <h2>Carpetas</h2>
-      <div id="folder-grid" class="folder-grid"></div>
-    </section>
-
-    <section id="section-collections" class="explorer-section" hidden>
-      <div class="section-head">
-        <h2 id="collections-heading">Colecciones</h2>
+  <div class="catalog-layout">
+    <aside class="catalog-sidebar" aria-label="Navegación de la biblioteca">
+      <div class="catalog-sidebar-head">
+        <h2>Ubicación</h2>
+        <button id="new-folder" type="button" class="icon-text" aria-label="Crear una carpeta">＋ Carpeta</button>
       </div>
-      <div id="collection-grid" class="grid" aria-live="polite"></div>
-    </section>
 
-    <section id="section-materials" class="explorer-section" hidden>
-      <h2 id="materials-heading">Materiales</h2>
-      <div id="material-grid" class="grid" aria-live="polite"></div>
-      <p><button id="load-more" type="button" hidden>Cargar más</button></p>
-    </section>
+      <nav class="library-views" aria-label="Vistas de la biblioteca">
+        <button id="all-content" type="button" class="library-view current">
+          <span aria-hidden="true">▦</span>
+          <span>Todo el contenido</span>
+        </button>
+        <button id="root-content" type="button" class="library-view">
+          <span aria-hidden="true">⌂</span>
+          <span>Sin carpeta</span>
+          <span class="view-count" id="root-count"></span>
+        </button>
+      </nav>
 
-    <p class="muted" id="empty" hidden></p>
+      <section id="section-folders" class="folder-section">
+        <h3>Carpetas</h3>
+        <div id="folder-grid" class="folder-tree" role="list"></div>
+        <p class="muted folder-empty" id="folder-empty" hidden>No hay carpetas todavía.</p>
+      </section>
 
-    <p class="muted archive-link">
-      <button id="archived-toggle" type="button" class="linklike">Ver archivados</button>
-    </p>
-  </main>
+      <button id="archived-toggle" type="button" class="library-view archived-view">
+        <span aria-hidden="true">♲</span>
+        <span>Archivados</span>
+      </button>
+    </aside>
+
+    <main class="catalog-main">
+      <div class="catalog-location">
+        <button id="back" type="button" aria-label="Volver a la ubicación anterior" disabled>← Atrás</button>
+        <nav id="crumbs" class="crumbs" aria-label="Ruta de carpetas"></nav>
+      </div>
+
+      <div class="content-tabs" role="tablist" aria-label="Tipo de contenido">
+        <button id="tab-all" type="button" role="tab" aria-selected="true" data-content-filter="all">Todo</button>
+        <button id="tab-collections" type="button" role="tab" aria-selected="false" data-content-filter="collections">Colecciones</button>
+        <button id="tab-materials" type="button" role="tab" aria-selected="false" data-content-filter="materials">Materiales</button>
+      </div>
+
+      <div class="catalog-results">
+        <section id="section-collections" class="explorer-section" hidden>
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Una actividad con varios recursos</p>
+              <h2 id="collections-heading">Colecciones</h2>
+            </div>
+          </div>
+          <div id="collection-grid" class="grid" aria-live="polite"></div>
+          <p class="load-more-row"><button id="load-more-collections" type="button" hidden>Mostrar más colecciones</button></p>
+        </section>
+
+        <section id="section-materials" class="explorer-section" hidden>
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Recursos individuales</p>
+              <h2 id="materials-heading">Materiales</h2>
+            </div>
+          </div>
+          <div id="material-grid" class="grid" aria-live="polite"></div>
+          <p class="load-more-row"><button id="load-more" type="button" hidden>Mostrar más materiales</button></p>
+        </section>
+
+        <div class="empty-state" id="empty" hidden>
+          <strong id="empty-title">No hay contenido aquí</strong>
+          <p class="muted" id="empty-description"></p>
+          <button id="empty-upload" type="button" class="primary">Subir material</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="help-dialog" aria-labelledby="help-heading">
+    <div>
+      <p class="eyebrow">Cómo funciona</p>
+      <h2 id="help-heading">Seleccionar contenido</h2>
+      <div id="deeplink-help" hidden>
+        <p><strong>Elige qué verá el alumno al abrir la actividad.</strong></p>
+        <ol class="help-steps">
+          <li>Abre una ubicación o busca en toda tu biblioteca.</li>
+          <li>Inserta un material individual o una colección.</li>
+          <li>Volverás automáticamente a Moodle con la actividad enlazada.</li>
+        </ol>
+      </div>
+      <div id="manage-help" hidden>
+        <p><strong>Esta actividad todavía no tiene contenido asignado.</strong></p>
+        <p>Puedes organizar y subir recursos aquí. Para vincular uno a la actividad,
+          vuelve al formulario de Moodle y pulsa <strong>Seleccionar contenido</strong>.</p>
+        <p class="muted">Si ese botón no aparece, la herramienta debe tener activado
+          <em>Supports Deep Linking</em> en Moodle.</p>
+      </div>
+      <div class="concept-cards">
+        <p><strong>Carpetas</strong><span>Organizan tu biblioteca privada.</span></p>
+        <p><strong>Colecciones</strong><span>Agrupan varios materiales en una sola actividad.</span></p>
+        <p><strong>Materiales</strong><span>Vídeos o PDF que también puedes insertar por separado.</span></p>
+      </div>
+      <p class="dialog-actions"><button type="button" class="primary" id="help-close">Entendido</button></p>
+    </div>
+  </dialog>
 
   <!--
     Chrome y Edge retiraron alert/confirm/prompt de los iframes cross-origin, y
@@ -85,7 +138,7 @@
     Todo diálogo de esta página los sustituye y se abre con el helper que limpia
     `returnValue` (ver catalog.js).
   -->
-  <dialog id="prompt-dialog">
+  <dialog id="prompt-dialog" aria-labelledby="prompt-heading">
     <form method="dialog" id="prompt-form">
       <h2 id="prompt-heading"></h2>
       <p>
@@ -105,7 +158,7 @@
     </form>
   </dialog>
 
-  <dialog id="confirm-dialog">
+  <dialog id="confirm-dialog" aria-labelledby="confirm-heading">
     <form method="dialog" id="confirm-form">
       <h2 id="confirm-heading"></h2>
       <p id="confirm-message"></p>
@@ -116,7 +169,7 @@
     </form>
   </dialog>
 
-  <dialog id="edit-dialog">
+  <dialog id="edit-dialog" aria-labelledby="edit-heading">
     <form method="dialog" id="edit-form">
       <h2 id="edit-heading">Editar material</h2>
       <p><label for="edit-title">Título</label>
@@ -130,7 +183,7 @@
     </form>
   </dialog>
 
-  <dialog id="move-dialog">
+  <dialog id="move-dialog" aria-labelledby="move-heading">
     <form method="dialog" id="move-form">
       <h2 id="move-heading">Mover</h2>
       <p>
@@ -144,9 +197,9 @@
     </form>
   </dialog>
 
-  <dialog id="upload-dialog">
+  <dialog id="upload-dialog" aria-labelledby="upload-heading">
     <div>
-      <h2>Subir material</h2>
+      <h2 id="upload-heading">Subir material</h2>
       <p class="muted">Vídeo (MP4, MOV, MKV, WebM, AVI) o PDF.</p>
       <p>
         <label for="upload-title">Título</label>
@@ -173,7 +226,7 @@
     </div>
   </dialog>
 
-  <dialog id="collection-dialog">
+  <dialog id="collection-dialog" aria-labelledby="collection-heading">
     <div>
       <h2 id="collection-heading">Nueva colección</h2>
       <p class="muted">
@@ -192,19 +245,29 @@
         <label for="collection-folder">Guardar en la carpeta</label>
         <select id="collection-folder"></select>
       </p>
+      <p id="collection-error" class="dialog-error" role="alert" tabindex="-1" hidden></p>
 
-      <h3>Materiales de la colección</h3>
-      <ol id="collection-items" class="collection-items"></ol>
-      <p class="muted" id="collection-empty">
-        Todavía no hay materiales: añádelos con el buscador de aquí abajo.
-      </p>
+      <div class="collection-editor-grid">
+        <section>
+          <h3>Orden de la colección</h3>
+          <ol id="collection-items" class="collection-items"></ol>
+          <p class="muted" id="collection-empty">
+            Todavía no hay materiales. Añádelos desde el panel de la derecha.
+          </p>
+        </section>
 
-      <h3>Añadir materiales</h3>
-      <p>
-        <input type="search" id="collection-search" placeholder="Buscar materiales listos"
-               aria-label="Buscar materiales para añadir">
-      </p>
-      <ul id="collection-picker" class="collection-picker"></ul>
+        <section>
+          <h3>Añadir materiales</h3>
+          <p>
+            <input type="search" id="collection-search" placeholder="Buscar materiales listos"
+                   aria-label="Buscar materiales para añadir">
+          </p>
+          <ul id="collection-picker" class="collection-picker"></ul>
+          <p class="load-more-row">
+            <button type="button" id="collection-picker-more" hidden>Mostrar más materiales</button>
+          </p>
+        </section>
+      </div>
 
       <p class="dialog-actions">
         <button type="button" class="primary" id="collection-save">Guardar</button>
@@ -214,7 +277,7 @@
     </div>
   </dialog>
 
-  <dialog id="revisions-dialog">
+  <dialog id="revisions-dialog" aria-labelledby="revisions-heading">
     <div>
       <h2 id="revisions-heading">Versiones</h2>
       <p class="muted">
@@ -225,7 +288,7 @@
       <form id="revision-upload">
         <p><input type="file" id="revision-file" required></p>
         <p class="dialog-actions">
-          <button type="submit" class="primary">Subir nueva versión</button>
+          <button type="submit" class="primary" id="revision-submit">Subir nueva versión</button>
           <span class="muted" id="revision-status" role="status"></span>
         </p>
       </form>

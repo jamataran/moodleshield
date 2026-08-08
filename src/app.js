@@ -91,7 +91,16 @@ export async function createApp () {
 
   app.use(
     '/assets',
-    express.static(path.join(uiDir, 'assets'), { maxAge: '1h', index: false })
+    express.static(path.join(uiDir, 'assets'), {
+      maxAge: '1h',
+      index: false,
+      setHeaders (res, file) {
+        // Los módulos de entrada llevan ?v=, pero sus imports relativos no.
+        // Revalidarlos evita mezclar un entrypoint recién desplegado con una
+        // dependencia anterior todavía fresca en caché.
+        if (path.extname(file) === '.js') res.set('Cache-Control', 'no-cache')
+      }
+    })
   )
   // hls.js y PDF.js se sirven desde node_modules: sin CDN, el despliegue es
   // autónomo y la CSP no necesita abrirse a ningún origen externo.

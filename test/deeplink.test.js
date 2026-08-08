@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { contentItemFor } from '../src/lti/deeplink.js'
-import { resourceFromCustom } from '../src/lti/routes.js'
+import { displayIp, resourceFromCustom, safeReturnUrl } from '../src/lti/routes.js'
 
 // ---------------------------------------------------------------------------
 // Qué se le manda a Moodle al insertar (T18/T20)
@@ -42,9 +42,9 @@ test('una colección se anuncia como un único recurso', () => {
   assert.equal(item.custom.videoId, undefined)
 })
 
-test('el content item se abre en iframe y no arrastra datos internos', () => {
+test('el content item se abre como página y no arrastra datos internos', () => {
   const item = contentItemFor({ kind: 'video', id: randomUUID(), title: 'x', description: 'y' })
-  assert.equal(item.presentation.documentTarget, 'iframe')
+  assert.equal(item.presentation.documentTarget, 'window')
   assert.equal(JSON.stringify(item).includes('owner'), false)
   assert.equal(JSON.stringify(item).includes('/data/'), false)
 })
@@ -86,4 +86,20 @@ test('un custom inservible no produce un recurso a medias', () => {
   ]) {
     assert.equal(resourceFromCustom(bad), null, `debería descartar: ${JSON.stringify(bad)}`)
   }
+})
+
+test('la vuelta al aula sólo acepta URLs del mismo origen que Moodle', () => {
+  assert.equal(
+    safeReturnUrl('https://moodle.example.org/course/view.php?id=7', 'https://moodle.example.org'),
+    'https://moodle.example.org/course/view.php?id=7'
+  )
+  assert.equal(safeReturnUrl('https://otro.example.org/phishing', 'https://moodle.example.org'), null)
+  assert.equal(safeReturnUrl('javascript:alert(1)', 'https://moodle.example.org'), null)
+  assert.equal(safeReturnUrl('no-es-url', 'https://moodle.example.org'), null)
+})
+
+test('la IP visible elimina el prefijo IPv4-mapeado', () => {
+  assert.equal(displayIp('::ffff:192.0.2.10'), '192.0.2.10')
+  assert.equal(displayIp('2001:db8::10'), '2001:db8::10')
+  assert.equal(displayIp(null), '')
 })
