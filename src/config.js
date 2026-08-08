@@ -127,6 +127,10 @@ export const config = {
     /** Carpeta temporal donde aterrizan los MP4 subidos antes de transcodificar. */
     uploadRoot: optional('UPLOAD_ROOT', './.data/uploads'),
     maxUploadBytes: integer('MAX_UPLOAD_BYTES', 4 * 1024 * 1024 * 1024),
+    /** Cada petición queda holgadamente por debajo de los 100 MB de Cloudflare Free/Pro. */
+    uploadChunkBytes: integer('UPLOAD_CHUNK_BYTES', 16 * 1024 * 1024),
+    /** Una sesión incompleta se puede retomar mientras conserve sus fragmentos. */
+    uploadSessionTtlSeconds: integer('UPLOAD_SESSION_TTL_SECONDS', 24 * 60 * 60),
     /**
      * 'signed'  → los segmentos los sirve nginx validando secure_link (producción).
      * 'app'     → los sirve Node directamente (desarrollo, sin nginx delante).
@@ -268,6 +272,12 @@ export function assertConfigValid () {
   }
   if (config.catalog.maxCollectionItems < 1 || config.catalog.maxCollectionItems > 50) {
     errors.push('MAX_COLLECTION_ITEMS debe estar entre 1 y 50 (lo limita el CHECK de content_collection_item.position)')
+  }
+  if (config.media.uploadChunkBytes < 1024 * 1024 || config.media.uploadChunkBytes > 90 * 1000 * 1000) {
+    errors.push('UPLOAD_CHUNK_BYTES debe estar entre 1 MiB y 90 MB para atravesar Cloudflare con margen')
+  }
+  if (config.media.uploadSessionTtlSeconds < 60 * 60) {
+    errors.push('UPLOAD_SESSION_TTL_SECONDS debe ser al menos una hora')
   }
   if (errors.length > 0) {
     const detail = errors.map((e) => `  - ${e}`).join('\n')

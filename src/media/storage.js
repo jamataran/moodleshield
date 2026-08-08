@@ -29,6 +29,7 @@ const documentsRoot = path.join(mediaRoot, 'documents')
 const stagingRoot = path.join(mediaRoot, '.staging')
 const quarantineRoot = path.join(mediaRoot, '.quarantine')
 const uploadTempRoot = path.join(uploadRoot, '.tmp')
+const chunkUploadRoot = path.join(uploadRoot, '.chunks')
 
 /** Los ids son UUID; validarlo evita cualquier travesía de rutas. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -141,6 +142,10 @@ export function uploadTempPath () {
   return path.join(uploadTempRoot, `${randomUUID()}.part`)
 }
 
+export function chunkUploadDir (uploadId) {
+  return path.join(chunkUploadRoot, assertUuid(uploadId, 'Identificador de subida'))
+}
+
 // ---------------------------------------------------------------------------
 // Staging y publicación
 // ---------------------------------------------------------------------------
@@ -156,7 +161,7 @@ export function stagingDir (revisionId) {
 
 export async function ensureDirs () {
   for (const dir of [mediaRoot, uploadRoot, videosRoot, documentsRoot, stagingRoot,
-    quarantineRoot, uploadTempRoot]) {
+    quarantineRoot, uploadTempRoot, chunkUploadRoot]) {
     await mkdir(dir, { recursive: true })
   }
 }
@@ -351,5 +356,6 @@ export {
   documentsRoot,
   stagingRoot,
   quarantineRoot,
-  uploadTempRoot
+  uploadTempRoot,
+  chunkUploadRoot
 }

@@ -287,7 +287,8 @@ No uses un `.env` de producción en test.
 | `app` no abre 3000 / `proxy` unhealthy | Mira primero los logs de `app`; el proxy suele ser sólo el síntoma |
 | Edge devuelve 502 | Comprueba `/readyz` en el puerto local y el caso host/contenedor de `HTTP_BIND_ADDRESS` |
 | Todos los segmentos responden 403 | `MEDIA_LINK_SECRET` cambió o las imágenes `app`/`proxy` no tienen la misma versión |
-| Subida responde 413 | Sube juntos `client_max_body_size` en el edge, `MAX_UPLOAD_SIZE` (nginx interno) y `MAX_UPLOAD_BYTES` (Node) |
+| Subida troceada responde 413 | Comprueba que `UPLOAD_CHUNK_BYTES` sea menor que el máximo del edge; el valor por defecto es 16 MiB |
+| `multipart` legado responde 413 | Sube juntos `client_max_body_size`, `MAX_UPLOAD_SIZE` (nginx interno) y `MAX_UPLOAD_BYTES` (Node) |
 | URLs generadas como HTTP | `PUBLIC_URL` o `X-Forwarded-Proto https` incorrectos |
 | Worker falla con `EACCES` en un árbol antiguo | Ejecuta `bootstrap-host.sh` sobre `DATA_ROOT` |
 

@@ -101,6 +101,26 @@ server {
         include /etc/nginx/proxy_headers.conf;
     }
 
+    # Protocolo troceado compatible con el límite de cuerpo de Cloudflare. Los
+    # PUT llevan sólo 16 MiB por defecto y se escriben directamente en app.
+    location ^~ /uploads/ {
+        proxy_pass http://moodleshield_app;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        include /etc/nginx/proxy_headers.conf;
+    }
+
+    location = /uploads {
+        proxy_pass http://moodleshield_app;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        include /etc/nginx/proxy_headers.conf;
+    }
+
     # Salud del propio gateway. Docker consulta esta ruta para distinguir un
     # nginx roto de una app que aún no está lista.
     location = /_proxy-healthz {

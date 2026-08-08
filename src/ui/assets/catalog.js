@@ -202,6 +202,91 @@ async function apiJson (url, options) {
   return payload
 }
 
+/**
+ * Cloudflare limita cada cuerpo, no el total de una secuencia de peticiones.
+ * El servidor decide el tamaño del fragmento para poder cambiarlo sin volver a
+ * desplegar este JavaScript. Cada PUT es idempotente y se reintenta ante un
+ * corte transitorio; el porcentaje representa bytes reales del fichero.
+ */
+async function uploadFileInChunks ({ file, kind, title = '', folderId = null, materialId = null, onProgress, signal }) {
+  const session = await apiJson('/uploads', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({
+      kind,
+      filename: file.name,
+      size: file.size,
+      title,
+      folderId,
+      materialId
+    })
+  })
+  let completedBytes = 0
+
+  const sendChunk = (index, blob) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    const abort = () => xhr.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    xhr.open('PUT', `/uploads/${session.uploadId}/chunks/${index}`)
+    xhr.setRequestHeader('Authorization', `Bearer ${boot.sessionToken}`)
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress?.(completedBytes + event.loaded, file.size)
+    })
+    xhr.addEventListener('load', () => {
+      signal?.removeEventListener('abort', abort)
+      if (xhr.status >= 200 && xhr.status < 300) return resolve()
+      let message = `HTTP ${xhr.status}`
+      try { message = JSON.parse(xhr.responseText).error ?? message } catch { /* sin JSON */ }
+      const error = new Error(message)
+      error.status = xhr.status
+      reject(error)
+    })
+    xhr.addEventListener('error', () => {
+      signal?.removeEventListener('abort', abort)
+      reject(new Error('Fallo de red durante el fragmento'))
+    })
+    xhr.addEventListener('abort', () => {
+      signal?.removeEventListener('abort', abort)
+      reject(new DOMException('Subida cancelada', 'AbortError'))
+    })
+    xhr.send(blob)
+  })
+
+  try {
+    for (let index = 0; index < session.chunkCount; index++) {
+      if (signal?.aborted) throw new DOMException('Subida cancelada', 'AbortError')
+      const start = index * session.chunkBytes
+      const blob = file.slice(start, Math.min(start + session.chunkBytes, file.size))
+      let attempt = 0
+      while (true) {
+        try {
+          await sendChunk(index, blob)
+          break
+        } catch (err) {
+          if (err.name === 'AbortError' || err.status || attempt >= 2) throw err
+          attempt++
+          await new Promise((resolve) => setTimeout(resolve, 500 * attempt))
+        }
+      }
+      completedBytes += blob.size
+      onProgress?.(completedBytes, file.size)
+    }
+    return await apiJson(`/uploads/${session.uploadId}/complete`, {
+      method: 'POST',
+      signal,
+      body: JSON.stringify({})
+    })
+  } catch (err) {
+    if (signal?.aborted) {
+      // La cancelación es explícita: no se conserva una sesión que el usuario
+      // ha dicho que ya no quiere reanudar.
+      api(`/uploads/${session.uploadId}`, { method: 'DELETE' }).catch(() => {})
+    }
+    throw err
+  }
+}
+
 function formatDuration (seconds) {
   if (!seconds) return ''
   const total = Math.round(Number(seconds))
@@ -1034,7 +1119,7 @@ async function renderRevisions () {
   }
 }
 
-el('revision-upload').addEventListener('submit', (event) => {
+el('revision-upload').addEventListener('submit', async (event) => {
   event.preventDefault()
   const file = el('revision-file').files?.[0]
   if (!file) {
@@ -1043,44 +1128,33 @@ el('revision-upload').addEventListener('submit', (event) => {
     return
   }
   const item = revisioning
-  const path = item.kind === 'pdf'
-    ? `/documents/${item.id}/revisions`
-    : `/videos/${item.id}/revisions`
-
-  const data = new FormData()
-  data.append('file', file)
-  const xhr = new XMLHttpRequest()
-  revisionXhr = xhr
-  xhr.open('POST', path)
-  xhr.setRequestHeader('Authorization', `Bearer ${boot.sessionToken}`)
+  const controller = new AbortController()
+  revisionXhr = controller
   el('revision-submit').disabled = true
   dialogStatus('revision-status', 'Preparando subida…')
-  xhr.upload.addEventListener('progress', (e) => {
-    if (e.lengthComputable) {
-      dialogStatus('revision-status', `Subiendo… ${Math.round((e.loaded / e.total) * 100)}%`)
+  try {
+    await uploadFileInChunks({
+      file,
+      kind: item.kind,
+      materialId: item.id,
+      signal: controller.signal,
+      onProgress: (loaded, total) => {
+        dialogStatus('revision-status', `Subiendo por fragmentos… ${Math.round((loaded / total) * 100)}%`)
+      }
+    })
+    // La versión anterior sigue publicándose mientras ésta se procesa.
+    dialogStatus('revision-status', 'Nueva versión en cola. La versión publicada sigue activa hasta que ésta esté lista.')
+    el('revision-upload').reset()
+    await renderRevisions()
+    await reload()
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      dialogStatus('revision-status', err.message, { error: true, focus: true })
     }
-  })
-  xhr.addEventListener('load', async () => {
+  } finally {
     revisionXhr = null
     el('revision-submit').disabled = false
-    if (xhr.status === 202) {
-      // La versión anterior sigue publicándose mientras ésta se procesa.
-      dialogStatus('revision-status', 'Nueva versión en cola. La versión publicada sigue activa hasta que ésta esté lista.')
-      el('revision-upload').reset()
-      await renderRevisions()
-      await reload()
-    } else {
-      let message = `HTTP ${xhr.status}`
-      try { message = JSON.parse(xhr.responseText).error ?? message } catch { /* sin JSON */ }
-      dialogStatus('revision-status', message, { error: true, focus: true })
-    }
-  })
-  xhr.addEventListener('error', () => {
-    revisionXhr = null
-    el('revision-submit').disabled = false
-    dialogStatus('revision-status', 'Fallo de red durante la subida', { error: true, focus: true })
-  })
-  xhr.send(data)
+  }
 })
 
 el('revisions-close').addEventListener('click', () => {
@@ -1114,7 +1188,7 @@ function openUpload () {
   el('upload-title').focus()
 }
 
-el('upload-btn').addEventListener('click', () => {
+el('upload-btn').addEventListener('click', async () => {
   const file = el('upload-file').files?.[0]
   if (!file || file.size === 0) {
     dialogStatus('upload-status', 'Selecciona un fichero', { error: true })
@@ -1129,47 +1203,36 @@ el('upload-btn').addEventListener('click', () => {
     return
   }
 
-  // Los campos van antes que el fichero: así el servidor los conoce cuando
-  // empieza a recibir el streaming.
-  const data = new FormData()
   const title = el('upload-title').value.trim()
-  if (title) data.append('title', title)
-  const folderId = el('upload-dialog').dataset.folderId
-  if (folderId) data.append('folderId', folderId)
-  data.append('file', file)
-
-  // XHR y no fetch: es la única forma de tener barra de progreso en la subida.
-  const xhr = new XMLHttpRequest()
-  uploadXhr = xhr
-  xhr.open('POST', isVideo ? '/videos' : '/documents')
-  xhr.setRequestHeader('Authorization', `Bearer ${boot.sessionToken}`)
-
+  const folderId = el('upload-dialog').dataset.folderId || null
+  const controller = new AbortController()
+  uploadXhr = controller
   el('upload-btn').disabled = true
-  xhr.upload.addEventListener('progress', (e) => {
-    if (!e.lengthComputable) return
-    dialogStatus('upload-status', `Subiendo… ${Math.round((e.loaded / e.total) * 100)}%`)
-  })
-  xhr.addEventListener('load', async () => {
-    el('upload-btn').disabled = false
-    uploadXhr = null
-    if (xhr.status === 202) {
-      el('upload-dialog').close()
-      notify(isVideo
-        ? 'Vídeo subido. La transcodificación A/B ya está en cola.'
-        : 'PDF subido. Se está validando y normalizando.')
-      await reload()
-    } else {
-      let message = `HTTP ${xhr.status}`
-      try { message = JSON.parse(xhr.responseText).error ?? message } catch { /* sin JSON */ }
-      dialogStatus('upload-status', `Error subiendo el material: ${message}`, { error: true, focus: true })
+  dialogStatus('upload-status', 'Preparando subida…')
+  try {
+    await uploadFileInChunks({
+      file,
+      kind: isVideo ? 'video' : 'pdf',
+      title,
+      folderId,
+      signal: controller.signal,
+      onProgress: (loaded, total) => {
+        dialogStatus('upload-status', `Subiendo por fragmentos… ${Math.round((loaded / total) * 100)}%`)
+      }
+    })
+    el('upload-dialog').close()
+    notify(isVideo
+      ? 'Vídeo subido. La transcodificación A/B ya está en cola.'
+      : 'PDF subido. Se está validando y normalizando.')
+    await reload()
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      dialogStatus('upload-status', `Error subiendo el material: ${err.message}`, { error: true, focus: true })
     }
-  })
-  xhr.addEventListener('error', () => {
+  } finally {
     el('upload-btn').disabled = false
     uploadXhr = null
-    dialogStatus('upload-status', 'Fallo de red durante la subida', { error: true, focus: true })
-  })
-  xhr.send(data)
+  }
 })
 
 el('upload-cancel').addEventListener('click', () => {

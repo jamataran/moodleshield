@@ -40,8 +40,9 @@ backend, así que el vídeo se escribiría dos veces. Por eso la `location
 
 **No incluye**
 
-- Subida troceada o reanudable (tus-io). Es la evolución natural si las subidas
-  desde conexiones malas resultan un problema real.
+- En el alcance original no entró la subida troceada. Desde agosto de 2026 el
+  catálogo usa `/uploads`: fragmentos idempotentes, consulta de progreso y
+  reintegración en streaming, sin incorporar el protocolo tus.
 - Subida directa a S3/MinIO. El diseño no lo impide, pero añade una pieza más.
 
 ## Ficheros implicados
@@ -88,9 +89,10 @@ ls -la .data/uploads/
 
 ## Riesgos y trampas
 
-- **El límite de 100 MB de Cloudflare Tunnel** en plan gratuito corta las
-  subidas grandes con un error de red poco informativo. Ver
-  [`../../https-tunel.md`](../../https-tunel.md).
+- **Cloudflare limita el cuerpo de cada petición.** El catálogo envía 16 MiB
+  por defecto y por eso atraviesa el plan Free/Pro; los endpoints `multipart`
+  antiguos se conservan para compatibilidad y sí siguen sujetos al límite.
+  Ver [`../../https-tunel.md`](../../https-tunel.md).
 - **Disco lleno.** No hay control de cuota. Con `df` y una alerta basta para el
   MVP, pero conviene tenerlo presente: un profesor puede llenar el disco.
 - **Nombres de fichero con recorrido de ruta.** Nunca se usa el nombre original
