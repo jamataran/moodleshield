@@ -10,6 +10,7 @@ import { documentsRouter } from './routes/documents.js'
 import { collectionsRouter } from './routes/collections.js'
 import { foldersRouter } from './routes/folders.js'
 import { materialsRouter } from './routes/materials.js'
+import { uploadsRouter } from './routes/uploads.js'
 import { hlsRouter, mediaRouter } from './routes/hls.js'
 import { healthRouter } from './routes/health.js'
 import { renderPage, uiDir } from './ui/render.js'
@@ -77,6 +78,7 @@ export async function createApp () {
   app.use('/admin', adminRouter)
   app.use('/lti', ltiRouter)
   app.use('/materials', materialsRouter)
+  app.use('/uploads', uploadsRouter)
   app.use('/folders', foldersRouter)
   app.use('/collections', collectionsRouter)
   app.use('/videos', videosRouter)
@@ -133,7 +135,8 @@ export async function createApp () {
     const status = err.status ?? 500
     if (status >= 500) req.log?.error({ err }, 'Error no controlado')
     res.status(status).json({
-      error: status >= 500 && config.isProduction ? 'Error interno' : err.message
+      error: status >= 500 && config.isProduction ? 'Error interno' : err.message,
+      code: status < 500 ? err.code : undefined
     })
   })
 

@@ -2,7 +2,9 @@ import path from 'node:path'
 import { readdir, rm, stat } from 'node:fs/promises'
 import { many, query } from '../db/index.js'
 import logger from '../logger.js'
+import config from '../config.js'
 import {
+  chunkUploadRoot,
   documentsRoot,
   mediaRoot,
   quarantineRoot,
@@ -138,11 +140,19 @@ export async function reconcileStorage () {
   }
 
   for (const entry of await entries(uploadRoot)) {
-    if (entry.name === '.tmp') continue
+    if (entry.name === '.tmp' || entry.name === '.chunks') continue
     const target = path.join(uploadRoot, entry.name)
     if (!sources.has(path.resolve(target)) && await oldEnough(target)) {
       await rm(target, { recursive: true, force: true })
       removed.uploads++
+    }
+  }
+
+  for (const entry of await entries(chunkUploadRoot)) {
+    const target = path.join(chunkUploadRoot, entry.name)
+    if (await oldEnough(target, config.media.uploadSessionTtlSeconds * 1000)) {
+      await rm(target, { recursive: true, force: true })
+      removed.temp++
     }
   }
 

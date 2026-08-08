@@ -121,7 +121,7 @@ para LTI porque el servidor Moodle no puede acceder a `/lti/keys`.
 |---|---|
 | Moodle no conecta | El servidor Moodle no llega a `/lti/keys`; probar desde esa máquina |
 | URLs generadas en HTTP | Falta `X-Forwarded-Proto: https` o `PUBLIC_URL` es incorrecta |
-| Subida responde 413 | Ajusta juntos `client_max_body_size`, `MAX_UPLOAD_SIZE` y `MAX_UPLOAD_BYTES` |
-| Subida local por Cloudflare se corta a 100 MB | Límite del plan gratuito del túnel |
+| Subida troceada responde 413 | `UPLOAD_CHUNK_BYTES` debe quedar por debajo del máximo de la zona (16 MiB por defecto) |
+| Un cliente antiguo se corta a 100 MB | Está usando el `multipart` legado; el catálogo actual usa `/uploads` por fragmentos |
 | Tailscale dice `tailnet only` | Está activo Serve, no Funnel |
 | Certificado rechazado | El dominio no coincide o la cadena del certificado está incompleta |

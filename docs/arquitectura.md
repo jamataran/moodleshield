@@ -121,11 +121,18 @@ una hora) y una reescritura de texto. El resto es E/S de disco.
 ## El camino de una subida
 
 ```
-1. Profesor → POST /videos  (multipart, en streaming)
-   nginx    · proxy_request_buffering off  → no acumula el fichero
-   app      · busboy escribe directo a disco → el heap no crece
-            · crea el registro y encola el trabajo
-            → 202 { id, status: "queued" }
+1. Profesor → POST /uploads  (reserva una sesión y negocia fragmentos de 16 MiB)
+   navegador · divide el File con Blob.slice
+             · PUT /uploads/<id>/chunks/<n> por cada fragmento
+   nginx      · proxy_request_buffering off → no duplica cada fragmento
+   app        · confirma cada fragmento atómicamente e idempotente
+              · POST /uploads/<id>/complete concatena en streaming
+              · valida tamaño, firma PDF y SHA-256 del fichero reintegrado
+              · crea el registro y encola el trabajo
+              → 202 { id, revisionId, status: "queued" }
+
+   Cada petición queda muy por debajo de los 100 MB de Cloudflare Free/Pro. El
+   fichero completo nunca entra en el heap; sólo existe en disco al terminar.
 
 2. worker   · SELECT … FOR UPDATE SKIP LOCKED
             · ffprobe → duración, tamaño, ¿hay audio?
@@ -193,6 +200,11 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | GET/POST | `/lti/platforms` | `LTI_ADMIN_TOKEN` | Gestión de plataformas |
 | GET | `/materials` | catálogo | **Catálogo unificado** (vídeos + PDFs), filtros y cursor |
 | GET | `/materials/:kind/:id/revisions` | catálogo | Historial de revisiones |
+| POST | `/uploads` | catálogo | Iniciar subida troceada de alta o sustitución |
+| GET | `/uploads/:id` | catálogo | Fragmentos confirmados (reanudación) |
+| PUT | `/uploads/:id/chunks/:n` | catálogo | Enviar un fragmento binario idempotente |
+| POST | `/uploads/:id/complete` | catálogo | Reintegrar, validar y encolar |
+| DELETE | `/uploads/:id` | catálogo | Cancelar y retirar fragmentos |
 | POST | `/materials/:kind/:id/revisions/:rid/activate` | catálogo | Publicar o volver a una versión |
 | POST | `/materials/:kind/:id/revisions/:rid/discard` | catálogo | Descartar una candidata |
 | DELETE | `/materials/:kind/:id/revisions/:rid` | catálogo | Purgar si la retención lo permite |
