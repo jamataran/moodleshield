@@ -116,7 +116,7 @@ jobs:
       # de app. `proxy` es nginx + la configuración de infra/nginx. Se publican
       # manifiestos amd64 y arm64 para servidores y NAS de ambas arquitecturas.
       - name: Bake y push (app + worker + proxy)
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@v7
         with:
           files: docker/docker-bake.hcl
           targets: default
