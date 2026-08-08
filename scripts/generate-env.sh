@@ -12,7 +12,7 @@
 # arrastra comentarios: Portainer los interpretaría como variables con nombres
 # absurdos.
 #
-# ⚠️ WATERMARK_SECRET es permanente. Este script genera secretos NUEVOS cada
+# ⚠️ WATERMARK_SECRET es permanente. Este script genera secretos nuevos cada
 # vez: ejecutarlo otra vez contra un stack que ya rodó y pegar el resultado
 # invalida todas las trazas forenses anteriores y las sesiones en curso.
 
