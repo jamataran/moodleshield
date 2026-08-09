@@ -18,6 +18,7 @@ import { reconcileStorage } from './media/reconcile.js'
 import { migrateLegacyMediaLayout } from './media/layout-migration.js'
 import { purgeRetiredRevisions, reportArchivedMaterials } from './services/revisions.js'
 import { LostLeaseError, videoQueue, pdfQueue } from './queue/postgres.js'
+import { claimNextJob } from './queue/scheduler.js'
 
 assertConfigValid()
 
@@ -79,6 +80,8 @@ const PIPELINES = {
     }
   }
 }
+const pipelineList = Object.values(PIPELINES)
+let nextPipelineIndex = 0
 
 async function processJob (pipeline, job) {
   const { queue, kind } = pipeline
@@ -241,22 +244,13 @@ async function loop () {
       continue
     }
     try {
-      // Se consultan las dos colas por turno. Un PDF tarda segundos y un vídeo
-      // minutos: si compartieran cola, una tanda de vídeos dejaría los PDFs
-      // esperando media tarde para una validación de tres segundos.
-      let claimed = false
-      for (const pipeline of Object.values(PIPELINES)) {
-        if (active.size >= config.transcode.concurrency) break
-        const job = await pipeline.queue.claimJob({
-          workerId,
-          leaseSeconds: config.transcode.leaseSeconds
-        })
-        if (job) {
-          claimed = true
-          void processJob(pipeline, job)
-        }
-      }
-      if (!claimed) await sleep(config.transcode.pollIntervalMs)
+      const claimed = await claimNextJob(pipelineList, nextPipelineIndex, {
+        workerId,
+        leaseSeconds: config.transcode.leaseSeconds
+      })
+      nextPipelineIndex = claimed.nextIndex
+      if (claimed.job) void processJob(claimed.pipeline, claimed.job)
+      else await sleep(config.transcode.pollIntervalMs)
     } catch (err) {
       logger.error({ err, workerId }, 'Fallo reclamando trabajo')
       await sleep(config.transcode.pollIntervalMs)

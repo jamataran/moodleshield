@@ -13,6 +13,7 @@ import { materialsRouter } from './routes/materials.js'
 import { uploadsRouter } from './routes/uploads.js'
 import { hlsRouter, mediaRouter } from './routes/hls.js'
 import { progressRouter } from './routes/progress.js'
+import { contentApiRouter } from './routes/content-api.js'
 import { healthRouter } from './routes/health.js'
 import { renderPage, uiDir } from './ui/render.js'
 import { adminRouter } from './admin/routes.js'
@@ -82,6 +83,7 @@ export async function createApp () {
   app.use(express.json({ limit: config.http.bodyLimit }))
 
   app.use(healthRouter)
+  app.use('/api/v1', contentApiRouter)
   app.use('/admin', adminRouter)
   app.use('/lti', ltiRouter)
   app.use('/materials', materialsRouter)

@@ -202,6 +202,9 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | GET | `/lti/config` | — | Datos de alta en Moodle |
 | POST | `/lti/deeplink/response` | token de Deep Linking | Devuelve la selección a Moodle |
 | GET/POST | `/lti/platforms` | `LTI_ADMIN_TOKEN` | Gestión de plataformas |
+| GET | `/api/v1/platforms` | `CONTENT_API_TOKEN` | Plataformas disponibles para una migración |
+| POST/GET/PUT/DELETE | `/api/v1/uploads…` | token + plataforma + propietario | Mismo protocolo troceado de la UI para scripts/Postman |
+| GET | `/api/v1/materials/:kind/:id` | token + plataforma + propietario | Estado de material, última revisión y trabajo |
 | GET | `/admin/platforms/:id/contenido` | consola admin | **Inventario del aula**: todo el material de todos sus profesores |
 | GET | `/materials` | catálogo | **Catálogo unificado** (vídeos + PDFs), filtros y cursor |
 | GET | `/materials/:kind/:id/revisions` | catálogo | Historial de revisiones |

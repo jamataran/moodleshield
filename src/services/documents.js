@@ -42,6 +42,18 @@ export function listReadyDocumentsForDeepLink ({ ids, platformId, ownerSub }) {
   )
 }
 
+export function listInsertableDocumentsForDeepLink ({ ids, platformId, ownerSub }) {
+  if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
+  return many(
+    `SELECT m.id, m.title, m.description
+       FROM pdf_document m
+      WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}
+        AND m.archived_at IS NULL
+        AND (m.active_revision_id IS NOT NULL OR m.status IN ('queued','processing'))`,
+    [platformId, ownerSub, ids]
+  )
+}
+
 export function createDocumentAndJob ({
   id,
   title,

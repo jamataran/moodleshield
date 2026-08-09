@@ -39,6 +39,7 @@ x-app-env: &app-env
   # ⚠️ Debe coincidir con el MEDIA_LINK_SECRET del servicio proxy (abajo).
   MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:-local-inseguro-medialink-00000000000000000000}
   LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-local-admin}
+  CONTENT_API_TOKEN: ${CONTENT_API_TOKEN:-local-content-api-token-0000000000000000}
   ADMIN_USERNAME: ${ADMIN_USERNAME:-}
   ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
   ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}

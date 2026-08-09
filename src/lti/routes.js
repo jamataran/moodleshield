@@ -10,8 +10,8 @@ import { MESSAGE_TYPE } from './claims.js'
 import { issueSession, issueToken, verifyToken } from '../session.js'
 import { renderPage } from '../ui/render.js'
 import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
-import { getVideoForPlatform, listReadyVideosForDeepLink } from '../services/videos.js'
-import { getDocumentForPlatform, listReadyDocumentsForDeepLink } from '../services/documents.js'
+import { getVideoForPlatform, listInsertableVideosForDeepLink } from '../services/videos.js'
+import { getDocumentForPlatform, listInsertableDocumentsForDeepLink } from '../services/documents.js'
 import { getCollectionForPlatform, loadItems, publicItem } from '../services/collections.js'
 import { getVisibleCollection } from '../services/sharing.js'
 import { publicOriginFor } from '../security/public-origin.js'
@@ -453,13 +453,13 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
       // plataforma. Devolver varios sería otra semántica y otro resultado.
       materials = await resolveCollectionsForDeepLink(scope)
     } else if (kind === 'pdf') {
-      materials = (await listReadyDocumentsForDeepLink(scope)).map((row) => ({ ...row, kind: 'pdf' }))
+      materials = (await listInsertableDocumentsForDeepLink(scope)).map((row) => ({ ...row, kind: 'pdf' }))
     } else {
-      materials = (await listReadyVideosForDeepLink(scope)).map((row) => ({ ...row, kind: 'video' }))
+      materials = (await listInsertableVideosForDeepLink(scope)).map((row) => ({ ...row, kind: 'video' }))
     }
 
     if (materials.length === 0) {
-      throw new LtiError('Ninguno de los materiales seleccionados está disponible', { code: 'not_ready' })
+      throw new LtiError('Ninguno de los materiales seleccionados se puede insertar', { code: 'not_insertable' })
     }
 
     const jwt = await buildDeepLinkingResponse({

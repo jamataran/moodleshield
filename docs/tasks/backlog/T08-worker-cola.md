@@ -117,9 +117,9 @@ head -c 1000000 /dev/urandom > /tmp/basura.mp4    # súbelo y observa los 3 inte
 - **Ficheros parciales.** Un fallo a mitad deja segmentos incompletos que
   confundirían al siguiente intento. Se borra el directorio del vídeo antes de
   reintentar.
-- **Concurrencia mayor que 1.** `TRANSCODE_CONCURRENCY` está en 1 a propósito:
-  con ffmpeg por software, dos trabajos en paralelo no van al doble de rápido,
-  se estorban. Súbelo sólo con aceleración hardware.
+- **Concurrencia mayor que 1.** `TRANSCODE_CONCURRENCY` está fijado en 1: el
+  arranque rechaza otro valor para que ffmpeg no compita con otro trabajo del
+  mismo worker. Escalar réplicas es una decisión operativa separada.
 - **El worker no expone puerto**, así que su healthcheck sólo comprueba que el
   proceso vive. Si se queda bloqueado esperando a la base de datos, Docker no lo
   detecta. Los logs sí lo dicen.

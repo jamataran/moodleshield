@@ -340,7 +340,8 @@ Las que más se tocan durante el desarrollo:
 | `MARK_ALPHA` | `0.06` | Opacidad de la marca A/B. Súbela a `0.5` para verla |
 | `MEDIA_DELIVERY` | `app` | `signed` en producción: los segmentos los sirve nginx |
 | `SEGMENT_SECONDS` | `4` | Duración de segmento; también la resolución del patrón |
-| `TRANSCODE_CONCURRENCY` | `1` | Súbelo sólo con aceleración por hardware |
+| `TRANSCODE_CONCURRENCY` | `1` | Debe permanecer en `1`: el arranque rechaza otro valor |
+| `CONTENT_API_TOKEN` | — | Activa la API de migración; vacío la mantiene en 404 |
 | `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
 | `LOG_LEVEL` | `info` | `debug` para ver las queries (ojo con los tokens) |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas |
