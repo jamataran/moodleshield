@@ -51,24 +51,82 @@ export async function probe (input, { signal } = {}) {
     durationSeconds: Number.parseFloat(data.format?.duration ?? '0') || null,
     width: video.width ?? null,
     height: video.height ?? null,
+    fps: parseFrameRate(video.avg_frame_rate) ?? parseFrameRate(video.r_frame_rate),
+    colorTransfer: video.color_transfer ?? null,
+    colorSpace: video.color_space ?? null,
     hasAudio: Boolean(data.streams?.some((s) => s.codec_type === 'audio'))
   }
 }
 
-function encodeArgs ({ input, variant, outDir, keyInfo, hasAudio }) {
-  const { segmentSeconds, fps, crf, preset } = config.transcode
-  const gop = segmentSeconds * fps
+function parseFrameRate (raw) {
+  if (typeof raw !== 'string') return null
+  const [num, den] = raw.split('/').map(Number)
+  if (!Number.isFinite(num) || !Number.isFinite(den) || num <= 0 || den <= 0) return null
+  return num / den
+}
+
+/**
+ * Los fps de salida siguen a la fuente en vez de forzar siempre 24: reducir
+ * 30 o 60 fps a 24 produce tirones que se perciben como pérdida de calidad
+ * (y, en fuentes con timestamps irregulares, como desincronización). Se
+ * redondea a entero para que el GOP (segmentSeconds × fps) sea exacto — la
+ * condición de que A y B corten en los mismos instantes — y se limita a 30:
+ * por encima se divide entre dos (60→30, 50→25), que conserva la cadencia.
+ */
+export function chooseOutputFps (sourceFps, fallback = config.transcode.fps) {
+  if (!Number.isFinite(sourceFps) || sourceFps <= 0) return fallback
+  let fps = sourceFps
+  while (fps > 30) fps /= 2
+  return Math.max(1, Math.round(fps))
+}
+
+const HDR_TRANSFERS = new Set(['smpte2084', 'arib-std-b67'])
+const SD_MATRICES = new Set(['smpte170m', 'bt470bg', 'smpte240m'])
+
+/**
+ * Filtros previos a la marca que normalizan el color a BT.709 SDR.
+ *
+ * Sin esto, una fuente HDR de móvil (HLG o PQ) acababa aplastada a 8 bits sin
+ * tonemapping — colores lavados — y la salida viajaba sin etiquetar, dejando
+ * al navegador adivinar la matriz. La salida se etiqueta siempre como BT.709
+ * en encodeArgs; aquí sólo se convierte lo que de verdad no lo es.
+ */
+export function colorFilters ({ colorTransfer, colorSpace } = {}) {
+  if (HDR_TRANSFERS.has(colorTransfer)) {
+    return [
+      // zimg aborta («no path between colorspaces») si algún frame llega a
+      // medio etiquetar; se fijan las propiedades completas antes de entrar.
+      // El HDR de consumo es siempre BT.2020, así que no se adivina nada.
+      `setparams=color_primaries=bt2020:color_trc=${colorTransfer}:colorspace=bt2020nc`,
+      'zscale=t=linear:npl=100',
+      'format=gbrpf32le',
+      'zscale=p=bt709',
+      'tonemap=hable:desat=0',
+      'zscale=t=bt709:m=bt709:r=tv',
+      'format=yuv420p'
+    ]
+  }
+  if (SD_MATRICES.has(colorSpace)) return ['colorspace=bt709']
+  return []
+}
+
+function encodeArgs ({ input, variant, outDir, keyInfo, hasAudio, fps, preFilters = [] }) {
+  const { segmentSeconds, crf, preset } = config.transcode
+  const gop = Math.round(segmentSeconds * fps)
 
   const args = [
     '-hide_banner', '-nostdin', '-y',
     '-i', input,
-    '-vf', markFilter(variant),
+    '-vf', [...preFilters, markFilter(variant)].join(','),
     '-c:v', 'libx264',
     '-preset', preset,
     '-crf', String(crf),
     '-profile:v', 'high',
     '-pix_fmt', 'yuv420p',
     '-r', String(fps),
+    // La salida se etiqueta siempre como BT.709: sin estas marcas cada
+    // navegador adivina la matriz y el color cambia según dónde se mire.
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
     // GOP fijo y sin detección de escenas: es la condición para que A y B
     // corten los segmentos exactamente en los mismos instantes.
     '-x264-params', `keyint=${gop}:min-keyint=${gop}:scenecut=0`,
@@ -122,7 +180,9 @@ export async function transcodeVideo (videoId, inputPath, {
   await mkdir(variantDir('B'), { recursive: true })
 
   const info = await probe(inputPath, { signal })
-  log.info(info, 'Vídeo analizado')
+  const outputFps = chooseOutputFps(info.fps)
+  const preFilters = colorFilters(info)
+  log.info({ ...info, outputFps, tonemap: preFilters.length > 0 }, 'Vídeo analizado')
 
   // Una clave AES por vídeo, compartida por ambas variantes: es lo que permite
   // mezclar segmentos A y B en la misma playlist.
@@ -146,7 +206,9 @@ export async function transcodeVideo (videoId, inputPath, {
         variant,
         outDir: variantDir(variant),
         keyInfo: keyInfoFile,
-        hasAudio: info.hasAudio
+        hasAudio: info.hasAudio,
+        fps: outputFps,
+        preFilters
       }),
       { onLine: onProgress, signal }
     )
@@ -157,7 +219,7 @@ export async function transcodeVideo (videoId, inputPath, {
   const playlistB = parseVariantPlaylist(await readFile(playlistPath('B'), 'utf8'))
   assertVariantsAligned(playlistA, playlistB)
 
-  await generatePoster(inputPath, path.join(dir, 'poster.jpg'), info.durationSeconds, signal)
+  await generatePoster(inputPath, path.join(dir, 'poster.jpg'), info.durationSeconds, signal, preFilters)
 
   // key.info contiene la ruta absoluta de la clave; ya no hace falta y es un
   // fichero menos que pueda acabar servido por error.
@@ -173,7 +235,10 @@ export async function transcodeVideo (videoId, inputPath, {
     width: info.width,
     height: info.height,
     hasAudio: info.hasAudio,
-    fps: config.transcode.fps,
+    fps: outputFps,
+    sourceFps: info.fps,
+    sourceColorTransfer: info.colorTransfer,
+    tonemapped: preFilters.length > 0,
     markAlpha: config.transcode.markAlpha,
     markGeometry: MARK_GEOMETRY,
     variants: ['A', 'B']
@@ -185,7 +250,7 @@ export async function transcodeVideo (videoId, inputPath, {
   return meta
 }
 
-async function generatePoster (input, outputPath, durationSeconds, signal) {
+async function generatePoster (input, outputPath, durationSeconds, signal, preFilters = []) {
   const at = Math.min(5, Math.max(1, (durationSeconds ?? 10) / 10))
   try {
     await runProcess(config.transcode.ffmpegPath, [
@@ -193,7 +258,7 @@ async function generatePoster (input, outputPath, durationSeconds, signal) {
       '-ss', at.toFixed(2),
       '-i', input,
       '-frames:v', '1',
-      '-vf', 'scale=640:-2',
+      '-vf', [...preFilters, 'scale=640:-2'].join(','),
       '-q:v', '4',
       outputPath
     ], { signal })

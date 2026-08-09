@@ -238,7 +238,12 @@ repositorio; el CI comprueba que no se cuela ninguno. El commit del bump lleva
 
 **Estado**: aceptada · **Fecha**: 2026-08
 
-**Decisión.** Un solo nivel de calidad (CRF 21, 24 fps).
+**Decisión.** Un solo nivel de calidad (CRF 21). Los fps de salida siguen a la
+fuente (redondeados a entero para que el GOP sea exacto y limitados a 30:
+60→30, 50→25); si la fuente no declara fps fiables se cae a `OUTPUT_FPS` (24).
+El color se normaliza siempre a BT.709 SDR etiquetado, con tonemapping cuando
+la fuente es HDR (HLG/PQ): sin él, los vídeos de móvil salían con los colores
+lavados, y sin etiquetas cada navegador adivinaba la matriz.
 
 **Razones.** El multibitrate multiplica el número de variantes: con tres niveles
 serían seis transcodificaciones por vídeo en vez de dos, sobre el recurso más
