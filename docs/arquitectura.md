@@ -167,6 +167,8 @@ transcode_job            cola de vídeo: revisión, lease, intentos, cancelació
 pdf_job                  cola de PDF, con la misma semántica
 view_event               quién cargó qué vídeo, de qué revisión
 document_view_event      lo mismo para documentos
+learner_progress         marcador «reanudar donde lo dejó» por alumno y recurso
+                         (sin FK a propósito: dato consultivo, ADR-021)
 schema_migration         control de migraciones
 ```
 
@@ -233,6 +235,7 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | POST | `/collections/:id/duplicate` | catálogo | Copia lógica |
 | DELETE | `/collections/:id` | catálogo | Archivar (no borra) |
 | GET | `/collections/:id/manifest` | sesión con alcance | Índice para el visor del alumno |
+| PUT | `/progress/:kind/:id` | sesión con alcance | Marcador de reanudación del alumno (la lectura viaja en el bootstrap del launch, ADR-021) |
 | GET | `/hls/:id/index.m3u8` | sesión con alcance | **Playlist personalizada** |
 | GET | `/hls/:id/key` | token de clave | Clave AES-128 de esa revisión |
 | GET | `/media/videos/:id/:rev/:variant/:seg` | URL firmada | Segmento (en producción, nginx) |

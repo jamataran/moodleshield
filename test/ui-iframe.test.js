@@ -307,10 +307,13 @@ test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua ca
 
   assert.match(css, /container:\s*video-player\s*\/\s*inline-size/,
     'los controles deben adaptarse al ancho real del reproductor')
-  assert.match(css, /\.video-icon-button svg text\s*\{[^}]*fill:\s*currentColor[^}]*paint-order:\s*stroke fill/s,
-    'el número 10 debe conservar contraste sobre el fondo y sobre la flecha')
-  assert.doesNotMatch(css, /\.video-icon-button svg text\s*\{[^}]*fill:\s*#090b0f/s,
-    'el número 10 no puede volver a dibujarse negro sobre el reproductor')
+  // El «10» de los saltos va dibujado como trazados vectoriales: un <text> SVG
+  // a este tamaño depende de la fuente del sistema y renderiza distinto (y
+  // peor) en cada navegador.
+  assert.doesNotMatch(code, /ICONS\s*=[\s\S]*?<text/,
+    'los iconos del reproductor no deben volver a depender de <text> SVG')
+  assert.doesNotMatch(css, /\.video-icon-button svg text/,
+    'sin <text> en los iconos, su regla CSS es código muerto')
   assert.match(css, /@media \(pointer: coarse\)[\s\S]*?\.video-timeline\s*\{[^}]*height:\s*2rem/,
     'la barra necesita un objetivo táctil cómodo')
   assert.doesNotMatch(css, /\.video-volume-group\s*\{\s*display:\s*none/,

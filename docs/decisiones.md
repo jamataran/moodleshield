@@ -592,3 +592,44 @@ los dos nombres a la vez. Añadir un alias es declarar que ese nombre apunta a
 esta instancia: si alguna vez apuntara a otra cosa, habría que quitarlo. La
 configuración que se copia en Moodle sigue siendo la canónica a propósito,
 para no registrar por error una URL de desarrollo.
+
+## ADR-021 · El marcador «reanudar donde lo dejó» vive en el servidor, con un solo UPSERT
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** Al reabrir una actividad, el visor arrancaba siempre desde cero:
+primer elemento de la colección, segundo 0 del vídeo, página 1 del PDF. Para
+un curso que se consume por entregas eso obliga al alumno a buscar a mano el
+punto donde iba. Se quiere reanudación automática con la solución más simple
+posible: el despliegue actual sirve a ~20 alumnos y debe aguantar ~100 accesos
+simultáneos sin tocar la infraestructura.
+
+**Decisión.** Una tabla `learner_progress` con una fila por alumno y recurso
+lanzado —`(platform_id, user_sub, resource_kind, resource_id)` como PK— que se
+machaca con un único `INSERT … ON CONFLICT DO UPDATE`. La fila de una colección
+guarda además qué elemento estaba abierto (`item_id` manda; `item_position` es
+el plan B si el material salió de la colección). La lectura no tiene endpoint:
+viaja embebida en el bootstrap del launch, que ya hace una petición a la base
+de datos de todos modos. La escritura es un solo `PUT /progress/:kind/:id`
+autorizado con el mismo `authorizeResource`/`authorizeCollection` de siempre,
+que el visor lanza cada 15 segundos si la posición cambió y al ocultarse la
+página (`fetch` con `keepalive`). La clave `progress` del bootstrap sólo existe
+para alumnos: el profesor ni guarda ni restaura.
+
+**Razones.** `localStorage` era la alternativa sin servidor, pero el visor
+corre en un iframe cross-origin dentro de Moodle: el almacenamiento de terceros
+está particionado o directamente bloqueado según navegador y modo, así que el
+marcador se perdería de forma errática; en el servidor además sobrevive al
+cambio de dispositivo. Los `view_event` no valen como soporte: son registro
+forense append-only deduplicado por sesión, no «último estado». Y no hay colas
+ni eventos porque no hacen falta: 100 alumnos guardando cada 15 s son ~7
+escrituras por segundo contra una PK — ruido para el pool actual de 6
+conexiones.
+
+**Consecuencias.** La tabla no tiene FK, a propósito: `resource_id` e `item_id`
+son polimórficos y el dato es consultivo y desechable — una fila huérfana es
+inofensiva y no debe impedir borrar un material. Un vídeo visto hasta el final
+guarda `0` (reabrir empieza de cero) por el mismo camino UPSERT, sin rama de
+borrado. El marcador es por recurso lanzado, no por material: navegar dentro de
+una colección sólo recuerda el último elemento, no la posición de cada uno.
+Revertirlo es dejar de escribir y de leer; la tabla puede quedarse donde está.

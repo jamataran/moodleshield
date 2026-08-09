@@ -16,6 +16,7 @@ import { getCollectionForPlatform, loadItems, publicItem } from '../services/col
 import { getVisibleCollection } from '../services/sharing.js'
 import { publicOriginFor } from '../security/public-origin.js'
 import { getActiveRevision } from '../services/revisions.js'
+import { getProgress } from '../services/progress.js'
 import { assertUuid, isUuid } from '../media/storage.js'
 import { normalizePlatformInput } from '../admin/platform-validator.js'
 import { AmbiguousPlatformError } from '../services/platforms.js'
@@ -276,6 +277,18 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
     ? 'Este material está archivado: sigue funcionando en las actividades existentes, pero ya no aparece en el selector.'
     : null
 
+  // El marcador de reanudación viaja en el bootstrap: el visor arranca en el
+  // punto correcto sin ninguna petición extra. La clave `progress` sólo existe
+  // para alumnos; su ausencia le dice al visor que tampoco debe guardar.
+  const progress = context.isInstructor
+    ? undefined
+    : await getProgress({
+      platformId: platform.id,
+      userSub: context.sub,
+      resourceKind: resource.kind,
+      resourceId: material.id
+    })
+
   if (resource.kind === 'pdf') {
     const documentSize = material.size_bytes === null || material.size_bytes === undefined
       ? Number.NaN
@@ -300,7 +313,10 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
           downloadHelp: downloadAvailable
             ? null
             : 'Este PDF es demasiado grande para generar una copia marcada. Sigue disponible en el visor.',
-          notice: archivedNotice
+          notice: archivedNotice,
+          ...(context.isInstructor
+            ? {}
+            : { progress: progress ? { pageNumber: progress.pageNumber } : null })
         }
       })
     )
@@ -314,7 +330,10 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
         user: { name: context.name, identity, ip: clientIp },
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
         playlistUrl: `${origin}/hls/${material.id}/index.m3u8`,
-        notice: archivedNotice
+        notice: archivedNotice,
+        ...(context.isInstructor
+          ? {}
+          : { progress: progress ? { positionSeconds: progress.positionSeconds } : null })
       }
     })
   )
@@ -348,6 +367,17 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
     resource: { kind: 'collection', id: collection.id }
   })
 
+  // Igual que en el material suelto: la clave `progress` sólo existe para
+  // alumnos, y trae también qué elemento de la colección estaba abierto.
+  const progress = context.isInstructor
+    ? undefined
+    : await getProgress({
+      platformId: platform.id,
+      userSub: context.sub,
+      resourceKind: 'collection',
+      resourceId: collection.id
+    })
+
   return res.type('html').send(
     await renderPage('collection.html', {
       bootstrap: {
@@ -360,7 +390,20 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
         items: items.map(publicItem),
         user: { name: context.name, identity, ip: clientIp },
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
-        manifestUrl: `${origin}/collections/${collection.id}/manifest`
+        manifestUrl: `${origin}/collections/${collection.id}/manifest`,
+        ...(context.isInstructor
+          ? {}
+          : {
+              progress: progress
+                ? {
+                    itemId: progress.itemId,
+                    itemKind: progress.itemKind,
+                    itemPosition: progress.itemPosition,
+                    positionSeconds: progress.positionSeconds,
+                    pageNumber: progress.pageNumber
+                  }
+                : null
+            })
       }
     })
   )

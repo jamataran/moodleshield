@@ -1,5 +1,6 @@
-import { createVideoView } from './video-component.js?v=video-watermark-3'
+import { createVideoView } from './video-component.js?v=resume-1'
 import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-status-3'
+import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({
@@ -21,7 +22,24 @@ const view = createVideoView({
   video: { ...boot.video, playlistUrl: boot.playlistUrl },
   user: boot.user,
   onStatus: shell.setStatus,
-  globalShortcuts: true
+  globalShortcuts: true,
+  startAtSeconds: boot.progress?.positionSeconds ?? 0
 })
 
-window.addEventListener('pagehide', () => view.destroy())
+// La clave `progress` sólo viene en el bootstrap de un alumno: si no está,
+// tampoco hay nada que guardar (sesión de profesor).
+const saver = 'progress' in boot
+  ? createProgressSaver({
+    sessionToken: boot.sessionToken,
+    url: `/progress/video/${boot.video.id}`,
+    read: () => {
+      const positionSeconds = videoProgressPosition(view.currentTime, view.duration)
+      return positionSeconds === null ? null : { positionSeconds }
+    }
+  })
+  : null
+
+window.addEventListener('pagehide', () => {
+  saver?.destroy()
+  view.destroy()
+})
