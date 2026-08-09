@@ -42,6 +42,7 @@ const STATUS_LABEL = {
   retired: 'retirada',
   purging: 'purgando'
 }
+const INSERTABLE_STATUSES = new Set(['queued', 'processing', 'ready'])
 
 const state = {
   /** 'all', 'browse' (carpeta abierta), 'search' o 'archived'. */
@@ -865,7 +866,9 @@ function materialCard (item) {
     const insert = document.createElement('button')
     insert.className = 'primary'
     insert.textContent = 'Insertar'
-    insert.disabled = item.status !== 'ready'
+    // Moodle puede guardar ya el enlace. El launch devolverá 202 y no servirá
+    // contenido al alumno hasta que el worker publique la revisión A/B.
+    insert.disabled = !INSERTABLE_STATUSES.has(item.status)
     insert.addEventListener('click', () => insertResource(item.kind, item.id))
     actions.append(insert)
   }

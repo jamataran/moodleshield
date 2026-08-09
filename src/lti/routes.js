@@ -7,7 +7,7 @@ import { getPublicJwks } from './keys.js'
 import { findPlatform, listPlatforms, upsertPlatform } from './platform.js'
 import { saveOidcState, validateLaunch, LtiError } from './validate.js'
 import { MESSAGE_TYPE } from './claims.js'
-import { issueSession, issueToken, verifyToken } from '../session.js'
+import { issueSession, issueToken, verifySession, verifyToken } from '../session.js'
 import { renderPage } from '../ui/render.js'
 import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
 import { getVideoForPlatform, listInsertableVideosForDeepLink } from '../services/videos.js'
@@ -243,6 +243,24 @@ export function displayIp (ip) {
   return value.startsWith('::ffff:') ? value.slice(7) : value
 }
 
+/**
+ * Datos de la sesión que el visor enseña al alumno en el aviso legal.
+ *
+ * `reference` es el `jti`, el mismo identificador que se escribe en
+ * `view_event.session_jti`: enseñarlo permite cotejar lo que el alumno ve con lo
+ * que quedó registrado, en vez de pedirle que se fíe. Se leen del token recién
+ * emitido en lugar de recalcularlos aquí para que no puedan divergir de él.
+ */
+function sessionAudit (sessionToken) {
+  const session = verifySession(sessionToken)
+  if (!session) return null
+  return {
+    issuedAt: session.issuedAt,
+    expiresAt: session.expiresAt,
+    reference: session.jti
+  }
+}
+
 async function renderMaterialLaunch ({ res, context, platform, identity, resource, clientIp, origin }) {
   const material = resource.kind === 'pdf'
     ? await getDocumentForPlatform(resource.id, platform.id)
@@ -305,6 +323,7 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
             pageCount: material.page_count
           },
           user: { name: context.name, identity, ip: clientIp },
+          session: sessionAudit(sessionToken),
           returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
           contentUrl: `${origin}/documents/${material.id}/content`,
           downloadUrl: downloadAvailable
@@ -328,6 +347,7 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
         sessionToken,
         video: { id: material.id, title: material.title },
         user: { name: context.name, identity, ip: clientIp },
+        session: sessionAudit(sessionToken),
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
         playlistUrl: `${origin}/hls/${material.id}/index.m3u8`,
         notice: archivedNotice,
@@ -389,6 +409,7 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
         },
         items: items.map(publicItem),
         user: { name: context.name, identity, ip: clientIp },
+        session: sessionAudit(sessionToken),
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
         manifestUrl: `${origin}/collections/${collection.id}/manifest`,
         ...(context.isInstructor

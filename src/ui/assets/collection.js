@@ -1,7 +1,7 @@
 import { createVideoView } from './video-component.js?v=resume-1'
 import { createPdfView } from './pdf-component.js?v=resume-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
-import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-status-3'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
 
 /**
@@ -109,6 +109,8 @@ async function show (nextIndex, { focus = true } = {}) {
   index = nextIndex
   renderIndex()
   destroyView()
+  // El aviso legal cita el material que se está viendo, no la colección.
+  shell.setMaterial({ title: item.title, id: item.id })
 
   if (!item.available) {
     shell.setDownload({

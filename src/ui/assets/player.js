@@ -1,12 +1,13 @@
 import { createVideoView } from './video-component.js?v=resume-1'
-import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-status-3'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({
   boot,
   title: boot.video.title,
-  kindLabel: 'Vídeo'
+  kindLabel: 'Vídeo',
+  material: { title: boot.video.title, id: boot.video.id }
 })
 shell.setDownload({
   available: false,

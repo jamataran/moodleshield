@@ -7,54 +7,60 @@
   <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
 </head>
 <body class="viewer viewer-collection">
-  <header class="viewer-header">
+  <header class="viewer-topbar">
     <button id="back-to-classroom" type="button" class="back-to-classroom" hidden>← Atrás</button>
-    <div class="viewer-heading">
-      <p class="eyebrow" id="resource-kind" hidden></p>
-      <h1 id="title"></h1>
-      <p class="muted" id="description" hidden></p>
-    </div>
-    <div class="viewer-monitoring" aria-label="Datos visibles de monitorización">
+    <button id="legal-chip" type="button" class="legal-chip" aria-haspopup="dialog" aria-controls="legal-dialog">
+      <span class="legal-chip-icon" aria-hidden="true">⚠</span>
       <strong>Sesión monitorizada</strong>
-      <span id="viewer"></span>
-    </div>
+      <span class="legal-chip-id" id="viewer"></span>
+      <span class="legal-chip-cta">Ver detalles</span>
+    </button>
+    <button id="toggle-panel" type="button" class="topbar-icon" aria-pressed="false" aria-label="Ocultar el panel del material">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm5 2H4v12h5V6Zm2 0v12h9V6h-9Z"/>
+      </svg>
+    </button>
   </header>
 
-  <section class="legal-warning" aria-labelledby="legal-heading">
-    <span class="legal-warning-icon" aria-hidden="true">⚠</span>
-    <div>
-      <strong id="legal-heading">Aviso de propiedad intelectual</strong>
-      <p id="legal-copy"></p>
-    </div>
-  </section>
-
   <main class="viewer-shell collection-viewer-shell">
-    <aside class="viewer-sidebar collection-sidebar">
+    <aside class="viewer-sidebar collection-sidebar" aria-label="Panel del material">
+      <div class="sidebar-heading">
+        <p class="eyebrow" id="resource-kind" hidden></p>
+        <h1 id="title"></h1>
+        <p class="muted" id="description" hidden></p>
+      </div>
       <nav class="collection-index" aria-label="Materiales de esta actividad">
         <label class="only-mobile" for="item-select">Material de la actividad</label>
         <select id="item-select" class="only-mobile"></select>
         <ol id="item-list" class="only-desktop"></ol>
       </nav>
+      <div class="collection-nav">
+        <button id="prev" type="button" class="nav-step" aria-label="Material anterior">←</button>
+        <span class="muted" id="position" role="status"></span>
+        <button id="next" type="button" class="nav-step" aria-label="Material siguiente">→</button>
+      </div>
       <section class="resource-actions" aria-label="Acciones del recurso actual">
-        <h2>Acciones</h2>
         <button id="download-action" type="button" class="sidebar-action" disabled>Descargar</button>
         <p id="download-help" class="muted"></p>
+        <p id="notice" class="notice info" hidden></p>
+        <p id="status" class="viewer-status muted" role="status" aria-live="polite" hidden></p>
       </section>
     </aside>
 
     <section class="viewer-main collection-main" aria-label="Material actual">
       <div id="content" class="viewer-content"></div>
-      <div class="collection-footer">
-        <div class="collection-nav">
-          <button id="prev" type="button">← Anterior</button>
-          <span class="muted" id="position" role="status"></span>
-          <button id="next" type="button">Siguiente →</button>
-        </div>
-        <p id="notice" class="notice info" hidden></p>
-        <p id="status" class="viewer-status muted" role="status" aria-live="polite" hidden></p>
-      </div>
     </section>
   </main>
+
+  <dialog id="legal-dialog" class="legal-dialog" aria-labelledby="legal-heading">
+    <h2 id="legal-heading">Aviso de propiedad intelectual</h2>
+    <div id="legal-copy" class="legal-copy"></div>
+    <h3>Datos registrados de esta sesión</h3>
+    <dl id="legal-audit" class="legal-audit"></dl>
+    <form method="dialog" class="dialog-actions">
+      <button value="ok" class="primary">Entendido</button>
+    </form>
+  </dialog>
 
   <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
   <script src="/vendor/hls.min.js?v={{ASSET_VERSION}}"></script>

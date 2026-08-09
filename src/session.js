@@ -110,6 +110,7 @@ export function verifySession (token) {
     resource: payload.rk && payload.rid
       ? { kind: payload.rk, id: payload.rid, revisionId: payload.rrv ?? null }
       : null,
+    issuedAt: payload.iat ?? null,
     expiresAt: payload.exp
   }
 }

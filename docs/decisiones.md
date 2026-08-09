@@ -638,3 +638,51 @@ guarda `0` (reabrir empieza de cero) por el mismo camino UPSERT, sin rama de
 borrado. El marcador es por recurso lanzado, no por material: navegar dentro de
 una colección sólo recuerda el último elemento, no la posición de cada uno.
 Revertirlo es dejar de escribir y de leer; la tabla puede quedarse donde está.
+
+---
+
+## ADR-022 · El aviso legal del visor se colapsa a un chip, y el texto completo abre un diálogo
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** El visor del alumno gastaba tres franjas de pantalla antes de
+llegar al material: cabecera con el título, banda de monitorización y banner
+legal de cuatro líneas; la colección añadía además un pie con
+Anterior/Siguiente y la línea de estado. Medido, unos **174 px** —el 17 % de una
+ventana de 1030 px— en la única pantalla donde el alumno estudia, y el visor
+asume `100dvh` sin negociar nada con el padre: dentro de un iframe corto de
+Moodle lo que sobra no hace scroll, se corta.
+
+**Decisión.** Una sola fila de cromo. El banner y la monitorización se funden en
+un chip ámbar permanente —`⚠ Sesión monitorizada · identidad · IP · Ver
+detalles`— que abre un `<dialog>` con el aviso legal ampliado **y los datos
+concretos de esa sesión**: nombre, identidad, IP, hora de inicio y de
+caducidad, referencia de auditoría, material y navegador. El título del material
+encabeza el panel lateral, la navegación entre materiales baja junto a la lista
+que ya dice dónde estás, y el estado (`Página 3 de 9`) se va al pie del panel.
+Se añade un botón que pliega el panel entero. Para poder enseñar las horas y la
+referencia, `verifySession` devuelve además `issuedAt` y el bootstrap de los
+tres lanzamientos de alumno lleva `session: { issuedAt, expiresAt, reference }`.
+
+**Razones.** La disuasión nunca estuvo en el banner: está en la identidad
+sobreimpresa en cada página del PDF y en cada fotograma del vídeo, que no se
+tocan, y en la marca forense A/B del vídeo (ADR-005). Lo que el banner aportaba
+—«se le advirtió»— se conserva con el chip, que sigue en pantalla el 100 % del
+tiempo con el símbolo de aviso y las palabras «Sesión monitorizada». Lo que
+gana el diálogo es lo que un muro de texto nunca consiguió: la
+`reference` que enseña es el `jti` de la sesión, **el mismo que se escribe en
+`view_event.session_jti`**, así que lo que el alumno lee se puede cotejar con lo
+registrado. Convence más un dato verificable que un párrafo más largo.
+
+**Consecuencias.** El aviso completo pasa a requerir un clic; se descartó
+abrirlo automáticamente una vez por sesión para no cobrar peaje al entrar, y
+queda como un `if` sobre `sessionStorage` en `viewer-shell.js` si algún día se
+quiere endurecer. El diálogo sólo puede prometer lo que el sistema tiene: LTI
+1.3 no trae ningún claim de documento de identidad —sólo el parámetro
+personalizado configurable (`docs/moodle-setup.md`)—, así que cuando no llega se
+dice «No facilitado por el aula virtual» en vez de enseñar un hueco; y no hay
+correo, ni título del curso, ni historial de accesos, porque hoy no existen en
+la sesión ni en ningún endpoint. El helper que limpia `returnValue` antes de
+`showModal()` se extrae a `src/ui/assets/dialog.js` para que el visor no arrastre
+el catálogo del profesor. Revertirlo es restaurar `.legal-warning` como tercera
+fila de `body.viewer`; el diálogo puede quedarse donde está.

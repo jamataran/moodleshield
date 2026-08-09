@@ -1,13 +1,14 @@
 import { createPdfView } from './pdf-component.js?v=resume-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
-import { createViewerShell } from './viewer-shell.js?v=viewer-status-3'
+import { createViewerShell } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver } from './progress-client.js?v=resume-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({
   boot,
   title: boot.document.title,
-  kindLabel: 'Documento PDF'
+  kindLabel: 'Documento PDF',
+  material: { title: boot.document.title, id: boot.document.id }
 })
 shell.setDownload({
   available: Boolean(boot.downloadUrl),

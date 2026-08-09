@@ -101,8 +101,8 @@ Lo importante de este recorrido es lo que **no** aparece: ffmpeg.
 4.  Moodle  → POST /lti/launch  (id_token, state)
 5.  app     · valida state, firma, iss, aud, azp, nonce, versión, deployment
             · emite token de sesión (HMAC, 4 h)
-            · registra el visionado en view_event
             → HTML del player con el token embebido
+              (el visionado NO se registra aquí: ver «Cuándo se registra»)
 6.  player  → GET /hls/<id>/index.m3u8?st=<token>
 7.  app     · deriva el patrón: HMAC(WATERMARK_SECRET, "sub:videoId:n")
             · reescribe la playlist de A: cada segmento apunta a A o a B
@@ -326,6 +326,27 @@ El `jti` del token de sesión desduplica (índice único parcial por recurso +
 `session_jti`), así que recargar el player no inventa visionados. Cada evento
 guarda además la **revisión exacta** que se sirvió, que es contra la que el
 trazado tiene que comparar.
+
+## Qué ve el alumno de su propia sesión
+
+El visor gasta **una sola fila** en cromo (ADR-022): «Atrás», un chip ámbar
+permanente `⚠ Sesión monitorizada · identidad · IP · Ver detalles`, y el botón
+que pliega el panel lateral. Todo lo demás —título del material, lista de la
+colección, Anterior/Siguiente, descarga y línea de estado— vive en ese panel, de
+modo que el alto restante es íntegramente del contenido.
+
+El chip abre un `<dialog>` con el aviso legal completo y los datos registrados
+de la sesión: nombre, identidad, IP, inicio y caducidad, referencia de
+auditoría, material y navegador. Esa **referencia es el `jti`**, el mismo valor
+que la sección anterior guarda en `view_event.session_jti`: lo que el alumno lee
+se puede cotejar con lo registrado. Sale del bootstrap del launch
+(`session: { issuedAt, expiresAt, reference }`), no de descodificar el token.
+
+Sólo se enseña lo que existe. `identity` puede llegar vacío —LTI 1.3 no tiene
+claim de documento de identidad, sólo el parámetro personalizado de
+[`moodle-setup.md`](moodle-setup.md)— y entonces se dice; el correo, el título
+del curso y el historial de accesos previos no están ni en la sesión ni en
+ningún endpoint, y por eso no aparecen.
 
 ## Modelo de seguridad
 
