@@ -106,7 +106,15 @@ export async function createApp () {
         // Los módulos de entrada llevan ?v=, pero sus imports relativos no.
         // Revalidarlos evita mezclar un entrypoint recién desplegado con una
         // dependencia anterior todavía fresca en caché.
-        if (path.extname(file) === '.js') res.set('Cache-Control', 'no-cache')
+        //
+        // Los SVG van en el mismo saco por un motivo distinto: el icono de la
+        // actividad lo guarda Moodle DENTRO de cada actividad al crearla, así
+        // que su URL no puede llevar `?v=` —quedaría congelada en la versión
+        // del día en que se insertó—. Sin revalidar, cambiar el dibujo tardaba
+        // una hora en verse, y en las actividades ya creadas, nunca.
+        // `no-cache` no es «no cachees»: es «pregunta antes de usarlo», y con
+        // ETag la respuesta habitual son 304 vacíos.
+        if (['.js', '.svg'].includes(path.extname(file))) res.set('Cache-Control', 'no-cache')
       }
     })
   )

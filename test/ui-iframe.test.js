@@ -328,8 +328,12 @@ test('el player y los visores se sirven sin CDN', async () => {
 
 test('los imports transitivos de JavaScript se revalidan tras un despliegue', async () => {
   const app = await readFile(path.resolve(uiDir, '../app.js'), 'utf8')
-  assert.match(app, /path\.extname\(file\) === '\.js'[^\n]+Cache-Control/,
-    'los módulos sin ?v= no pueden conservar una versión anterior durante una hora')
+  assert.match(app, /\['\.js', '\.svg'\]\.includes\(path\.extname\(file\)\)[^\n]+Cache-Control/,
+    'los ficheros sin ?v= no pueden conservar una versión anterior durante una hora')
+  // El icono de la actividad lo guarda Moodle dentro de cada actividad: su URL
+  // no admite `?v=`, así que revalidar es la única forma de que un cambio de
+  // dibujo llegue a lo ya insertado en los cursos.
+  assert.match(app, /'\.svg'/, 'los iconos que Moodle guarda por URL deben revalidarse')
 
   const pdf = await readFile(path.join(uiDir, 'assets/pdf.js'), 'utf8')
   const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
