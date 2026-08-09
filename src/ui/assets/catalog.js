@@ -305,10 +305,25 @@ function childrenOf (parentId) {
   return state.folders.filter((f) => (f.parentId ?? null) === (parentId ?? null))
 }
 
-function flattenedFolders () {
+/**
+ * `shared` distingue lo que otro profesor de este Moodle ha compartido. No es
+ * un adorno: decide qué acciones se ofrecen, porque compartir da acceso de
+ * trabajo (ver, editar, insertar) y no de propiedad — archivar, borrar, mover
+ * de carpeta, versiones y compartir siguen siendo del autor.
+ */
+function isShared (item) {
+  return Boolean(item?.shared)
+}
+
+function ownerLabel (item) {
+  return item?.ownerName || 'otro profesor'
+}
+
+function flattenedFolders ({ shared = false } = {}) {
   const out = []
   const walk = (parentId) => {
     for (const child of childrenOf(parentId)) {
+      if (isShared(child) !== shared) continue
       out.push(child)
       walk(child.id)
     }
@@ -355,7 +370,9 @@ function folderOptions ({ exclude = null, rootLabel = 'Biblioteca (raíz)' } = {
   const options = [{ id: '', name: rootLabel, depth: 0 }]
   const walk = (parentId, depth) => {
     for (const child of childrenOf(parentId)) {
-      if (excluded.has(child.id)) continue
+      // Las carpetas compartidas no aparecen como destino: se puede usar lo que
+      // hay dentro, pero no guardar ahí. La carpeta pertenece a su autor.
+      if (excluded.has(child.id) || isShared(child)) continue
       options.push({ id: child.id, name: child.name, depth })
       walk(child.id, depth + 1)
     }
@@ -422,8 +439,19 @@ function locationSnapshot () {
 
 // Buscar y ver archivados son vistas globales: crear o subir desde ellas no
 // debe reutilizar silenciosamente la carpeta que quedó abierta anteriormente.
+// Una carpeta compartida tampoco vale como destino: es de otro profesor y sólo
+// admite material suyo, así que lo nuevo cae en la raíz de la biblioteca propia.
 function destinationFolderId () {
-  return state.view === 'browse' ? state.folderId : null
+  if (state.view !== 'browse') return null
+  return isShared(folderById(state.folderId)) ? null : state.folderId
+}
+
+/** Aviso para cuando el destino no es la carpeta que hay abierta. */
+function destinationNotice () {
+  return isShared(folderById(state.folderId)) && state.view === 'browse'
+    ? ` La carpeta abierta es de ${ownerLabel(folderById(state.folderId))}: puedes usar su ` +
+      'contenido, pero lo que subas se guarda en tu biblioteca.'
+    : ''
 }
 
 function navigate ({ view, folderId = null, query = '' }, { remember = true } = {}) {
@@ -559,6 +587,18 @@ function folderCard (folder) {
     where.textContent = parentPath
     text.append(where)
   }
+  if (isShared(folder)) {
+    const owner = document.createElement('span')
+    owner.className = 'folder-path'
+    owner.textContent = `de ${ownerLabel(folder)}`
+    text.append(owner)
+  } else if (folder.isPublic) {
+    const badge = document.createElement('span')
+    badge.className = 'folder-path'
+    badge.textContent = 'compartida'
+    text.append(badge)
+  }
+
   const counts = document.createElement('span')
   counts.className = 'folder-count'
   counts.textContent = String(folder.materialCount)
@@ -569,19 +609,60 @@ function folderCard (folder) {
 
   const menu = actionMenu(`Acciones de la carpeta ${folder.name}`, [
     { label: 'Renombrar', run: () => { void renameFolder(folder) } },
-    { label: 'Mover a…', run: () => { void openMove({ type: 'folder', item: folder }) } },
-    { label: 'Eliminar', danger: true, run: () => { void deleteFolder(folder) } }
-  ])
+    !isShared(folder) && {
+      label: 'Mover a…', run: () => { void openMove({ type: 'folder', item: folder }) }
+    },
+    !isShared(folder) && {
+      label: folder.isPublic ? 'Dejar de compartir' : 'Compartir con el claustro',
+      run: () => { void toggleFolderSharing(folder) }
+    },
+    !isShared(folder) && {
+      label: 'Eliminar', danger: true, run: () => { void deleteFolder(folder) }
+    }
+  ].filter(Boolean))
 
   card.append(open, menu)
   return card
+}
+
+/**
+ * Publicar una carpeta publica todo lo que cuelga de ella: subcarpetas,
+ * materiales y colecciones. Es el modelo de un gestor de archivos —se comparte
+ * la carpeta, no fichero a fichero— y se dice antes de hacerlo, porque el
+ * profesor puede tener dentro material que no quería enseñar.
+ */
+async function toggleFolderSharing (folder) {
+  const compartir = !folder.isPublic
+  const ok = await askConfirm({
+    heading: compartir ? `Compartir «${folder.name}»` : `Dejar de compartir «${folder.name}»`,
+    message: compartir
+      ? `Los demás profesores de este Moodle verán esta carpeta y TODO lo que hay dentro ` +
+        `(${folder.materialCount} elemento${folder.materialCount === 1 ? '' : 's'} y ` +
+        `${folder.folderCount} subcarpeta${folder.folderCount === 1 ? '' : 's'}), y podrán ` +
+        'insertarlo en sus cursos y editarlo. Archivar y borrar seguirán siendo sólo tuyos.'
+      : 'Dejará de aparecer en la biblioteca de los demás profesores. Las actividades ' +
+        'de Moodle que ya hayan creado con este material siguen funcionando: el enlace ' +
+        'es al material, no a la carpeta.',
+    okLabel: compartir ? 'Compartir' : 'Dejar de compartir'
+  })
+  if (!ok) return
+  try {
+    await apiJson(`/folders/${folder.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isPublic: compartir })
+    })
+    notify(compartir ? 'Carpeta compartida con el claustro' : 'Carpeta de nuevo privada')
+    await reload()
+  } catch (err) {
+    notify(err.message, 'error')
+  }
 }
 
 async function createFolder () {
   const parentId = destinationFolderId()
   const name = await askText({
     heading: 'Nueva carpeta',
-    label: `Nombre de la carpeta (se creará en «${pathName(parentId, 'Biblioteca')}»)`,
+    label: `Nombre de la carpeta (se creará en «${pathName(parentId, 'Biblioteca')}»).${destinationNotice()}`,
     okLabel: 'Crear'
   })
   if (name === null) return
@@ -695,7 +776,8 @@ const posterCache = new Map()
 
 function thumbnail (item) {
   const img = document.createElement('img')
-  img.src = item.kind === 'pdf' ? '/assets/pdf-placeholder.svg' : '/assets/poster-placeholder.svg'
+  // Lámina 16:9 para la tarjeta, no el icono cuadrado que va a Moodle.
+  img.src = item.kind === 'pdf' ? '/assets/card-pdf.svg' : '/assets/poster-placeholder.svg'
   img.alt = ''
   img.loading = 'lazy'
   if (item.status !== 'ready') return img
@@ -754,7 +836,8 @@ function materialCard (item) {
     item.kind === 'pdf'
       ? (item.pageCount ? `${item.pageCount} pág.` : '')
       : formatDuration(item.durationSeconds),
-    state.view === 'browse' ? '' : `en ${pathName(item.folderId)}`
+    state.view === 'browse' ? '' : `en ${pathName(item.folderId)}`,
+    isShared(item) ? `compartido por ${ownerLabel(item)}` : ''
   ].filter(Boolean).join(' · ')
 
   const badge = document.createElement('span')
@@ -809,15 +892,20 @@ function materialCard (item) {
     actions.append(edit)
   }
 
-  actions.append(actionMenu(`Más acciones de «${item.title}»`, [
-    !item.archived && { label: 'Mover a…', run: () => { void openMove({ type: 'material', item }) } },
-    { label: 'Versiones…', run: () => { void openRevisions(item) } },
-    !item.archived && {
-      label: 'Archivar',
-      run: () => { void archiveMaterial(item) }
-    },
-    { label: 'Borrar definitivamente', danger: true, run: () => { void deleteMaterial(item) } }
-  ].filter(Boolean)))
+  // Compartido ≠ propio: se puede usar y corregir el título, pero archivar,
+  // borrar, mover de carpeta o publicar una versión nueva cambiaría lo que ya
+  // están viendo los alumnos de otro profesor. Eso se queda con su autor.
+  const acciones = isShared(item)
+    ? []
+    : [
+        !item.archived && { label: 'Mover a…', run: () => { void openMove({ type: 'material', item }) } },
+        { label: 'Versiones…', run: () => { void openRevisions(item) } },
+        !item.archived && { label: 'Archivar', run: () => { void archiveMaterial(item) } },
+        { label: 'Borrar definitivamente', danger: true, run: () => { void deleteMaterial(item) } }
+      ].filter(Boolean)
+  if (acciones.length > 0) {
+    actions.append(actionMenu(`Más acciones de «${item.title}»`, acciones))
+  }
 
   card.append(thumbnail(item), body, actions)
   return card
@@ -860,7 +948,11 @@ function collectionCard (collection) {
 
   const kind = document.createElement('span')
   kind.className = 'collection-kind'
-  kind.textContent = 'Colección · se inserta como una actividad'
+  kind.textContent = isShared(collection)
+    ? `Colección de ${ownerLabel(collection)} · se inserta como una actividad`
+    : collection.isPublic
+      ? 'Colección compartida · se inserta como una actividad'
+      : 'Colección · se inserta como una actividad'
 
   const title = document.createElement('div')
   title.className = 'title'
@@ -916,20 +1008,28 @@ function collectionCard (collection) {
     actions.append(edit)
 
     actions.append(actionMenu(`Más acciones de «${collection.title}»`, [
-      { label: 'Mover a…', run: () => { void openMove({ type: 'collection', item: collection }) } },
+      !isShared(collection) && {
+        label: 'Mover a…', run: () => { void openMove({ type: 'collection', item: collection }) }
+      },
+      !isShared(collection) && {
+        label: collection.isPublic ? 'Dejar de compartir' : 'Compartir con el claustro',
+        run: () => { void toggleCollectionSharing(collection) }
+      },
       {
-        label: 'Duplicar',
+        // Duplicar una colección compartida es la forma de llevársela a la
+        // biblioteca propia y adaptarla sin tocar la del autor.
+        label: isShared(collection) ? 'Duplicar en mi biblioteca' : 'Duplicar',
         run: async () => {
           try {
             await apiJson(`/collections/${collection.id}/duplicate`, { method: 'POST' })
-            notify('Colección duplicada')
+            notify(isShared(collection) ? 'Copia creada en tu biblioteca' : 'Colección duplicada')
             await reload()
           } catch (err) {
             notify(err.message, 'error')
           }
         }
       },
-      {
+      !isShared(collection) && {
         label: 'Archivar',
         danger: true,
         run: async () => {
@@ -949,11 +1049,38 @@ function collectionCard (collection) {
           }
         }
       }
-    ]))
+    ].filter(Boolean)))
   }
 
   card.append(visual, body, actions)
   return card
+}
+
+async function toggleCollectionSharing (collection) {
+  const compartir = !collection.isPublic
+  const ok = await askConfirm({
+    heading: compartir
+      ? `Compartir «${collection.title}»`
+      : `Dejar de compartir «${collection.title}»`,
+    message: compartir
+      ? 'Los demás profesores de este Moodle la verán en su biblioteca, podrán insertarla ' +
+        'en sus cursos y editar su contenido y su orden. Archivarla y borrarla seguirán ' +
+        'siendo sólo tuyos.'
+      : 'Dejará de aparecer en la biblioteca de los demás profesores. Las actividades de ' +
+        'Moodle que ya hayan creado con ella siguen abriéndose: el enlace es a la colección.',
+    okLabel: compartir ? 'Compartir' : 'Dejar de compartir'
+  })
+  if (!ok) return
+  try {
+    await apiJson(`/collections/${collection.id}/visibility`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isPublic: compartir })
+    })
+    notify(compartir ? 'Colección compartida con el claustro' : 'Colección de nuevo privada')
+    await reload()
+  } catch (err) {
+    notify(err.message, 'error')
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1182,7 +1309,7 @@ function openUpload () {
   el('upload-file').value = ''
   el('upload-btn').disabled = false
   dialogStatus('upload-status')
-  el('upload-target').textContent = `Se guardará en «${pathName(folderId)}».`
+  el('upload-target').textContent = `Se guardará en «${pathName(folderId)}».${destinationNotice()}`
   el('upload-dialog').dataset.folderId = folderId ?? ''
   abrirDialogo(el('upload-dialog'))
   el('upload-title').focus()
@@ -1278,6 +1405,7 @@ function openNewCollection () {
   el('collection-description').value = ''
   el('collection-folder').replaceChildren(...folderOptions({ rootLabel: 'Biblioteca' }))
   el('collection-folder').value = destinationFolderId() ?? ''
+  el('collection-folder').disabled = false
   el('collection-save').textContent = 'Guardar'
   configureCollectionActions()
   el('collection-search').value = ''
@@ -1304,14 +1432,20 @@ async function openCollectionEditor (collection) {
     const { collection: full } = await apiJson(`/collections/${collection.id}`)
     if (generation !== collectionEditorGeneration) return
     state.collectionDraft = {
-      editing: { id: full.id, updatedAt: full.updatedAt, title: full.title },
+      editing: { id: full.id, updatedAt: full.updatedAt, title: full.title, shared: isShared(full) },
       items: full.items.map((item) => ({ kind: item.kind, id: item.id, title: item.title }))
     }
-    el('collection-heading').textContent = `Editar «${full.title}»`
+    el('collection-heading').textContent = isShared(full)
+      ? `Editar «${full.title}» · de ${ownerLabel(full)}`
+      : `Editar «${full.title}»`
     el('collection-title').value = full.title
     el('collection-description').value = full.description ?? ''
-    el('collection-folder').replaceChildren(...folderOptions({ rootLabel: 'Biblioteca' }))
-    el('collection-folder').value = full.folderId ?? ''
+    // Una colección compartida vive en la carpeta de su autor y ahí se queda:
+    // reorganizar su biblioteca no es cosa de quien la recibe.
+    const folderSelect = el('collection-folder')
+    folderSelect.replaceChildren(...folderOptions({ rootLabel: 'Biblioteca' }))
+    folderSelect.value = full.folderId ?? ''
+    folderSelect.disabled = isShared(full)
     el('collection-save').textContent = 'Guardar cambios'
     configureCollectionActions()
     el('collection-search').value = ''
@@ -1416,7 +1550,8 @@ function renderPicker () {
     name.textContent = `${material.kind === 'pdf' ? 'PDF' : 'Vídeo'} · ${material.title}`
     const where = document.createElement('span')
     where.className = 'muted'
-    where.textContent = ` — en ${pathName(material.folderId)}`
+    where.textContent = ` — en ${pathName(material.folderId)}` +
+      (isShared(material) ? ` · de ${ownerLabel(material)}` : '')
     label.append(name, where)
 
     const toggle = document.createElement('button')
@@ -1473,8 +1608,12 @@ async function saveCollection ({ insert = false } = {}) {
   const body = {
     title,
     description: el('collection-description').value,
-    folderId: el('collection-folder').value || null,
     items: state.collectionDraft.items.map((s) => ({ kind: s.kind, id: s.id }))
+  }
+  // `folderId` ausente = «no lo toques». En una colección compartida el
+  // servidor lo rechazaría: la carpeta es de su autor.
+  if (!state.collectionDraft.editing?.shared) {
+    body.folderId = el('collection-folder').value || null
   }
 
   try {
@@ -1571,11 +1710,15 @@ function normalizeQuery (text) {
 }
 
 function render () {
-  const folders = state.view === 'search'
-    ? flattenedFolders().filter((f) => normalizeQuery(f.name).includes(normalizeQuery(state.query)))
-    : flattenedFolders()
+  const matching = (list) => state.view === 'search'
+    ? list.filter((f) => normalizeQuery(f.name).includes(normalizeQuery(state.query)))
+    : list
+  const folders = matching(flattenedFolders())
+  const shared = matching(flattenedFolders({ shared: true }))
   el('folder-grid').replaceChildren(...folders.map(folderCard))
   el('folder-empty').hidden = folders.length > 0
+  el('shared-grid').replaceChildren(...shared.map(folderCard))
+  el('section-shared').hidden = shared.length === 0
   el('root-count').textContent = state.root?.materialCount ? String(state.root.materialCount) : ''
 
   el('all-content').classList.toggle('current', state.view === 'all')

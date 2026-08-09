@@ -25,6 +25,9 @@ x-app-env: &app-env
   NODE_ENV: development
   LOG_LEVEL: ${LOG_LEVEL:-debug}
   PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8088}
+  # Con el túnel activo, PUBLIC_URL pasa a ser la URL pública y localhost se
+  # queda aquí: en desarrollo la misma instancia se abre por los dos nombres.
+  PUBLIC_URL_ALIASES: ${PUBLIC_URL_ALIASES:-http://localhost:${HTTP_PORT:-8088},http://127.0.0.1:${HTTP_PORT:-8088}}
   DB_HOST: db
   DB_PORT: "5432"
   DB_NAME: moodleshield
@@ -42,6 +45,9 @@ x-app-env: &app-env
   ADMIN_SESSION_TTL_SECONDS: ${ADMIN_SESSION_TTL_SECONDS:-28800}
   ADMIN_ALLOW_PRIVATE_LTI_HOSTS: ${ADMIN_ALLOW_PRIVATE_LTI_HOSTS:-false}
   LTI_IDENTITY_CUSTOM_PARAM: ${LTI_IDENTITY_CUSTOM_PARAM:-username}
+  # IP real del alumno tras un CDN (ADR-019): auto | always | never.
+  TRUST_CLOUDFLARE_CLIENT_IP: ${TRUST_CLOUDFLARE_CLIENT_IP:-auto}
+  CDN_TRUSTED_RANGES: ${CDN_TRUSTED_RANGES:-}
   MEDIA_ROOT: /data/media
   UPLOAD_ROOT: /data/uploads
   MEDIA_DELIVERY: signed

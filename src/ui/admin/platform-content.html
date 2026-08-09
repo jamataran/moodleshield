@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Contenido del aula · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
+</head>
+<body class="admin" data-page="platform-content">
+  <header class="bar admin-bar">
+    <div><p class="eyebrow" id="platformName">MoodleShield</p><h1>Contenido del aula</h1></div>
+    <nav>
+      <a class="btn" id="platformLink" href="/admin/platforms">Configuración del aula</a>
+      <a class="btn" href="/admin/platforms">Volver al listado</a>
+      <form id="logout" method="post" action="/admin/logout"><input type="hidden" name="_csrf"><button>Salir</button></form>
+    </nav>
+  </header>
+
+  <main class="admin-main">
+    <p class="muted" id="issuer"></p>
+    <div id="truncated" class="notice warning" hidden></div>
+
+    <section class="panel">
+      <h2>Resumen</h2>
+      <p id="totals"></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Profesor</th><th>Carpetas</th><th>Vídeos</th><th>PDF</th><th>Colecciones</th><th>Última actividad</th></tr></thead>
+          <tbody id="ownerRows"></tbody>
+        </table>
+      </div>
+      <p id="ownersEmpty" class="muted" hidden>Todavía no hay contenido en esta instancia.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Carpetas</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Profesor</th><th>Ruta</th><th>Contenido</th><th>Visibilidad</th></tr></thead>
+          <tbody id="folderRows"></tbody>
+        </table>
+      </div>
+      <p id="foldersEmpty" class="muted" hidden>Ninguna carpeta.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Colecciones</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Profesor</th><th>Título</th><th>Carpeta</th><th>Materiales</th><th>Estado</th><th>Visibilidad</th><th>Actualizada</th></tr></thead>
+          <tbody id="collectionRows"></tbody>
+        </table>
+      </div>
+      <p id="collectionsEmpty" class="muted" hidden>Ninguna colección.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Materiales</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Profesor</th><th>Tipo</th><th>Título</th><th>Carpeta</th><th>Estado</th><th>Tamaño</th><th>Visibilidad</th><th>Actualizado</th></tr></thead>
+          <tbody id="materialRows"></tbody>
+        </table>
+      </div>
+      <p id="materialsEmpty" class="muted" hidden>Ningún material.</p>
+    </section>
+  </main>
+
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/assets/admin.js?v={{ASSET_VERSION}}" defer></script>
+</body>
+</html>

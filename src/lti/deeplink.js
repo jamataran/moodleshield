@@ -14,15 +14,39 @@ import { CLAIM } from './claims.js'
  */
 
 /**
+ * Icono con el que Moodle dibuja la actividad en la lista del curso.
+ *
+ * Tiene que ser una imagen pública: la pide el navegador de cualquier alumno,
+ * sin sesión. De ahí que ni vídeo ni PDF manden miniatura —el póster de un
+ * vídeo o la primera página de un documento son justo el contenido protegido, y
+ * además responden 403 sin token, que es como Moodle acababa pintando un
+ * rectángulo negro—. Son SVG cuadrados, sin fondo y de trazo grueso, porque se
+ * dibujan a 16–32 px.
+ */
+const ICON = {
+  video: 'icon-video.svg',
+  // Nombres heredados a propósito: Moodle guarda la URL del icono DENTRO de
+  // cada actividad al crearla, así que cambiar el fichero de nombre dejaría con
+  // el icono viejo todo lo ya insertado en los cursos. Conservando la ruta,
+  // basta con haber cambiado el dibujo: las actividades existentes se arreglan
+  // solas en cuanto caduca la caché del navegador. Antes eran láminas de
+  // 640×360 con fondo oscuro —pensadas para las tarjetas del catálogo—, que a
+  // tamaño de icono se veían como un rectángulo negro. El arte de las tarjetas
+  // vive ahora en `card-pdf.svg` y `poster-placeholder.svg`.
+  pdf: 'pdf-placeholder.svg',
+  collection: 'collection-placeholder.svg'
+}
+
+/**
  * @param {object} material
  * @param {'video'|'pdf'|'collection'} material.kind
  */
-export function contentItemFor (material) {
+export function contentItemFor (material, origin = config.publicUrl) {
   const item = {
     type: 'ltiResourceLink',
     title: material.title,
     text: material.description || undefined,
-    url: `${config.publicUrl}/lti/launch`,
+    url: `${origin}/lti/launch`,
     custom: {
       resourcekind: material.kind,
       resourceid: material.id
@@ -31,39 +55,30 @@ export function contentItemFor (material) {
     // para vídeo/PDF y el visor ofrece una vuelta explícita al aula. Los enlaces
     // antiguos o las plataformas que fuercen iframe siguen soportados; el botón
     // de vuelta se oculta al detectar ese contexto.
-    presentation: { documentTarget: 'window' }
+    presentation: { documentTarget: 'window' },
+    icon: {
+      url: `${origin}/assets/${ICON[material.kind] ?? ICON.video}`,
+      width: 64,
+      height: 64
+    }
   }
 
   if (material.kind === 'video') {
     // `custom.videoId` se sigue enviando para que una herramienta con la
     // versión anterior desplegada pueda abrir actividades creadas ahora.
     item.custom.videoId = material.id
-    item.thumbnail = {
-      url: `${config.publicUrl}/videos/${material.id}/poster.jpg`,
-      width: 640,
-      height: 360
-    }
-  } else {
-    // Ni PDF ni colección publican miniatura: la primera página de un documento
-    // puede contener exactamente el material que se quiere proteger, y Moodle
-    // pide las miniaturas sin sesión.
-    item.icon = {
-      url: `${config.publicUrl}/assets/${material.kind === 'pdf' ? 'pdf-placeholder.svg' : 'collection-placeholder.svg'}`,
-      width: 64,
-      height: 64
-    }
   }
   return item
 }
 
-export async function buildDeepLinkingResponse ({ platform, deploymentId, data, materials, videos }) {
+export async function buildDeepLinkingResponse ({ platform, deploymentId, data, materials, videos, origin }) {
   const key = await getActiveKey()
   const now = Math.floor(Date.now() / 1000)
 
   // `videos` es la forma anterior a T20; se acepta para no romper llamadas
   // internas que aún la usen.
   const items = (materials ?? (videos ?? []).map((v) => ({ ...v, kind: 'video' })))
-    .map(contentItemFor)
+    .map((material) => contentItemFor(material, origin ?? config.publicUrl))
 
   const payload = {
     iss: platform.client_id,

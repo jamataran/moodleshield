@@ -4,6 +4,7 @@ import { assertFolderInTransaction } from './folders.js'
 import { listMaterials, listCollectionsUsing } from './materials.js'
 import { insertRevision, syncMaterialStatus } from './revisions.js'
 import { normalizeName } from './folders.js'
+import { visibleClause } from './sharing.js'
 
 /**
  * Vídeos: identidad lógica, propiedad y clasificación.
@@ -45,16 +46,19 @@ export function getVideoForOwner (id, platformId, ownerSub) {
   )
 }
 
-/** Sólo material propio, listo y no archivado puede insertarse en un curso. */
+/**
+ * Sólo material visible (propio o compartido por otro profesor de la misma
+ * instancia), listo y no archivado puede insertarse en un curso.
+ */
 export function listReadyVideosForDeepLink ({ ids, platformId, ownerSub }) {
   if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
   return many(
-    `SELECT id, title, description
-       FROM video
-      WHERE id = ANY($1::uuid[]) AND status = 'ready'
-        AND platform_id = $2 AND owner_sub = $3
-        AND archived_at IS NULL AND active_revision_id IS NOT NULL`,
-    [ids, platformId, ownerSub]
+    `SELECT m.id, m.title, m.description
+       FROM video m
+      WHERE m.id = ANY($3::uuid[]) AND m.status = 'ready'
+        AND m.platform_id = $1 AND ${visibleClause('m')}
+        AND m.archived_at IS NULL AND m.active_revision_id IS NOT NULL`,
+    [platformId, ownerSub, ids]
   )
 }
 
@@ -143,14 +147,24 @@ export function createVideoRevisionAndJob ({
   })
 }
 
-/** Edición de metadatos y clasificación. Nunca cambia el UUID ni los ficheros. */
+/**
+ * Edición de metadatos y clasificación. Nunca cambia el UUID ni los ficheros.
+ *
+ * Un vídeo compartido por otro profesor también se puede corregir de título o
+ * descripción; lo que no se puede es cambiarlo de carpeta, porque la carpeta es
+ * de su autor (`services/sharing.js`).
+ */
 export function updateVideoMetadata ({ videoId, platformId, ownerSub, title, description, folderId }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT id FROM video WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 FOR UPDATE`,
+      `SELECT m.id, (m.owner_sub IS DISTINCT FROM $3) AS shared FROM video m
+        WHERE m.id = $1 AND m.platform_id = $2
+          AND ${visibleClause('m', { platform: '$2', owner: '$3' })}
+        FOR UPDATE`,
       [videoId, platformId, ownerSub]
     )
     if (rows.length === 0) return { status: 'not_found' }
+    if (rows[0].shared && folderId !== undefined) return { status: 'not_owned' }
 
     const sets = []
     const params = [videoId]

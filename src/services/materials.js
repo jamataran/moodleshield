@@ -1,6 +1,7 @@
 import { many, one } from '../db/index.js'
 import config from '../config.js'
 import { isUuid } from '../media/storage.js'
+import { visibleClause } from './sharing.js'
 
 /**
  * Catálogo unificado de vídeos y PDFs.
@@ -10,8 +11,10 @@ import { isUuid } from '../media/storage.js'
  * consume la interfaz. Un `UNION ALL` con las mismas columnas es más barato y
  * mucho más legible que una tabla polimórfica con la mitad de campos nulos.
  *
- * Toda consulta de profesor filtra por `platform_id + owner_sub`. No hay ningún
- * camino que devuelva material de otro profesor o de otra instancia.
+ * Toda consulta de profesor filtra por `platform_id` —frontera dura entre
+ * instancias Moodle— y devuelve lo suyo más lo que otro profesor de la misma
+ * instancia haya compartido (ver `services/sharing.js`). No hay ningún camino
+ * que devuelva material de otra instancia ni material ajeno sin compartir.
  */
 
 export const MATERIAL_KINDS = ['video', 'pdf']
@@ -114,13 +117,15 @@ export async function listMaterials ({
     : includeArchived ? '' : ' AND archived_at IS NULL'
 
   const branch = (table, alias, kindLiteral, extraColumns) => `
-    SELECT id, '${kindLiteral}'::text AS kind, title, description, status, folder_id,
-           ${extraColumns}, error, archived_at, active_revision_id,
-           created_at, updated_at,
-           to_char(created_at AT TIME ZONE 'UTC',
+    SELECT ${alias}.id, '${kindLiteral}'::text AS kind, ${alias}.title, ${alias}.description,
+           ${alias}.status, ${alias}.folder_id, ${alias}.owner_sub, ${alias}.owner_name,
+           (${alias}.owner_sub IS DISTINCT FROM $2) AS shared,
+           ${extraColumns}, ${alias}.error, ${alias}.archived_at, ${alias}.active_revision_id,
+           ${alias}.created_at, ${alias}.updated_at,
+           to_char(${alias}.created_at AT TIME ZONE 'UTC',
              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at
       FROM ${table} ${alias}
-     WHERE platform_id = $1 AND owner_sub = $2
+     WHERE ${alias}.platform_id = $1 AND ${visibleClause(alias)}
        ${folderCondition(folderId, params, alias)}
        ${searchClause}${cursorClause}${readyClause}${archivedClause}`
 
@@ -171,6 +176,11 @@ export function toMaterialDto (row) {
     error: row.error ?? null,
     archived: Boolean(row.archived_at),
     hasActiveRevision: Boolean(row.active_revision_id),
+    // `shared` es «de otro profesor, visible porque lo compartió». La interfaz
+    // lo usa para decir de quién es y para no ofrecer las acciones que sólo
+    // puede hacer el autor (archivar, borrar, versiones, mover, publicar).
+    shared: Boolean(row.shared),
+    ownerName: row.owner_name ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }

@@ -16,6 +16,8 @@ import { healthRouter } from './routes/health.js'
 import { renderPage, uiDir } from './ui/render.js'
 import { adminRouter } from './admin/routes.js'
 import { getFrameAncestors, refreshFrameAncestors } from './security/frame-ancestors.js'
+import { clientIpMiddleware } from './security/client-ip.js'
+import { publicOriginFor } from './security/public-origin.js'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -25,6 +27,10 @@ export async function createApp () {
   app.set('trust proxy', config.http.trustProxy)
   app.disable('x-powered-by')
   app.set('etag', false)
+
+  // Antes de registrar nada: si delante hay un CDN, `req.ip` sería la IP de su
+  // borde y no la del alumno. Con marca forense esa diferencia importa.
+  app.use(clientIpMiddleware)
 
   app.use(
     pinoHttp({
@@ -100,7 +106,15 @@ export async function createApp () {
         // Los módulos de entrada llevan ?v=, pero sus imports relativos no.
         // Revalidarlos evita mezclar un entrypoint recién desplegado con una
         // dependencia anterior todavía fresca en caché.
-        if (path.extname(file) === '.js') res.set('Cache-Control', 'no-cache')
+        //
+        // Los SVG van en el mismo saco por un motivo distinto: el icono de la
+        // actividad lo guarda Moodle DENTRO de cada actividad al crearla, así
+        // que su URL no puede llevar `?v=` —quedaría congelada en la versión
+        // del día en que se insertó—. Sin revalidar, cambiar el dibujo tardaba
+        // una hora en verse, y en las actividades ya creadas, nunca.
+        // `no-cache` no es «no cachees»: es «pregunta antes de usarlo», y con
+        // ETag la respuesta habitual son 304 vacíos.
+        if (['.js', '.svg'].includes(path.extname(file))) res.set('Cache-Control', 'no-cache')
       }
     })
   )
@@ -121,9 +135,9 @@ export async function createApp () {
   // una ficha que anuncia qué hay detrás. No es ocultación: `/lti/keys` y el
   // handshake OIDC siguen siendo públicos porque Moodle los pide sin
   // autenticar. Sólo evita el anuncio gratuito a quien pasaba por ahí.
-  app.get('/', async (_req, res) => {
+  app.get('/', async (req, res) => {
     if (config.admin.enabled) return res.redirect(303, '/admin/platforms')
-    res.type('html').send(await renderPage('landing.html', { PUBLIC_URL: config.publicUrl }))
+    res.type('html').send(await renderPage('landing.html', { PUBLIC_URL: publicOriginFor(req) }))
   })
 
   app.use((req, res) => {

@@ -29,6 +29,7 @@ import {
 import { receiveDocumentUpload } from '../media/upload.js'
 import { parseRangeHeader } from '../media/range.js'
 import { stampPdfForViewer } from '../media/pdf-stamp.js'
+import { displayOwnerName } from '../services/sharing.js'
 
 export const documentsRouter = Router()
 
@@ -82,7 +83,7 @@ documentsRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
       description: upload.description,
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
-      ownerName: req.session.name,
+      ownerName: displayOwnerName(req.session),
       folderId: upload.folderId ?? req.query.folderId,
       sourcePath: upload.destination,
       sizeBytes: upload.size,
@@ -150,6 +151,13 @@ documentsRouter.patch('/:id', requireCatalogInstructor, async (req, res, next) =
       folderId: req.body?.folderId
     })
     if (result.status === 'not_found') return res.status(404).json({ error: 'Documento no encontrado' })
+    if (result.status === 'not_owned') {
+      return res.status(409).json({
+        error: 'Este PDF está compartido por otro profesor: puedes editar sus datos, ' +
+          'pero no cambiarlo de carpeta.',
+        code: 'material_not_owned'
+      })
+    }
     if (result.status === 'unchanged') return res.status(400).json({ error: 'No hay nada que cambiar' })
     res.json({ document: publicDocument(result.document) })
   } catch (err) {
@@ -250,9 +258,9 @@ documentsRouter.get('/:id/poster.jpg', requireSession, async (req, res, next) =>
     const scope = await authorizeResource(req.session, 'pdf', id)
     if (!scope.ok) return res.status(404).json({ error: 'Documento no encontrado' })
     const revision = scope.revision ?? await getActiveRevision({ kind: 'pdf', materialId: id })
-    if (!revision) return res.redirect(302, '/assets/pdf-placeholder.svg')
+    if (!revision) return res.redirect(302, '/assets/card-pdf.svg')
     const file = posterPath(revisionDir('pdf', id, revision.id, revision.storage_layout))
-    if (!(await exists(file))) return res.redirect(302, '/assets/pdf-placeholder.svg')
+    if (!(await exists(file))) return res.redirect(302, '/assets/card-pdf.svg')
     res.set('Cache-Control', 'private, max-age=3600')
     res.sendFile(file)
   } catch (err) {

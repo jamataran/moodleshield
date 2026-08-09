@@ -3,6 +3,7 @@ import { rateLimit } from 'express-rate-limit'
 import config from '../config.js'
 import { query } from '../db/index.js'
 import { renderPage } from '../ui/render.js'
+import { isAllowedOrigin } from '../security/public-origin.js'
 import {
   clearAdminCookie,
   clearLoginCsrf,
@@ -22,6 +23,14 @@ import {
   PlatformValidationError,
   testPlatformConnection
 } from './platform-validator.js'
+import {
+  CONTENT_LIMIT,
+  platformCollections,
+  platformFolders,
+  platformMaterials,
+  platformOwners,
+  platformTotals
+} from '../services/platform-content.js'
 import {
   createPlatform,
   getPlatformById,
@@ -87,7 +96,9 @@ adminRouter.get('/login', async (req, res, next) => {
 adminRouter.post('/login', async (req, res, next) => {
   if (!config.admin.enabled) return res.sendStatus(404)
   const origin = req.get('origin')
-  if (origin && origin !== new URL(config.publicUrl).origin) return res.sendStatus(403)
+  // Antes se comparaba sólo contra PUBLIC_URL: entrar por el otro nombre de la
+  // misma instancia —el túnel en desarrollo— devolvía 403 al iniciar sesión.
+  if (origin && !isAllowedOrigin(origin)) return res.sendStatus(403)
   if (!verifyLoginCsrf(req, req.body?._csrf)) return res.sendStatus(403)
   try {
     const result = await loginAdmin({
@@ -214,6 +225,39 @@ async function renderPlatformForm (req, res, {
 
 adminRouter.get('/platforms/new', (req, res, next) => {
   renderPlatformForm(req, res, { platform: blankPlatform() }).catch(next)
+})
+
+/**
+ * Inventario de contenido de una instancia: todo el material de todos sus
+ * profesores, compartido o privado. Es de sólo lectura y no cruza instancias.
+ */
+adminRouter.get('/platforms/:id/contenido', async (req, res, next) => {
+  try {
+    const platform = await getPlatformById(req.params.id)
+    if (!platform) return res.sendStatus(404)
+    const [owners, folders, materials, collections, totals] = await Promise.all([
+      platformOwners(platform.id),
+      platformFolders(platform.id),
+      platformMaterials(platform.id),
+      platformCollections(platform.id),
+      platformTotals(platform.id)
+    ])
+    res.type('html').send(await renderPage('admin/platform-content.html', {
+      bootstrap: {
+        platform: { id: platform.id, name: platform.name, issuer: platform.issuer },
+        owners,
+        folders,
+        materials,
+        collections,
+        totals,
+        limit: CONTENT_LIMIT,
+        truncated: materials.length >= CONTENT_LIMIT || collections.length >= CONTENT_LIMIT,
+        logoutCsrf: csrfToken(req.adminSession, 'POST', '/logout')
+      }
+    }))
+  } catch (err) {
+    next(err)
+  }
 })
 
 adminRouter.get('/platforms/:id', async (req, res, next) => {

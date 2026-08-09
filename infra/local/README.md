@@ -13,16 +13,53 @@ desarrollo incrustados, `MARK_ALPHA=0.5` (la marca A/B se ve a simple vista) y
 
 ## Arrancar
 
+Todo el ciclo de vida del entorno local son scripts de esta carpeta. No hace
+falta recordar ningún comando de `docker compose`, y sobre todo no hace falta
+acordarse de pasarle los dos `--env-file` (si se olvida `.env.local`, la consola
+de administración arranca deshabilitada y cuesta media hora entender por qué).
+
+| Script | Qué hace |
+|---|---|
+| `./up.sh` | Arranca el stack. No reconstruye ni borra nada |
+| `./up.sh --build` · `./rebuild.sh` | Rehace las imágenes desde el código y arranca |
+| `./up.sh --funnel` | Arranca **y** publica por Tailscale Funnel, alineando `PUBLIC_URL` |
+| `./start-funnel.sh` | Sólo el túnel, sobre un stack ya levantado |
+| `./stop-funnel.sh` | Retira el túnel y devuelve `PUBLIC_URL` a `localhost` |
+| `./logs.sh [servicio…]` | Logs en vivo; sin argumentos, `app` y `worker` |
+| `./down.sh [--funnel]` | Para los contenedores. **No borra datos** |
+| `./reset-db.sh [--media]` | ⚠️ Borra la base de datos local y vuelve a arrancar |
+
+De cero a un Moodle real conectado, en dos órdenes:
+
 ```bash
 cd infra/local
-docker compose up -d --build
+./rebuild.sh --funnel       # construye, arranca y publica por Tailscale
 ```
+
+Con el túnel encendido **funcionan los dos nombres a la vez**: `PUBLIC_URL` pasa
+a ser la URL de Tailscale —la que registras en Moodle— y `localhost:8088` queda
+declarado en `PUBLIC_URL_ALIASES` ([ADR-020](../../docs/decisiones.md)). Cada
+petición recibe URLs de su propio nombre, así que ni el handshake LTI ni el
+formulario de la consola dependen de por dónde entres. Un `Host` que no esté en
+esa lista se responde siempre con `PUBLIC_URL`.
 
 Comprobación:
 
 ```bash
 curl -s localhost:8088/readyz        # {"status":"ready",...}
 open http://localhost:8088           # datos de alta en Moodle
+```
+
+`reset-db.sh` es el único script que destruye algo. Sólo actúa sobre
+`infra/local/data`: si `DATA_ROOT` apunta a cualquier otro sitio se niega a
+seguir, y siempre pide escribir `SI` después de enumerar lo que va a borrar.
+Producción no se toca desde aquí (ver «Regla 0» en [`CLAUDE.md`](../../CLAUDE.md)).
+
+Si prefieres los comandos a mano, el equivalente de `./up.sh --build` es:
+
+```bash
+docker compose --env-file .env --env-file .env.local up -d --build
+docker compose --env-file .env --env-file .env.local restart proxy
 ```
 
 Sin túnel ya puedes probar todo lo que no exige HTTPS: subir un vídeo (con
@@ -217,9 +254,12 @@ ${DATA_ROOT:-data}/
 Borrón y cuenta nueva usando la ruta local por defecto:
 
 ```bash
-docker compose down
-rm -rf data/
+./reset-db.sh --media
 ```
+
+Enumera lo que va a borrar, exige confirmación escrita y vuelve a levantar el
+stack. No hagas `rm -rf data/` a mano: el script comprueba antes que `DATA_ROOT`
+sea de verdad el entorno local.
 
 > Linux: los contenedores corren como uid 1000; si tu usuario no es 1000 haz
 > `sudo chown -R 1000:1000 data/` tras crearla. En macOS no hace falta.

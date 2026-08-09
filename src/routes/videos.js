@@ -24,6 +24,7 @@ import {
   revisionDir
 } from '../media/storage.js'
 import { receiveVideoUpload } from '../media/upload.js'
+import { displayOwnerName } from '../services/sharing.js'
 
 export const videosRouter = Router()
 
@@ -83,7 +84,7 @@ videosRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
       description: upload.description,
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
-      ownerName: req.session.name,
+      ownerName: displayOwnerName(req.session),
       // La carpeta llega como campo del multipart: la subida hereda la carpeta
       // que el profesor tenía abierta en el catálogo.
       folderId: upload.folderId ?? req.query.folderId,
@@ -158,6 +159,13 @@ videosRouter.patch('/:id', requireCatalogInstructor, async (req, res, next) => {
       folderId: req.body?.folderId
     })
     if (result.status === 'not_found') return res.status(404).json({ error: 'Vídeo no encontrado' })
+    if (result.status === 'not_owned') {
+      return res.status(409).json({
+        error: 'Este vídeo está compartido por otro profesor: puedes editar sus datos, ' +
+          'pero no cambiarlo de carpeta.',
+        code: 'material_not_owned'
+      })
+    }
     if (result.status === 'unchanged') return res.status(400).json({ error: 'No hay nada que cambiar' })
     res.json({ video: publicVideo(result.video) })
   } catch (err) {

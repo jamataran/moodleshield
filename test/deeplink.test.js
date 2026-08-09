@@ -25,12 +25,25 @@ test('las claves custom van en minúscula porque Moodle puede normalizarlas', ()
   assert.ok('resourceid' in item.custom)
 })
 
-test('un PDF no publica miniatura de su primera página', () => {
-  const item = contentItemFor({ kind: 'pdf', id: randomUUID(), title: 'Examen' })
-  assert.equal(item.thumbnail, undefined)
-  // Moodle pide las miniaturas sin sesión: la primera página podría ser justo
-  // el material que se quiere proteger.
-  assert.match(item.icon.url, /pdf-placeholder\.svg$/)
+test('ningún material publica miniatura de su contenido', () => {
+  // Moodle pide las miniaturas sin sesión, así que la primera página de un PDF
+  // o el póster de un vídeo serían justo el material que se quiere proteger —y
+  // al responder 403 Moodle acababa pintando un rectángulo negro—. Los tres
+  // tipos mandan un icono público en su lugar.
+  // Las rutas de pdf y colección conservan su nombre heredado a propósito:
+  // Moodle guarda la URL del icono dentro de cada actividad, así que cambiarla
+  // dejaría con el rectángulo negro todo lo ya insertado en los cursos.
+  const iconos = {
+    video: /icon-video\.svg$/,
+    pdf: /pdf-placeholder\.svg$/,
+    collection: /collection-placeholder\.svg$/
+  }
+  for (const [kind, esperado] of Object.entries(iconos)) {
+    const item = contentItemFor({ kind, id: randomUUID(), title: 'Examen' })
+    assert.equal(item.thumbnail, undefined, `${kind} no debe publicar miniatura`)
+    assert.match(item.icon.url, esperado)
+    assert.equal(item.icon.width, 64)
+  }
 })
 
 test('una colección se anuncia como un único recurso', () => {

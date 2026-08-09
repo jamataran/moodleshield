@@ -2,17 +2,18 @@ import { Router } from 'express'
 import { requireSession, requireCatalogInstructor } from './auth.js'
 import { assertUuid } from '../media/storage.js'
 import { authorizeCollection } from '../services/authorization.js'
+import { displayOwnerName, getVisibleCollection } from '../services/sharing.js'
 import {
   archiveCollection,
   createCollection,
   duplicateCollection,
   getCollectionForPlatform,
-  getOwnedCollection,
   listCollectionPage,
   loadItems,
   publicCollection,
   publicItem,
   restoreCollection,
+  setCollectionVisibility,
   updateCollection
 } from '../services/collections.js'
 
@@ -43,7 +44,7 @@ collectionsRouter.post('/', requireCatalogInstructor, async (req, res, next) => 
     const collection = await createCollection({
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
-      ownerName: req.session.name,
+      ownerName: displayOwnerName(req.session),
       title: req.body?.title,
       description: req.body?.description,
       folderId: req.body?.folderId,
@@ -59,13 +60,34 @@ collectionsRouter.post('/', requireCatalogInstructor, async (req, res, next) => 
 collectionsRouter.get('/:id', requireCatalogInstructor, async (req, res, next) => {
   try {
     const id = assertUuid(req.params.id, 'Identificador de colección')
-    const collection = await getOwnedCollection({
+    const collection = await getVisibleCollection({
       id,
       platformId: req.session.platformId,
       ownerSub: req.session.sub
     })
     if (!collection) return res.status(404).json({ error: 'Colección no encontrada' })
     res.json({ collection: publicCollection(collection, await loadItems(id)) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/** Compartir o dejar de compartir. Sólo el autor. */
+collectionsRouter.patch('/:id/visibility', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const collection = await setCollectionVisibility({
+      id: assertUuid(req.params.id, 'Identificador de colección'),
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      isPublic: req.body?.isPublic === true
+    })
+    if (!collection) {
+      return res.status(404).json({
+        error: 'Sólo el profesor que creó la colección puede compartirla o dejar de compartirla',
+        code: 'collection_not_owned'
+      })
+    }
+    res.json({ collection: publicCollection(collection) })
   } catch (err) {
     next(err)
   }
@@ -104,7 +126,7 @@ collectionsRouter.post('/:id/duplicate', requireCatalogInstructor, async (req, r
       id: assertUuid(req.params.id, 'Identificador de colección'),
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
-      ownerName: req.session.name
+      ownerName: displayOwnerName(req.session)
     })
     if (result.status === 'not_found') return res.status(404).json({ error: 'Colección no encontrada' })
     const items = await loadItems(result.collection.id)
@@ -157,7 +179,7 @@ collectionsRouter.get('/:id/manifest', requireSession, async (req, res, next) =>
     if (!scope.ok) return res.status(404).json({ error: 'Colección no encontrada' })
 
     const collection = scope.viaOwner
-      ? await getOwnedCollection({ id, platformId: req.session.platformId, ownerSub: req.session.sub })
+      ? await getVisibleCollection({ id, platformId: req.session.platformId, ownerSub: req.session.sub })
       : await getCollectionForPlatform(id, req.session.platformId)
     if (!collection) return res.status(404).json({ error: 'Colección no encontrada' })
 

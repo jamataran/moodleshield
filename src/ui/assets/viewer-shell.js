@@ -78,30 +78,52 @@ export function createViewerShell ({ boot, title, description = '', kindLabel })
   // funciona también cuando Moodle está en otro origen.
   const isTopLevel = window.self === window.top
   backButton.hidden = !isTopLevel
+
+  /**
+   * «Atrás», literal: devolver al alumno exactamente a donde estaba.
+   *
+   * El `return_url` de Moodle no sirve para eso. Lleva a `mod/lti/return.php`,
+   * que rebota a la portada del curso: en un curso dividido en secciones el
+   * alumno pierde la sección desde la que abrió la actividad y tiene que
+   * volver a buscarla. Por eso el orden es:
+   *
+   *   1. pestaña abierta por Moodle  → cerrarla y enfocar el aula, que sigue
+   *      viva detrás con su sección tal cual;
+   *   2. navegación en la misma pestaña → historial del navegador;
+   *   3. sólo si nada de lo anterior mueve la página, el `return_url`.
+   */
   backButton.addEventListener('click', () => {
-    // Si Moodle conservó el aula en otra pestaña, volver significa enfocarla y
-    // cerrar ésta. En navegación de la misma pestaña usamos el return_url.
     if (window.opener && !window.opener.closed) {
       try { window.opener.focus() } catch { /* otro origen: cerrar sigue siendo válido */ }
-      window.close()
-      setTimeout(() => {
-        if (window.closed) return
-        if (boot.returnUrl) window.location.assign(boot.returnUrl)
-        else if (window.history.length > 1) window.history.back()
-      }, 0)
+      closeOrFallback()
       return
     }
-    if (boot.returnUrl) {
-      window.location.assign(boot.returnUrl)
-      return
-    }
-    // Una actividad abierta por Moodle en ventana nueva debe cerrarse antes de
-    // intentar volver al historial OIDC, cuyo state ya fue consumido.
+    goBack()
+  })
+
+  /**
+   * `history.back()` no avisa de si ha ido a alguna parte, y en una pestaña
+   * recién abierta por Moodle no hay ningún sitio al que ir. `pagehide` sí:
+   * dispara justo cuando el documento deja de ser el actual. Si no llega, es
+   * que el botón no ha hecho nada y hay que recurrir al plan B.
+   */
+  function goBack () {
+    let navegando = false
+    const marcar = () => { navegando = true }
+    window.addEventListener('pagehide', marcar, { once: true })
+    window.history.back()
+    setTimeout(() => {
+      window.removeEventListener('pagehide', marcar)
+      if (!navegando) closeOrFallback()
+    }, 400)
+  }
+
+  function closeOrFallback () {
     window.close()
     setTimeout(() => {
-      if (!window.closed && window.history.length > 1) window.history.back()
+      if (!window.closed && boot.returnUrl) window.location.assign(boot.returnUrl)
     }, 0)
-  })
+  }
 
   const setStatus = (text, isError = false) => {
     const message = String(text ?? '').trim()

@@ -2,6 +2,7 @@ import { collectionContains } from './collections.js'
 import { getActiveRevision, getRevision } from './revisions.js'
 import { getVideoForPlatform } from './videos.js'
 import { getDocumentForPlatform } from './documents.js'
+import { getVisibleMaterial } from './sharing.js'
 import { isUuid } from '../media/storage.js'
 
 /**
@@ -43,13 +44,23 @@ export async function authorizeResource (session, kind, materialId) {
   const material = await materialLoader(kind)(materialId, session.platformId)
   if (!material) return DENIED
 
-  // Profesor en el catálogo: puede operar sobre lo suyo, y sólo sobre lo suyo.
+  // Profesor en el catálogo: lo suyo, y lo que otro profesor de la misma
+  // instancia haya compartido. Nunca material ajeno sin compartir ni de otra
+  // instancia: la consulta de visibilidad ancla las dos condiciones.
   if (['catalog', 'manage'].includes(session.mode)) {
-    if (!session.isInstructor || material.owner_sub !== session.sub) return DENIED
+    if (!session.isInstructor) return DENIED
+    const propio = material.owner_sub === session.sub
+    if (!propio) {
+      const visible = await getVisibleMaterial({
+        kind, id: materialId, platformId: session.platformId, ownerSub: session.sub
+      })
+      if (!visible) return DENIED
+    }
     return {
       ok: true,
       material,
       viaOwner: true,
+      shared: !propio,
       revisionId: material.active_revision_id ?? null,
       collectionId: null
     }

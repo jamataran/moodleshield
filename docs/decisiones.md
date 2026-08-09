@@ -459,3 +459,136 @@ editar un PDF puede quitar el sello. Es disuasión visible y atribución social,
 un escalón por encima de «sin marca», y ADR-014 sigue diciendo la verdad: el
 documento que muestra el visor viaja completo y sin marca forense. La imagen de
 la aplicación suma una dependencia JavaScript pura; la del worker no cambia.
+
+---
+
+## ADR-018 · Compartir es por carpeta y da acceso de trabajo, no propiedad
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Amplía a ADR-015 y ADR-016
+
+**Contexto.** La biblioteca de cada profesor era estrictamente privada:
+`platform_id` separaba instancias Moodle y `owner_sub` separaba profesores, sin
+ninguna grieta. En una academia con varios profesores dando la misma asignatura
+eso obliga a subir el mismo vídeo dos veces —dos transcodificaciones, dos
+copias en disco, dos UUID que Moodle ve como materiales distintos— y hace
+imposible mantener un temario a cuatro manos.
+
+**Decisión.** Una bandera `is_public` en `catalog_folder` y en
+`content_collection`. Publicar una carpeta comparte **todo su subárbol**
+(subcarpetas, materiales y colecciones) con los demás profesores de la **misma
+instancia**; una colección se puede publicar además por sí sola. La herencia se
+resuelve en la vista `catalog_folder_shared` (migración 009) y el filtro vive en
+un único sitio, `services/sharing.js`, que todas las consultas del catálogo
+usan.
+
+Lo compartido se reparte así:
+
+| Cualquier profesor de la instancia | Sólo el autor |
+|---|---|
+| Ver, abrir e insertar en su curso | Publicar y despublicar |
+| Editar título y descripción | Archivar, borrar y purgar revisiones |
+| Componer y reordenar una colección compartida | Subir una versión nueva |
+| Renombrar la carpeta | Mover de carpeta y borrar la carpeta |
+| Duplicar una colección en su biblioteca | |
+
+**Razones.** Compartir por carpeta y no por fichero es el modelo mental de
+cualquier gestor de archivos, y evita el caso absurdo de una carpeta pública con
+el contenido invisible. La columna de la derecha no es cautela decorativa: son
+las operaciones irreversibles o las que cambian lo que ya están viendo los
+alumnos de otro profesor. La herencia se calcula en una vista y no en una
+columna denormalizada porque publicar o mover una carpeta cambiaría la respuesta
+de todo el subárbol, y eso es justo el estado que se queda desincronizado.
+
+`platform_id` **no** se toca: sigue siendo una frontera dura, y ninguna consulta
+del sistema devuelve material de otra instancia. Las FK compuestas
+`(folder_id, platform_id, owner_sub)` tampoco: una carpeta sólo contiene
+material de su autor. De ahí la única limitación visible —se ve la biblioteca
+del otro, no se escribe dentro— que la interfaz explica en vez de dejar que
+falle: subir o mover algo a una carpeta ajena responde 409 con el motivo.
+
+**Consecuencias.** Todo lo publicado antes de la migración sigue privado:
+`is_public` nace en `false`. La biblioteca de un profesor puede crecer con
+material que no es suyo, así que las tarjetas dicen de quién es y esconden las
+acciones que no le corresponden. Revertirlo es
+`UPDATE catalog_folder SET is_public = false` y lo mismo en
+`content_collection`: las columnas y la vista pueden quedarse sin molestar a
+nadie.
+
+---
+
+## ADR-019 · La IP del alumno se toma del CDN, y sólo si viene del CDN
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** `req.ip` sale de `X-Forwarded-For` recorriendo la cadena de
+proxies de confianza. Eso funciona mientras cada salto **añade** su origen; en
+cuanto un nginx intermedio reescribe la cabecera con `$remote_addr` en vez de
+`$proxy_add_x_forwarded_for`, la única IP que sobrevive es la del borde de
+Cloudflare. En producción todos los visionados quedaban registrados con la misma
+`162.158.x.x`, y esa IP es parte de la evidencia de una filtración.
+
+**Decisión.** Un middleware (`src/security/client-ip.js`) sustituye `req.ip` por
+el valor de `CF-Connecting-IP` (o `True-Client-IP`) **sólo si la petición llega
+de un rango publicado de Cloudflare**, comprobado contra la lista incrustada.
+`TRUST_CLOUDFLARE_CLIENT_IP` permite `always` —para un túnel `cloudflared`,
+donde el borde no aparece en la cadena— y `never`. `CDN_TRUSTED_RANGES` añade
+rangos propios.
+
+**Razones.** La cabecera la puede escribir cualquiera: aceptarla sin comprobar
+de dónde viene convierte el registro forense en un campo de texto libre a
+disposición del alumno. Comprobar el origen la vuelve tan fiable como la cadena
+de proxies. Se sustituye `req.ip` en lugar de añadir otra variable porque es lo
+que ya leen el registro de visionados, la auditoría de administración, los logs
+y el limitador de peticiones: con una segunda variable, cualquiera de esos
+sitios se quedaría con la IP equivocada la próxima vez que alguien lo toque.
+`req.ips` conserva la cadena completa sin alterar.
+
+**Consecuencias.** Sin CDN delante no cambia nada: la comprobación no se cumple
+nunca y todo se resuelve por `X-Forwarded-For` como hasta ahora. Los eventos ya
+registrados con la IP del borde no se corrigen: no hay forma de saber a quién
+correspondían. Si Cloudflare publica rangos nuevos hay que actualizar
+`CLOUDFLARE_RANGES` o añadirlos por `CDN_TRUSTED_RANGES` sin desplegar.
+
+---
+
+## ADR-020 · Una instancia puede responder por varios nombres, de una lista blanca
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** Todo lo que la herramienta genera salía de `PUBLIC_URL`, un valor
+único: el `redirect_uri` del handshake OIDC, las URLs que el visor pide por
+`fetch`, la playlist, la clave AES y la comprobación de origen del formulario de
+la consola. Con un solo nombre de host va bien, pero en desarrollo la misma
+instancia se abre por dos —`http://localhost:8088` para iterar y
+`https://<host>.ts.net` para que la alcance Moodle— y el valor fijo rompía la
+que no coincidiera:
+
+- Moodle recibía `redirect_uri=http://localhost:8088/lti/launch` y respondía
+  **Petición errónea**: no es la URL que tiene registrada;
+- la consola devolvía **403** al iniciar sesión, porque el `Origin` del
+  formulario no era el de `PUBLIC_URL`;
+- el visor no podía pedir su propio contenido: con la página servida por un
+  nombre y las URLs generadas con el otro, `connect-src 'self'` las bloquea.
+
+**Decisión.** `PUBLIC_URL` sigue siendo el origen **canónico** —el que se
+anuncia en `/lti/config` y en la consola para copiar en Moodle, y el que se usa
+cuando no hay petición delante—. Junto a él, `PUBLIC_URL_ALIASES` declara otros
+nombres de la misma instancia. Cada respuesta se construye con el origen por el
+que entró la petición **si está en esa lista**; si no, con el canónico.
+`security/public-origin.js` es el único sitio que lo decide. nginx pasa
+`X-Forwarded-Host $http_host` en vez de `$host` porque `$host` descarta el
+puerto, y sin puerto `localhost:8088` no se distingue de `localhost`.
+
+**Razones.** «Fíate del `Host`» no es una opción: esa cabecera la escribe quien
+llama, y con ella se fabrican el `redirect_uri` de LTI y las URLs firmadas de
+los segmentos. Una lista blanca explícita da el comportamiento útil sin ceder
+esa decisión al cliente. Y deja el caso por defecto —sin alias— exactamente
+como estaba.
+
+**Consecuencias.** En producción no cambia nada mientras `PUBLIC_URL_ALIASES`
+esté vacío. En local, `infra/local/compose.yml` deja `localhost` y `127.0.0.1`
+como alias, así que encender el túnel (`./up.sh --funnel`) hace que funcionen
+los dos nombres a la vez. Añadir un alias es declarar que ese nombre apunta a
+esta instancia: si alguna vez apuntara a otra cosa, habría que quitarlo. La
+configuración que se copia en Moodle sigue siendo la canónica a propósito,
+para no registrar por error una URL de desarrollo.

@@ -43,6 +43,16 @@ function bool (name, fallback = false) {
 const nodeEnv = optional('NODE_ENV', 'development')
 const isProduction = nodeEnv === 'production'
 
+/** `https://EJEMPLO.com:443/x` → `https://ejemplo.com`. `null` si no es una URL. */
+export function normalizeOrigin (value) {
+  try {
+    const url = new URL(String(value).trim())
+    return ['http:', 'https:'].includes(url.protocol) ? url.origin : null
+  } catch {
+    return null
+  }
+}
+
 function looksLikeScryptHash (value) {
   const match = /^scrypt:(\d+):(\d+):(\d+):([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(value)
   if (!match) return false
@@ -87,12 +97,35 @@ export const config = {
   /** URL pública de la herramienta, tal y como la ve Moodle. Sin barra final. */
   publicUrl: optional('PUBLIC_URL', 'http://localhost:3000').replace(/\/+$/, ''),
 
+  /**
+   * Otros nombres por los que se puede alcanzar la MISMA instancia y que se
+   * aceptan para construir URLs de respuesta (ver `security/public-origin.js`).
+   * El caso que lo justifica es el desarrollo con túnel: `localhost:8088` para
+   * iterar y `https://<host>.ts.net` para que llegue Moodle. Es una lista
+   * blanca a propósito: el `Host` lo escribe quien llama.
+   */
+  publicUrlAliases: optional('PUBLIC_URL_ALIASES', '')
+    .split(',').map((url) => url.trim()).filter(Boolean),
+
   http: {
     port: integer('PORT', 3000),
     host: optional('HOST', '0.0.0.0'),
     /** Confiar en X-Forwarded-* porque siempre hay un proxy delante. */
     trustProxy: optional('TRUST_PROXY', 'loopback,linklocal,uniquelocal'),
     bodyLimit: optional('BODY_LIMIT', '256kb')
+  },
+
+  network: {
+    /**
+     * Cuándo creer a `CF-Connecting-IP` (ver `src/security/client-ip.js`):
+     * 'auto' sólo si la petición viene de un rango publicado de Cloudflare,
+     * 'always' siempre (túnel cloudflared, donde el borde no aparece en la
+     * cadena de proxies), 'never' nunca.
+     */
+    trustCloudflareClientIp: optional('TRUST_CLOUDFLARE_CLIENT_IP', 'auto'),
+    /** CIDR extra que cuentan como CDN de confianza, separados por coma. */
+    cdnRanges: optional('CDN_TRUSTED_RANGES', '')
+      .split(',').map((cidr) => cidr.trim()).filter(Boolean)
   },
 
   db: {
@@ -251,6 +284,39 @@ export const config = {
   }
 }
 
+/**
+ * Nombres por los que se acepta que llegue una petición, canónico el primero.
+ * Cualquier `Host` fuera de esta lista se responde con `PUBLIC_URL`, que es lo
+ * que ocurría siempre antes de existir los alias.
+ */
+config.publicOrigins = [config.publicUrl, ...config.publicUrlAliases]
+  .map(normalizeOrigin)
+  .filter((origin, index, all) => origin !== null && all.indexOf(origin) === index)
+
+for (const alias of config.publicUrlAliases) {
+  if (!normalizeOrigin(alias)) {
+    errors.push(`PUBLIC_URL_ALIASES contiene un valor que no es una URL http(s): "${alias}"`)
+  }
+}
+
+/**
+ * `http://localhost` es un origen de confianza para el navegador: cuenta como
+ * contexto seguro y acepta cookies `Secure`, que es lo que usa la sesión de
+ * administración. Fuera de producción y **sólo** sobre loopback, la consola
+ * puede abrirse sin túnel; en cualquier otro host se sigue exigiendo https,
+ * porque ahí esa cookie viajaría en claro por la red.
+ */
+export function isLoopbackDevUrl (url) {
+  if (isProduction) return false
+  try {
+    const { protocol, hostname } = new URL(url)
+    return protocol === 'http:' &&
+      ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname)
+  } catch {
+    return false
+  }
+}
+
 export function assertConfigValid () {
   if (config.media.delivery === 'signed' && !config.secrets.mediaLink) {
     errors.push('MEDIA_DELIVERY=signed exige MEDIA_LINK_SECRET')
@@ -258,11 +324,15 @@ export function assertConfigValid () {
   if (config.isProduction && !config.publicUrl.startsWith('https://')) {
     errors.push('PUBLIC_URL debe ser https:// en producción (Moodle lo exige para LTI 1.3)')
   }
-  if (config.admin.enabled && !config.publicUrl.startsWith('https://')) {
-    errors.push('Activar la consola admin exige una PUBLIC_URL https://')
+  if (config.admin.enabled && !config.publicUrl.startsWith('https://') &&
+      !isLoopbackDevUrl(config.publicUrl)) {
+    errors.push('Activar la consola admin exige una PUBLIC_URL https:// (o loopback en desarrollo)')
   }
   if (config.transcode.heartbeatMs >= config.transcode.leaseSeconds * 1000) {
     errors.push('TRANSCODE_HEARTBEAT_MS debe ser menor que TRANSCODE_LEASE_SECONDS')
+  }
+  if (!['auto', 'always', 'never'].includes(config.network.trustCloudflareClientIp)) {
+    errors.push("TRUST_CLOUDFLARE_CLIENT_IP debe ser 'auto', 'always' o 'never'")
   }
   if (!['auto', 'manual'].includes(config.revisions.activation)) {
     errors.push("MATERIAL_REVISION_ACTIVATION debe ser 'auto' o 'manual'")

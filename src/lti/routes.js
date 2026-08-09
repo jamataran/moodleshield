@@ -13,6 +13,8 @@ import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
 import { getVideoForPlatform, listReadyVideosForDeepLink } from '../services/videos.js'
 import { getDocumentForPlatform, listReadyDocumentsForDeepLink } from '../services/documents.js'
 import { getCollectionForPlatform, loadItems, publicItem } from '../services/collections.js'
+import { getVisibleCollection } from '../services/sharing.js'
+import { publicOriginFor } from '../security/public-origin.js'
 import { getActiveRevision } from '../services/revisions.js'
 import { assertUuid, isUuid } from '../media/storage.js'
 import { normalizePlatformInput } from '../admin/platform-validator.js'
@@ -61,7 +63,11 @@ async function handleLogin (req, res, next) {
     auth.searchParams.set('response_mode', 'form_post')
     auth.searchParams.set('prompt', 'none')
     auth.searchParams.set('client_id', platform.client_id)
-    auth.searchParams.set('redirect_uri', `${config.publicUrl}/lti/launch`)
+    // El `redirect_uri` tiene que ser EXACTAMENTE la URL que Moodle tiene
+    // registrada, y ésa es aquella por la que ha entrado el launch. Con un
+    // PUBLIC_URL fijo, abrir la herramienta por su otro nombre —el túnel en
+    // desarrollo— hacía que Moodle respondiera «Petición errónea».
+    auth.searchParams.set('redirect_uri', `${publicOriginFor(req)}/lti/launch`)
     auth.searchParams.set('state', state)
     auth.searchParams.set('nonce', nonce)
     if (params.loginHint) auth.searchParams.set('login_hint', params.loginHint)
@@ -175,7 +181,8 @@ ltiRouter.post('/launch', async (req, res, next) => {
         platform,
         identity,
         resource,
-        clientIp: displayIp(req.ip)
+        clientIp: displayIp(req.ip),
+        origin: publicOriginFor(req)
       })
     }
     return renderMaterialLaunch({
@@ -184,7 +191,8 @@ ltiRouter.post('/launch', async (req, res, next) => {
       platform,
       identity,
       resource,
-      clientIp: displayIp(req.ip)
+      clientIp: displayIp(req.ip),
+      origin: publicOriginFor(req)
     })
   } catch (err) {
     next(err)
@@ -234,7 +242,7 @@ export function displayIp (ip) {
   return value.startsWith('::ffff:') ? value.slice(7) : value
 }
 
-async function renderMaterialLaunch ({ res, context, platform, identity, resource, clientIp }) {
+async function renderMaterialLaunch ({ res, context, platform, identity, resource, clientIp, origin }) {
   const material = resource.kind === 'pdf'
     ? await getDocumentForPlatform(resource.id, platform.id)
     : await getVideoForPlatform(resource.id, platform.id)
@@ -285,9 +293,9 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
           },
           user: { name: context.name, identity, ip: clientIp },
           returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
-          contentUrl: `${config.publicUrl}/documents/${material.id}/content`,
+          contentUrl: `${origin}/documents/${material.id}/content`,
           downloadUrl: downloadAvailable
-            ? `${config.publicUrl}/documents/${material.id}/download`
+            ? `${origin}/documents/${material.id}/download`
             : null,
           downloadHelp: downloadAvailable
             ? null
@@ -305,7 +313,7 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
         video: { id: material.id, title: material.title },
         user: { name: context.name, identity, ip: clientIp },
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
-        playlistUrl: `${config.publicUrl}/hls/${material.id}/index.m3u8`,
+        playlistUrl: `${origin}/hls/${material.id}/index.m3u8`,
         notice: archivedNotice
       }
     })
@@ -317,7 +325,7 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
  * se resuelve en cada launch, así que añadir, quitar o reordenar se refleja al
  * volver a abrir la actividad sin editarla en Moodle.
  */
-async function renderCollectionLaunch ({ res, context, platform, identity, resource, clientIp }) {
+async function renderCollectionLaunch ({ res, context, platform, identity, resource, clientIp, origin }) {
   const collection = await getCollectionForPlatform(resource.id, platform.id)
   if (!collection) {
     throw new LtiError('La colección asociada a esta actividad ya no existe', {
@@ -352,7 +360,7 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
         items: items.map(publicItem),
         user: { name: context.name, identity, ip: clientIp },
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
-        manifestUrl: `${config.publicUrl}/collections/${collection.id}/manifest`
+        manifestUrl: `${origin}/collections/${collection.id}/manifest`
       }
     })
   )
@@ -415,7 +423,10 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
       platform,
       deploymentId: payload.dep,
       data: payload.dat,
-      materials: kind === 'collection' || !payload.multi ? materials.slice(0, 1) : materials
+      materials: kind === 'collection' || !payload.multi ? materials.slice(0, 1) : materials,
+      // La actividad guardará esta URL para siempre: la que corresponde es
+      // aquella por la que el profesor abrió el selector desde Moodle.
+      origin: publicOriginFor(req)
     })
 
     res.type('html').send(deepLinkingForm(payload.ret, jwt))
@@ -432,12 +443,10 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
 async function resolveCollectionsForDeepLink ({ ids, platformId, ownerSub }) {
   const out = []
   for (const id of ids) {
-    const collection = await one(
-      `SELECT * FROM content_collection
-        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 AND archived_at IS NULL`,
-      [id, platformId, ownerSub]
-    )
-    if (!collection) continue
+    // Propia o compartida por otro profesor de la misma instancia: quien la ve
+    // en su biblioteca puede insertarla en su curso.
+    const collection = await getVisibleCollection({ id, platformId, ownerSub })
+    if (!collection || collection.archived_at) continue
     const items = await loadItems(id)
     if (items.length === 0) {
       throw new LtiError('La colección está vacía; añade materiales antes de insertarla', {

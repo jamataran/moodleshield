@@ -2,6 +2,7 @@ import { many, one, transaction } from '../db/index.js'
 import config from '../config.js'
 import { assertFolderInTransaction, normalizeName } from './folders.js'
 import { likePattern } from './materials.js'
+import { visibleClause } from './sharing.js'
 import { isUuid } from '../media/storage.js'
 
 /**
@@ -68,9 +69,10 @@ export function normalizeItems (raw) {
 }
 
 /**
- * Comprueba que todos los materiales existen, son del profesor, están listos y
- * tienen revisión activa. Un material archivado sólo se admite si YA estaba en
- * la colección: archivar bloquea inserciones nuevas, no rompe las existentes.
+ * Comprueba que todos los materiales existen, el profesor los ve (suyos o
+ * compartidos), están listos y tienen revisión activa. Un material archivado
+ * sólo se admite si YA estaba en la colección: archivar bloquea inserciones
+ * nuevas, no rompe las existentes.
  */
 async function assertItemsUsable (client, items, { platformId, ownerSub, alreadyPresent = new Set() }) {
   const byKind = { video: [], pdf: [] }
@@ -82,10 +84,10 @@ async function assertItemsUsable (client, items, { platformId, ownerSub, already
     if (ids.length === 0) continue
     const table = kind === 'pdf' ? 'pdf_document' : 'video'
     const { rows } = await client.query(
-      `SELECT id, archived_at FROM ${table}
-        WHERE id = ANY($1::uuid[]) AND platform_id = $2 AND owner_sub = $3
-          AND status = 'ready' AND active_revision_id IS NOT NULL`,
-      [ids, platformId, ownerSub]
+      `SELECT m.id, m.archived_at FROM ${table} m
+        WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}
+          AND m.status = 'ready' AND m.active_revision_id IS NOT NULL`,
+      [platformId, ownerSub, ids]
     )
     for (const row of rows) {
       usable.add(`${kind}:${row.id}`)
@@ -100,7 +102,8 @@ async function assertItemsUsable (client, items, { platformId, ownerSub, already
 
   if (rejected.length > 0) {
     throw new CollectionError(
-      'Algunos materiales no están disponibles: deben ser tuyos, estar listos y no archivados',
+      'Algunos materiales no están disponibles: deben ser tuyos o estar compartidos contigo, ' +
+        'estar listos y no archivados',
       { status: 409, code: 'items_unavailable', details: { items: rejected } }
     )
   }
@@ -220,6 +223,7 @@ async function queryCollectionRows ({
 
   return many(
     `SELECT c.*,
+            (c.owner_sub IS DISTINCT FROM $2) AS shared,
             to_char(c.created_at AT TIME ZONE 'UTC',
               'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at,
             counts.item_count,
@@ -233,7 +237,8 @@ async function queryCollectionRows ({
            FROM content_collection_item i
           WHERE i.collection_id = c.id
        ) counts
-      WHERE c.platform_id = $1 AND c.owner_sub = $2 ${clauses}
+      WHERE c.platform_id = $1
+        AND ${visibleClause('c', { publicColumn: 'is_public' })} ${clauses}
       ORDER BY c.created_at DESC, c.id DESC
       ${limitClause}`,
     params
@@ -298,19 +303,25 @@ export function createCollection ({
 }
 
 /**
- * Sustituye metadatos y/o la lista completa de elementos.
+ * Sustituye metadatos y/o la lista completa de elementos. Una colección
+ * compartida la edita también quien la recibe: es justo el caso de uso —dos
+ * profesores manteniendo el temario de la misma asignatura—.
  *
  * El control es optimista sobre `updated_at`: si otra pestaña guardó mientras
  * ésta editaba, se responde 409 `stale_collection` en vez de sobrescribir en
- * silencio el trabajo del otro.
+ * silencio el trabajo del otro. Con dos profesores editando, esa red deja de
+ * ser teórica.
  */
 export function updateCollection ({
   id, platformId, ownerSub, title, description, folderId, items, expectedUpdatedAt
 }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT * FROM content_collection
-        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 FOR UPDATE`,
+      `SELECT c.*, (c.owner_sub IS DISTINCT FROM $3) AS shared
+         FROM content_collection c
+        WHERE c.id = $1 AND c.platform_id = $2
+          AND ${visibleClause('c', { platform: '$2', owner: '$3', publicColumn: 'is_public' })}
+        FOR UPDATE`,
       [id, platformId, ownerSub]
     )
     if (rows.length === 0) return { status: 'not_found' }
@@ -335,6 +346,15 @@ export function updateCollection ({
       sets.push(`description = $${params.length}`)
     }
     if (folderId !== undefined) {
+      // Cambiar de carpeta es reorganizar una biblioteca ajena, y además la FK
+      // compuesta exige que la carpeta sea del mismo dueño que la colección.
+      if (current.shared) {
+        throw new CollectionError(
+          `Esta colección está en la biblioteca de ${current.owner_name || 'otro profesor'}: ` +
+            'puedes editarla, pero no cambiarla de carpeta.',
+          { status: 409, code: 'collection_not_owned' }
+        )
+      }
       params.push(await assertFolderInTransaction(client, { folderId, platformId, ownerSub }))
       sets.push(`folder_id = $${params.length}`)
     }
@@ -360,12 +380,20 @@ export function updateCollection ({
   })
 }
 
-/** Copia lógica: nuevo UUID, mismas referencias. No duplica ni un byte de disco. */
+/**
+ * Copia lógica: nuevo UUID, mismas referencias. No duplica ni un byte de disco.
+ *
+ * Duplicar una colección compartida es la forma de llevársela a la biblioteca
+ * propia y adaptarla sin tocar la del otro. La copia nace del profesor que
+ * duplica y sin carpeta: la del original es de su autor y no la puede ocupar.
+ */
 export function duplicateCollection ({ id, platformId, ownerSub, ownerName }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT * FROM content_collection
-        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3`,
+      `SELECT c.*, (c.owner_sub IS DISTINCT FROM $3) AS shared
+         FROM content_collection c
+        WHERE c.id = $1 AND c.platform_id = $2
+          AND ${visibleClause('c', { platform: '$2', owner: '$3', publicColumn: 'is_public' })}`,
       [id, platformId, ownerSub]
     )
     if (rows.length === 0) return { status: 'not_found' }
@@ -376,7 +404,7 @@ export function duplicateCollection ({ id, platformId, ownerSub, ownerName }) {
          (title, description, platform_id, owner_sub, owner_name, folder_id)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [`${source.title} (copia)`.slice(0, 300), source.description, platformId, ownerSub,
-        ownerName ?? source.owner_name, source.folder_id]
+        ownerName ?? source.owner_name, source.shared ? null : source.folder_id]
     )
     await client.query(
       `INSERT INTO content_collection_item (collection_id, position, video_id, document_id)
@@ -402,6 +430,28 @@ export function archiveCollection ({ id, platformId, ownerSub }) {
       [id, platformId, ownerSub]
     )
     return rows[0] ? { status: 'archived', collection: rows[0] } : { status: 'not_found' }
+  })
+}
+
+/**
+ * Publica o retira la colección de la biblioteca compartida. Sólo el autor:
+ * quien la recibe compartida puede editarla, no decidir a quién más llega.
+ */
+export function setCollectionVisibility ({ id, platformId, ownerSub, isPublic }) {
+  return transaction(async (client) => {
+    const { rows } = await client.query(
+      `UPDATE content_collection c SET is_public = $4, updated_at = now()
+        WHERE c.id = $1 AND c.platform_id = $2 AND c.owner_sub = $3
+        RETURNING c.*, false AS shared,
+          (SELECT count(*) FROM content_collection_item i
+            WHERE i.collection_id = c.id)                                  AS item_count,
+          (SELECT count(*) FROM content_collection_item i
+            WHERE i.collection_id = c.id AND i.video_id IS NOT NULL)       AS video_count,
+          (SELECT count(*) FROM content_collection_item i
+            WHERE i.collection_id = c.id AND i.document_id IS NOT NULL)    AS document_count`,
+      [id, platformId, ownerSub, Boolean(isPublic)]
+    )
+    return rows[0] ?? null
   })
 }
 
@@ -456,6 +506,9 @@ export function publicCollection (row, items = null) {
     description: row.description,
     folderId: row.folder_id,
     archived: Boolean(row.archived_at),
+    isPublic: Boolean(row.is_public),
+    shared: Boolean(row.shared),
+    ownerName: row.owner_name ?? null,
     ...counts,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

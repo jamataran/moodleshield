@@ -39,7 +39,11 @@ function renderPlatforms () {
     link.className = 'btn'
     link.href = `/admin/platforms/${encodeURIComponent(platform.id)}`
     link.textContent = 'Editar'
-    action.append(link)
+    const content = document.createElement('a')
+    content.className = 'btn'
+    content.href = `/admin/platforms/${encodeURIComponent(platform.id)}/contenido`
+    content.textContent = 'Contenido'
+    action.append(link, ' ', content)
     tr.append(action)
     rows.append(tr)
   }
@@ -88,6 +92,12 @@ function renderForm () {
   setValue('jwksUrl', platform.jwks_url)
   text(document.querySelector('#enabled'), platform.enabled ? 'Activa' : 'Inactiva')
 
+  const contentLink = document.querySelector('#contentLink')
+  if (contentLink && !data.isNew) {
+    contentLink.hidden = false
+    contentLink.href = `/admin/platforms/${encodeURIComponent(platform.id)}/contenido`
+  }
+
   const form = document.querySelector('#platformForm')
   form.action = data.isNew ? '/admin/platforms' : `/admin/platforms/${encodeURIComponent(platform.id)}`
   form.querySelector('input[name="_csrf"]').value = data.csrf
@@ -132,9 +142,111 @@ function renderForm () {
   document.querySelector('#privateWarning').hidden = !data.allowPrivateHosts
 }
 
+// ---------------------------------------------------------------------------
+// Inventario de contenido de una instancia
+//
+// La única vista que enseña material de todos los profesores a la vez. Es de
+// sólo lectura a propósito: sirve para saber qué hay y de quién es. Nada de
+// `innerHTML`, igual que en el catálogo: los títulos los escribe el profesor.
+// ---------------------------------------------------------------------------
+
+function fecha (value) {
+  return value ? new Date(value).toLocaleString() : '—'
+}
+
+function profesor (row) {
+  return row.owner_name || row.owner_sub || '—'
+}
+
+function tamano (bytes) {
+  const n = Number(bytes)
+  if (!Number.isFinite(n) || n <= 0) return '—'
+  return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} kB`
+}
+
+function visibilidad (row) {
+  if (row.is_public) return 'Compartida por su autor'
+  return row.shared ? 'Compartida (hereda de una carpeta)' : 'Privada'
+}
+
+function renderPlatformContent () {
+  const logoutCsrf = document.querySelector('#logout input[name="_csrf"]')
+  if (logoutCsrf) logoutCsrf.value = data.logoutCsrf
+  const platform = data.platform ?? {}
+  text(document.querySelector('#platformName'), platform.name ?? 'Aula')
+  text(document.querySelector('#issuer'), platform.issuer ?? '')
+  const link = document.querySelector('#platformLink')
+  if (link && platform.id) link.href = `/admin/platforms/${encodeURIComponent(platform.id)}`
+
+  const totals = data.totals ?? {}
+  text(document.querySelector('#totals'),
+    `${totals.folder_count ?? 0} carpetas (${totals.public_folder_count ?? 0} compartidas) · ` +
+    `${totals.video_count ?? 0} vídeos · ${totals.document_count ?? 0} PDF · ` +
+    `${totals.collection_count ?? 0} colecciones (${totals.public_collection_count ?? 0} compartidas)`)
+
+  if (data.truncated) {
+    const aviso = document.querySelector('#truncated')
+    aviso.hidden = false
+    text(aviso, `Sólo se muestran los ${data.limit} elementos actualizados más recientemente. ` +
+      'Los totales del resumen sí cuentan todo.')
+  }
+
+  const owners = data.owners ?? []
+  const ownerRows = document.querySelector('#ownerRows')
+  for (const owner of owners) {
+    const tr = document.createElement('tr')
+    tr.append(cell(profesor(owner)), cell(owner.folder_count), cell(owner.video_count),
+      cell(owner.document_count), cell(owner.collection_count), cell(fecha(owner.last_update)))
+    ownerRows.append(tr)
+  }
+  document.querySelector('#ownersEmpty').hidden = owners.length > 0
+
+  const folders = data.folders ?? []
+  const folderRows = document.querySelector('#folderRows')
+  for (const folder of folders) {
+    const tr = document.createElement('tr')
+    const dentro = `${folder.video_count} vídeos · ${folder.document_count} PDF · ` +
+      `${folder.collection_count} colecciones`
+    tr.append(cell(profesor(folder)), cell(folder.path), cell(dentro), cell(visibilidad(folder)))
+    folderRows.append(tr)
+  }
+  document.querySelector('#foldersEmpty').hidden = folders.length > 0
+
+  const collections = data.collections ?? []
+  const collectionRows = document.querySelector('#collectionRows')
+  for (const collection of collections) {
+    const tr = document.createElement('tr')
+    tr.append(cell(profesor(collection)), cell(collection.title),
+      cell(collection.folder_path ?? 'Sin carpeta'), cell(collection.item_count),
+      cell(collection.archived_at ? 'Archivada' : 'Activa'),
+      cell(visibilidad(collection)), cell(fecha(collection.updated_at)))
+    collectionRows.append(tr)
+  }
+  document.querySelector('#collectionsEmpty').hidden = collections.length > 0
+
+  const materials = data.materials ?? []
+  const materialRows = document.querySelector('#materialRows')
+  for (const material of materials) {
+    const tr = document.createElement('tr')
+    const estado = [
+      material.status,
+      material.archived_at ? 'archivado' : '',
+      material.published ? '' : 'sin publicar'
+    ].filter(Boolean).join(' · ')
+    tr.append(cell(profesor(material)), cell(material.kind === 'pdf' ? 'PDF' : 'Vídeo'),
+      cell(material.title), cell(material.folder_path ?? 'Sin carpeta'), cell(estado),
+      cell(tamano(material.size_bytes)), cell(visibilidad(material)),
+      cell(fecha(material.updated_at)))
+    materialRows.append(tr)
+  }
+  document.querySelector('#materialsEmpty').hidden = materials.length > 0
+}
+
 // El login no pasa por aquí: tiene su propio login.js, sin vocabulario LTI.
 if (document.body.dataset.page === 'platforms') {
   renderPlatforms()
 } else if (document.body.dataset.page === 'platform-form') {
   renderForm()
+} else if (document.body.dataset.page === 'platform-content') {
+  renderPlatformContent()
 }
