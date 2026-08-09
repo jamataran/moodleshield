@@ -121,10 +121,9 @@ jobs:
           files: docker/docker-bake.hcl
           targets: default
           push: true
-          set: |
-            *.cache-from=type=gha
-            *.cache-to=type=gha,mode=max
         env:
+          # Un ámbito de caché por imagen (ver docker/docker-bake.hcl).
+          CACHE: gha
           REGISTRY: ghcr.io
           REPO: ${{ steps.meta.outputs.repo }}
           TAGS: ${{ steps.meta.outputs.sha_tag }},edge

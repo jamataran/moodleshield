@@ -114,8 +114,10 @@ jobs:
           targets: default
           push: false
           set: |
-            *.cache-from=type=gha
-            *.cache-to=type=gha,mode=max
             *.platform=linux/amd64
         env:
           APP_VERSION: ${{ github.sha }}
+          # Los ámbitos de caché los declara cada target en docker-bake.hcl: uno
+          # por imagen. Con un `*.cache-to` comodín las tres compartían ámbito y
+          # se peleaban por reservar la misma entrada («failed to reserve cache»).
+          CACHE: gha
