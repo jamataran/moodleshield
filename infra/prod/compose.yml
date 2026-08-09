@@ -50,6 +50,9 @@ x-app-env: &app-env
   ADMIN_ALLOW_PRIVATE_LTI_HOSTS: ${ADMIN_ALLOW_PRIVATE_LTI_HOSTS:-false}
   LTI_IDENTITY_CUSTOM_PARAM: ${LTI_IDENTITY_CUSTOM_PARAM:-username}
   # IP real del alumno tras un CDN (ADR-019): auto | always | never.
+  # Otros nombres por los que se alcanza la MISMA instancia. Vacío = sólo
+  # PUBLIC_URL, que es el comportamiento de siempre.
+  PUBLIC_URL_ALIASES: ${PUBLIC_URL_ALIASES:-}
   TRUST_CLOUDFLARE_CLIENT_IP: ${TRUST_CLOUDFLARE_CLIENT_IP:-auto}
   CDN_TRUSTED_RANGES: ${CDN_TRUSTED_RANGES:-}
   MEDIA_ROOT: /data/media

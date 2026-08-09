@@ -41,12 +41,12 @@ const ICON = {
  * @param {object} material
  * @param {'video'|'pdf'|'collection'} material.kind
  */
-export function contentItemFor (material) {
+export function contentItemFor (material, origin = config.publicUrl) {
   const item = {
     type: 'ltiResourceLink',
     title: material.title,
     text: material.description || undefined,
-    url: `${config.publicUrl}/lti/launch`,
+    url: `${origin}/lti/launch`,
     custom: {
       resourcekind: material.kind,
       resourceid: material.id
@@ -57,7 +57,7 @@ export function contentItemFor (material) {
     // de vuelta se oculta al detectar ese contexto.
     presentation: { documentTarget: 'window' },
     icon: {
-      url: `${config.publicUrl}/assets/${ICON[material.kind] ?? ICON.video}`,
+      url: `${origin}/assets/${ICON[material.kind] ?? ICON.video}`,
       width: 64,
       height: 64
     }
@@ -71,14 +71,14 @@ export function contentItemFor (material) {
   return item
 }
 
-export async function buildDeepLinkingResponse ({ platform, deploymentId, data, materials, videos }) {
+export async function buildDeepLinkingResponse ({ platform, deploymentId, data, materials, videos, origin }) {
   const key = await getActiveKey()
   const now = Math.floor(Date.now() / 1000)
 
   // `videos` es la forma anterior a T20; se acepta para no romper llamadas
   // internas que aún la usen.
   const items = (materials ?? (videos ?? []).map((v) => ({ ...v, kind: 'video' })))
-    .map(contentItemFor)
+    .map((material) => contentItemFor(material, origin ?? config.publicUrl))
 
   const payload = {
     iss: platform.client_id,

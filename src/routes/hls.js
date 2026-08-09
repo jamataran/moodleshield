@@ -10,6 +10,7 @@ import { getRevision } from '../services/revisions.js'
 import { buildUserPlaylist } from '../media/playlist.js'
 import { patternToHex } from '../media/watermark.js'
 import { verifyMediaUrl } from '../media/signing.js'
+import { publicOriginFor } from '../security/public-origin.js'
 import { issueKeyToken, verifyKeyToken } from '../session.js'
 import {
   assertVideoId,
@@ -83,7 +84,8 @@ hlsRouter.get('/:id/index.m3u8', requireSession, async (req, res, next) => {
       layout: revision.storage_layout,
       patternScope: revision.pattern_scope,
       userSub: req.session.sub,
-      keyToken
+      keyToken,
+      origin: publicOriginFor(req)
     })
 
     logger.debug(

@@ -3,6 +3,7 @@ import { rateLimit } from 'express-rate-limit'
 import config from '../config.js'
 import { query } from '../db/index.js'
 import { renderPage } from '../ui/render.js'
+import { isAllowedOrigin } from '../security/public-origin.js'
 import {
   clearAdminCookie,
   clearLoginCsrf,
@@ -95,7 +96,9 @@ adminRouter.get('/login', async (req, res, next) => {
 adminRouter.post('/login', async (req, res, next) => {
   if (!config.admin.enabled) return res.sendStatus(404)
   const origin = req.get('origin')
-  if (origin && origin !== new URL(config.publicUrl).origin) return res.sendStatus(403)
+  // Antes se comparaba sólo contra PUBLIC_URL: entrar por el otro nombre de la
+  // misma instancia —el túnel en desarrollo— devolvía 403 al iniciar sesión.
+  if (origin && !isAllowedOrigin(origin)) return res.sendStatus(403)
   if (!verifyLoginCsrf(req, req.body?._csrf)) return res.sendStatus(403)
   try {
     const result = await loginAdmin({

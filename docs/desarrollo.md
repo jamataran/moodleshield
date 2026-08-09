@@ -334,6 +334,7 @@ Las que más se tocan durante el desarrollo:
 | `LOG_LEVEL` | `info` | `debug` para ver las queries (ojo con los tokens) |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas |
 | `TRUST_CLOUDFLARE_CLIENT_IP` | `auto` | De dónde sale la IP del alumno tras un CDN ([ADR-019](decisiones.md)) |
+| `PUBLIC_URL_ALIASES` | — | Otros nombres de la misma instancia ([ADR-020](decisiones.md)). En local ya trae `localhost`, así que con el túnel encendido funcionan los dos |
 
 ---
 

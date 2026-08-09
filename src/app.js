@@ -17,6 +17,7 @@ import { renderPage, uiDir } from './ui/render.js'
 import { adminRouter } from './admin/routes.js'
 import { getFrameAncestors, refreshFrameAncestors } from './security/frame-ancestors.js'
 import { clientIpMiddleware } from './security/client-ip.js'
+import { publicOriginFor } from './security/public-origin.js'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -126,9 +127,9 @@ export async function createApp () {
   // una ficha que anuncia qué hay detrás. No es ocultación: `/lti/keys` y el
   // handshake OIDC siguen siendo públicos porque Moodle los pide sin
   // autenticar. Sólo evita el anuncio gratuito a quien pasaba por ahí.
-  app.get('/', async (_req, res) => {
+  app.get('/', async (req, res) => {
     if (config.admin.enabled) return res.redirect(303, '/admin/platforms')
-    res.type('html').send(await renderPage('landing.html', { PUBLIC_URL: config.publicUrl }))
+    res.type('html').send(await renderPage('landing.html', { PUBLIC_URL: publicOriginFor(req) }))
   })
 
   app.use((req, res) => {

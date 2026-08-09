@@ -295,7 +295,7 @@ capa por capa— en [`docs/arquitectura.md`](docs/arquitectura.md).
 |---|---|
 | 🧭 [`docs/README.md`](docs/README.md) | **Índice de la documentación, estado del proyecto y hoja de ruta** |
 | 🏗️ [`docs/arquitectura.md`](docs/arquitectura.md) | Flujos, modelo de datos, endpoints, modelo de seguridad |
-| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…019: por qué cada decisión y cómo revertirla |
+| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…020: por qué cada decisión y cómo revertirla |
 | 💻 [`docs/desarrollo.md`](docs/desarrollo.md) | **Guía para desarrolladores**: entorno, tests, convenciones, depuración |
 | 🎓 [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle, en seis pasos, con diagnóstico |
 | 🔐 [`docs/https-tunel.md`](docs/https-tunel.md) | HTTPS público y túneles para desarrollo local |

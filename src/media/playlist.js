@@ -98,7 +98,11 @@ export async function buildUserPlaylist ({
   userSub,
   keyToken,
   basePlaylist,
-  expires
+  expires,
+  // El player pide playlist, clave y segmentos desde la página del visor: si
+  // salieran con otro nombre de host, la CSP (`connect-src 'self'`) los
+  // bloquearía y hls.js no reproduciría nada.
+  origin = config.publicUrl
 }) {
   const dir = revisionDir('video', videoId, revisionId, layout)
   const text = basePlaylist ?? (await readFile(variantPlaylistPath(dir, 'A'), 'utf8'))
@@ -118,7 +122,7 @@ export async function buildUserPlaylist ({
   const out = [...parsed.lines]
 
   if (parsed.keyLine) {
-    const keyUrl = `${config.publicUrl}/hls/${videoId}/key?kt=${encodeURIComponent(keyToken)}`
+    const keyUrl = `${origin}/hls/${videoId}/key?kt=${encodeURIComponent(keyToken)}`
     out[parsed.keyLine.index] = parsed.keyLine.value.replace(
       /URI="[^"]*"/,
       `URI="${keyUrl}"`
@@ -130,8 +134,8 @@ export async function buildUserPlaylist ({
     const uri = `${prefix}/${variant}/${segment.name}`
     out[segment.index] =
       config.media.delivery === 'signed'
-        ? `${config.publicUrl}${signedMediaUrl(uri, { expires: exp })}`
-        : `${config.publicUrl}${uri}`
+        ? `${origin}${signedMediaUrl(uri, { expires: exp })}`
+        : `${origin}${uri}`
   })
 
   return { body: out.join('\n'), pattern }

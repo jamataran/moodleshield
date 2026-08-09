@@ -43,6 +43,16 @@ function bool (name, fallback = false) {
 const nodeEnv = optional('NODE_ENV', 'development')
 const isProduction = nodeEnv === 'production'
 
+/** `https://EJEMPLO.com:443/x` → `https://ejemplo.com`. `null` si no es una URL. */
+export function normalizeOrigin (value) {
+  try {
+    const url = new URL(String(value).trim())
+    return ['http:', 'https:'].includes(url.protocol) ? url.origin : null
+  } catch {
+    return null
+  }
+}
+
 function looksLikeScryptHash (value) {
   const match = /^scrypt:(\d+):(\d+):(\d+):([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(value)
   if (!match) return false
@@ -86,6 +96,16 @@ export const config = {
 
   /** URL pública de la herramienta, tal y como la ve Moodle. Sin barra final. */
   publicUrl: optional('PUBLIC_URL', 'http://localhost:3000').replace(/\/+$/, ''),
+
+  /**
+   * Otros nombres por los que se puede alcanzar la MISMA instancia y que se
+   * aceptan para construir URLs de respuesta (ver `security/public-origin.js`).
+   * El caso que lo justifica es el desarrollo con túnel: `localhost:8088` para
+   * iterar y `https://<host>.ts.net` para que llegue Moodle. Es una lista
+   * blanca a propósito: el `Host` lo escribe quien llama.
+   */
+  publicUrlAliases: optional('PUBLIC_URL_ALIASES', '')
+    .split(',').map((url) => url.trim()).filter(Boolean),
 
   http: {
     port: integer('PORT', 3000),
@@ -261,6 +281,21 @@ export const config = {
   log: {
     level: optional('LOG_LEVEL', isProduction ? 'info' : 'debug'),
     pretty: bool('LOG_PRETTY', !isProduction)
+  }
+}
+
+/**
+ * Nombres por los que se acepta que llegue una petición, canónico el primero.
+ * Cualquier `Host` fuera de esta lista se responde con `PUBLIC_URL`, que es lo
+ * que ocurría siempre antes de existir los alias.
+ */
+config.publicOrigins = [config.publicUrl, ...config.publicUrlAliases]
+  .map(normalizeOrigin)
+  .filter((origin, index, all) => origin !== null && all.indexOf(origin) === index)
+
+for (const alias of config.publicUrlAliases) {
+  if (!normalizeOrigin(alias)) {
+    errors.push(`PUBLIC_URL_ALIASES contiene un valor que no es una URL http(s): "${alias}"`)
   }
 }
 

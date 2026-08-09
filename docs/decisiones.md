@@ -548,3 +548,47 @@ nunca y todo se resuelve por `X-Forwarded-For` como hasta ahora. Los eventos ya
 registrados con la IP del borde no se corrigen: no hay forma de saber a quién
 correspondían. Si Cloudflare publica rangos nuevos hay que actualizar
 `CLOUDFLARE_RANGES` o añadirlos por `CDN_TRUSTED_RANGES` sin desplegar.
+
+---
+
+## ADR-020 · Una instancia puede responder por varios nombres, de una lista blanca
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** Todo lo que la herramienta genera salía de `PUBLIC_URL`, un valor
+único: el `redirect_uri` del handshake OIDC, las URLs que el visor pide por
+`fetch`, la playlist, la clave AES y la comprobación de origen del formulario de
+la consola. Con un solo nombre de host va bien, pero en desarrollo la misma
+instancia se abre por dos —`http://localhost:8088` para iterar y
+`https://<host>.ts.net` para que la alcance Moodle— y el valor fijo rompía la
+que no coincidiera:
+
+- Moodle recibía `redirect_uri=http://localhost:8088/lti/launch` y respondía
+  **Petición errónea**: no es la URL que tiene registrada;
+- la consola devolvía **403** al iniciar sesión, porque el `Origin` del
+  formulario no era el de `PUBLIC_URL`;
+- el visor no podía pedir su propio contenido: con la página servida por un
+  nombre y las URLs generadas con el otro, `connect-src 'self'` las bloquea.
+
+**Decisión.** `PUBLIC_URL` sigue siendo el origen **canónico** —el que se
+anuncia en `/lti/config` y en la consola para copiar en Moodle, y el que se usa
+cuando no hay petición delante—. Junto a él, `PUBLIC_URL_ALIASES` declara otros
+nombres de la misma instancia. Cada respuesta se construye con el origen por el
+que entró la petición **si está en esa lista**; si no, con el canónico.
+`security/public-origin.js` es el único sitio que lo decide. nginx pasa
+`X-Forwarded-Host $http_host` en vez de `$host` porque `$host` descarta el
+puerto, y sin puerto `localhost:8088` no se distingue de `localhost`.
+
+**Razones.** «Fíate del `Host`» no es una opción: esa cabecera la escribe quien
+llama, y con ella se fabrican el `redirect_uri` de LTI y las URLs firmadas de
+los segmentos. Una lista blanca explícita da el comportamiento útil sin ceder
+esa decisión al cliente. Y deja el caso por defecto —sin alias— exactamente
+como estaba.
+
+**Consecuencias.** En producción no cambia nada mientras `PUBLIC_URL_ALIASES`
+esté vacío. En local, `infra/local/compose.yml` deja `localhost` y `127.0.0.1`
+como alias, así que encender el túnel (`./up.sh --funnel`) hace que funcionen
+los dos nombres a la vez. Añadir un alias es declarar que ese nombre apunta a
+esta instancia: si alguna vez apuntara a otra cosa, habría que quitarlo. La
+configuración que se copia en Moodle sigue siendo la canónica a propósito,
+para no registrar por error una URL de desarrollo.

@@ -36,6 +36,13 @@ cd infra/local
 ./rebuild.sh --funnel       # construye, arranca y publica por Tailscale
 ```
 
+Con el túnel encendido **funcionan los dos nombres a la vez**: `PUBLIC_URL` pasa
+a ser la URL de Tailscale —la que registras en Moodle— y `localhost:8088` queda
+declarado en `PUBLIC_URL_ALIASES` ([ADR-020](../../docs/decisiones.md)). Cada
+petición recibe URLs de su propio nombre, así que ni el handshake LTI ni el
+formulario de la consola dependen de por dónde entres. Un `Host` que no esté en
+esa lista se responde siempre con `PUBLIC_URL`.
+
 Comprobación:
 
 ```bash

@@ -284,6 +284,18 @@ carpeta contenga sólo material de su autor: se ve la biblioteca del otro, no se
 escribe dentro. Subir o mover algo a una carpeta ajena responde 409 explicando
 por qué, no un 404 que despistaría.
 
+## Con qué nombre responde la herramienta
+
+`PUBLIC_URL` es el origen **canónico**: el que se registra en Moodle y el que
+anuncian `/lti/config` y la consola. `PUBLIC_URL_ALIASES` declara otros nombres
+por los que se alcanza la misma instancia; una petición que entre por uno de
+ellos recibe sus URLs construidas con ese mismo nombre —`redirect_uri` de LTI,
+visor, playlist, clave AES y comprobación de origen de la consola—. Cualquier
+otro `Host` se responde con el canónico: la cabecera la escribe quien llama y
+con ella se fabrican el `redirect_uri` y los enlaces firmados
+([ADR-020](decisiones.md)). Lo decide un solo módulo,
+`src/security/public-origin.js`.
+
 ## Qué ve el administrador
 
 `/admin/platforms/:id/contenido` es la **única** vista del sistema que no filtra
