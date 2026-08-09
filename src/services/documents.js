@@ -3,6 +3,7 @@ import logger from '../logger.js'
 import { assertFolderInTransaction, normalizeName } from './folders.js'
 import { listCollectionsUsing, listMaterials } from './materials.js'
 import { insertRevision, syncMaterialStatus } from './revisions.js'
+import { visibleClause } from './sharing.js'
 
 /**
  * Documentos PDF. Comparten con el vídeo todo el ciclo de vida —propiedad,
@@ -28,15 +29,16 @@ export function getDocumentForOwner (id, platformId, ownerSub) {
   )
 }
 
+/** Propios y compartidos: mismo criterio que en vídeo (`services/sharing.js`). */
 export function listReadyDocumentsForDeepLink ({ ids, platformId, ownerSub }) {
   if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
   return many(
-    `SELECT id, title, description
-       FROM pdf_document
-      WHERE id = ANY($1::uuid[]) AND status = 'ready'
-        AND platform_id = $2 AND owner_sub = $3
-        AND archived_at IS NULL AND active_revision_id IS NOT NULL`,
-    [ids, platformId, ownerSub]
+    `SELECT m.id, m.title, m.description
+       FROM pdf_document m
+      WHERE m.id = ANY($3::uuid[]) AND m.status = 'ready'
+        AND m.platform_id = $1 AND ${visibleClause('m')}
+        AND m.archived_at IS NULL AND m.active_revision_id IS NOT NULL`,
+    [platformId, ownerSub, ids]
   )
 }
 
@@ -115,13 +117,18 @@ export function createDocumentRevisionAndJob ({
   })
 }
 
+/** Mismo criterio que en vídeo: el compartido se edita, pero no se recoloca. */
 export function updateDocumentMetadata ({ documentId, platformId, ownerSub, title, description, folderId }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT id FROM pdf_document WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 FOR UPDATE`,
+      `SELECT m.id, (m.owner_sub IS DISTINCT FROM $3) AS shared FROM pdf_document m
+        WHERE m.id = $1 AND m.platform_id = $2
+          AND ${visibleClause('m', { platform: '$2', owner: '$3' })}
+        FOR UPDATE`,
       [documentId, platformId, ownerSub]
     )
     if (rows.length === 0) return { status: 'not_found' }
+    if (rows[0].shared && folderId !== undefined) return { status: 'not_owned' }
 
     const sets = []
     const params = [documentId]

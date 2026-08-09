@@ -301,7 +301,7 @@ All reference documentation is in Spanish.
 |---|---|
 | 🧭 [`docs/README.md`](docs/README.md) | **Documentation index, project status and roadmap** |
 | 🏗️ [`docs/arquitectura.md`](docs/arquitectura.md) | Flows, data model, endpoints, security model |
-| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…017: why each decision, and how to reverse it |
+| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…019: why each decision, and how to reverse it |
 | 💻 [`docs/desarrollo.md`](docs/desarrollo.md) | **Developer guide**: environment, tests, conventions, debugging |
 | 🎓 [`docs/moodle-setup.md`](docs/moodle-setup.md) | Registering the tool in Moodle, in six steps, with troubleshooting |
 | 🔐 [`docs/https-tunel.md`](docs/https-tunel.md) | Public HTTPS and tunnels for local development |

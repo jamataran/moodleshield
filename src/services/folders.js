@@ -10,6 +10,11 @@ import config from '../config.js'
  * petición. Un UUID de otro profesor responde 404 y no 403: confirmar que
  * existe ya sería filtrar información del catálogo ajeno.
  *
+ * La única grieta en `owner_sub` es deliberada: una carpeta marcada pública la
+ * ven —y pueden renombrar— los demás profesores de la misma instancia, y esa
+ * publicación se hereda a todo su subárbol (ver `services/sharing.js`).
+ * Publicarla, moverla y borrarla siguen siendo del autor.
+ *
  * Una carpeta clasifica; no gobierna el ciclo de vida de nada. Borrarla sube su
  * contenido y sus subcarpetas al padre, nunca borra material.
  *
@@ -99,11 +104,17 @@ async function subtreeHeight (client, id) {
   return rows[0]?.height ?? 1
 }
 
-/** Todas las carpetas del profesor, planas; el árbol lo monta el cliente. */
+/**
+ * Todas las carpetas visibles para el profesor, planas; el árbol lo monta el
+ * cliente. Visibles = las suyas más las que otro profesor de la instancia haya
+ * compartido, marcadas con `shared` para que la interfaz sepa de quién son.
+ */
 export function listFolders ({ platformId, ownerSub }) {
   if (!platformId || !ownerSub) return Promise.resolve([])
   return many(
     `SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at,
+            f.owner_sub, f.owner_name, f.is_public,
+            (f.owner_sub IS DISTINCT FROM $2) AS shared,
             (SELECT count(*) FROM video v
               WHERE v.folder_id = f.id AND v.archived_at IS NULL)         AS video_count,
             (SELECT count(*) FROM pdf_document d
@@ -113,7 +124,8 @@ export function listFolders ({ platformId, ownerSub }) {
             (SELECT count(*) FROM catalog_folder h
               WHERE h.parent_id = f.id)                                   AS folder_count
        FROM catalog_folder f
-      WHERE f.platform_id = $1 AND f.owner_sub = $2
+       JOIN catalog_folder_shared sh ON sh.id = f.id
+      WHERE f.platform_id = $1 AND (f.owner_sub = $2 OR sh.shared)
       ORDER BY lower(btrim(f.name))`,
     [platformId, ownerSub]
   )
@@ -146,7 +158,7 @@ export function getFolder ({ id, platformId, ownerSub }) {
   )
 }
 
-export function createFolder ({ platformId, ownerSub, name, parentId = null }) {
+export function createFolder ({ platformId, ownerSub, ownerName = null, name, parentId = null }) {
   const clean = assertName(name)
   return transaction(async (client) => {
     await lockOwnerTree(client, { platformId, ownerSub })
@@ -171,9 +183,9 @@ export function createFolder ({ platformId, ownerSub, name, parentId = null }) {
 
     try {
       const { rows } = await client.query(
-        `INSERT INTO catalog_folder (platform_id, owner_sub, name, parent_id)
-         VALUES ($1,$2,$3,$4) RETURNING *`,
-        [platformId, ownerSub, clean, parent]
+        `INSERT INTO catalog_folder (platform_id, owner_sub, owner_name, name, parent_id)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [platformId, ownerSub, ownerName, clean, parent]
       )
       return rows[0]
     } catch (err) {
@@ -190,6 +202,11 @@ export function createFolder ({ platformId, ownerSub, name, parentId = null }) {
   })
 }
 
+/**
+ * Renombrar es la única mutación del árbol abierta a una carpeta compartida:
+ * corrige una errata sin mover nada de sitio ni tocar el ciclo de vida. Mover,
+ * borrar y publicar siguen siendo del autor.
+ */
 export function renameFolder ({ id, platformId, ownerSub, name }) {
   const clean = assertName(name)
   return transaction(async (client) => {
@@ -198,8 +215,12 @@ export function renameFolder ({ id, platformId, ownerSub, name }) {
       // puede responder «0 materiales» sólo por haberla renombrado.
       const { rows } = await client.query(
         `UPDATE catalog_folder f SET name = $4, updated_at = now()
-          WHERE f.id = $1 AND f.platform_id = $2 AND f.owner_sub = $3
+          WHERE f.id = $1 AND f.platform_id = $2
+            AND (f.owner_sub = $3 OR f.id IN (
+                  SELECT sh.id FROM catalog_folder_shared sh
+                   WHERE sh.platform_id = $2 AND sh.shared))
           RETURNING f.*,
+            (f.owner_sub IS DISTINCT FROM $3) AS shared,
             (SELECT count(*) FROM video v
               WHERE v.folder_id = f.id AND v.archived_at IS NULL)         AS video_count,
             (SELECT count(*) FROM pdf_document d
@@ -338,8 +359,41 @@ export function deleteFolder ({ id, platformId, ownerSub }) {
 }
 
 /**
+ * Publica o retira de la biblioteca compartida. Sólo el autor: quien recibe una
+ * carpeta compartida no puede decidir por él ni ampliar el alcance de lo suyo.
+ *
+ * La publicación se hereda a todo el subárbol, así que publicar la carpeta raíz
+ * de un tema publica sus subcarpetas, materiales y colecciones.
+ */
+export function setFolderVisibility ({ id, platformId, ownerSub, isPublic }) {
+  return transaction(async (client) => {
+    const { rows } = await client.query(
+      `UPDATE catalog_folder f SET is_public = $4, updated_at = now()
+        WHERE f.id = $1 AND f.platform_id = $2 AND f.owner_sub = $3
+        RETURNING f.*, false AS shared,
+          (SELECT count(*) FROM video v
+            WHERE v.folder_id = f.id AND v.archived_at IS NULL)         AS video_count,
+          (SELECT count(*) FROM pdf_document d
+            WHERE d.folder_id = f.id AND d.archived_at IS NULL)         AS document_count,
+          (SELECT count(*) FROM content_collection c
+            WHERE c.folder_id = f.id AND c.archived_at IS NULL)         AS collection_count,
+          (SELECT count(*) FROM catalog_folder h
+            WHERE h.parent_id = f.id)                                   AS folder_count`,
+      [id, platformId, ownerSub, Boolean(isPublic)]
+    )
+    return rows[0] ?? null
+  })
+}
+
+/**
  * Comprueba dentro de una transacción que la carpeta destino existe y es del
  * profesor. Devuelve `null` para la raíz. Se usa al mover y al subir.
+ *
+ * Sigue siendo estrictamente `owner_sub`, también con la biblioteca compartida:
+ * las FK compuestas `(folder_id, platform_id, owner_sub)` exigen que una carpeta
+ * sólo contenga material de su autor. Compartir enseña la biblioteca del otro,
+ * no permite escribir dentro. Cuando el destino es justo eso, el 409 lo dice en
+ * vez de mentir con un 404.
  */
 export async function assertFolderInTransaction (client, { folderId, platformId, ownerSub }) {
   if (folderId === null || folderId === undefined || folderId === '' || folderId === 'root') {
@@ -352,6 +406,19 @@ export async function assertFolderInTransaction (client, { folderId, platformId,
     [folderId, platformId, ownerSub]
   )
   if (rows.length === 0) {
+    const { rows: ajena } = await client.query(
+      `SELECT f.owner_name FROM catalog_folder f
+         JOIN catalog_folder_shared sh ON sh.id = f.id
+        WHERE f.id = $1 AND f.platform_id = $2 AND sh.shared`,
+      [folderId, platformId]
+    )
+    if (ajena.length > 0) {
+      throw new FolderError(
+        `Esa carpeta es de ${ajena[0].owner_name || 'otro profesor'}: puedes usar su contenido, ` +
+          'pero no guardar dentro. Elige una carpeta tuya.',
+        { status: 409, code: 'folder_not_owned' }
+      )
+    }
     throw new FolderError('La carpeta indicada no existe', { status: 404, code: 'folder_not_found' })
   }
   return rows[0].id

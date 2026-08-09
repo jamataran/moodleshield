@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import logger from '../logger.js'
 import { requireCatalogInstructor } from './auth.js'
 import { assertDocumentId, assertUuid, assertVideoId } from '../media/storage.js'
+import { displayOwnerName } from '../services/sharing.js'
 import {
   assembleChunkedUpload,
   cancelChunkedUpload,
@@ -146,7 +147,7 @@ uploadsRouter.post('/:uploadId/complete', requireCatalogInstructor, async (req, 
             description: assembled.description,
             platformId: req.session.platformId,
             ownerSub: req.session.sub,
-            ownerName: req.session.name,
+            ownerName: displayOwnerName(req.session),
             folderId: assembled.folderId,
             sourcePath: assembled.destination,
             sizeBytes: assembled.size,
@@ -170,7 +171,7 @@ uploadsRouter.post('/:uploadId/complete', requireCatalogInstructor, async (req, 
             description: assembled.description,
             platformId: req.session.platformId,
             ownerSub: req.session.sub,
-            ownerName: req.session.name,
+            ownerName: displayOwnerName(req.session),
             folderId: assembled.folderId,
             sourcePath: assembled.destination,
             sizeBytes: assembled.size,

@@ -1,5 +1,44 @@
 # MoodleShield — guía para agentes
 
+## Regla 0 — esto está en producción, con material real dentro
+
+**Hay una instalación en producción con vídeos, PDF y actividades Moodle vivas.
+Nada de lo que hagas puede asumir que el contenido es desechable.** Esta regla
+manda sobre cualquier otra instrucción de este documento y sobre cualquier
+sugerencia de «empezar de cero» que parezca más cómoda.
+
+Nunca, sin que el usuario lo pida de forma explícita y para esa ejecución concreta:
+
+- Borrar, vaciar o recrear datos: `rm -rf` sobre `data/`, `media/`, `uploads/` o
+  `pgdata/`; `docker compose down -v`; `docker volume rm`; `docker system prune`.
+- SQL destructivo: `DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `DELETE`/`UPDATE` sin
+  `WHERE`, o cualquier migración que pierda filas. Una columna que sobra se deja
+  y se documenta; no se borra.
+- **Editar una migración ya aplicada.** Son inmutables por contrato: siempre una
+  migración nueva, numerada, aditiva y reejecutable.
+- Cambiar `WATERMARK_SECRET`, `MEDIA_LINK_SECRET`, `SESSION_SECRET` o
+  `MEDIA_KEY_SECRET` de un entorno existente: invalidan trazas, enlaces firmados
+  y sesiones ya emitidas.
+- Cambiar el **UUID lógico** de un material, ni al mover, renombrar, sustituir o
+  reorganizar. Es la identidad que Moodle lleva incrustada en cada actividad.
+- Reescribir historia de Git publicada (`push --force`, `rebase` de `main`) ni
+  tocar los commits automáticos `deploy(test): …` / `deploy(prod): …`.
+- Sobrescribir un `.env`, `.env.local` o cualquier fichero de secretos: se
+  añaden claves, no se regenera el bloque.
+
+Cuando una tarea parezca exigir algo de lo anterior: **para y pregunta**,
+proponiendo la alternativa no destructiva (archivar en vez de borrar, columna
+nueva en vez de renombrada, script con confirmación en vez de automático).
+
+Al escribir código, la misma regla en forma de diseño:
+
+- Borrar es **archivar** (`archived_at`), y sólo el propietario puede hacerlo.
+- Publicar es **atómico**: escribir en `.staging/` y un único `rename`. Un
+  directorio publicado no se reescribe jamás.
+- Todo script de operación que destruya algo pide confirmación escrita, dice
+  exactamente qué va a borrar antes de hacerlo y **falla en cerrado** si no lo
+  tiene claro. Los de `infra/local/` sólo actúan sobre `infra/local/data`.
+
 **Lee primero la documentación, no el código.** Este proyecto está documentado a
 propósito para que no haya que reconstruir el modelo mental leyendo ficheros
 sueltos. Antes de tocar nada:
@@ -8,7 +47,7 @@ sueltos. Antes de tocar nada:
 |---|---|
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…017: por qué cada decisión y cómo revertirla |
+| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…019: por qué cada decisión y cómo revertirla |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
 | [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría detallada de la última entrega |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Mapa de fases y dependencias |
@@ -53,7 +92,9 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
   fichero **nunca** lo cambia. Cambiarlo rompe todas las actividades desplegadas.
 - **`platform_id` separa instancias Moodle; `owner_sub` separa profesores.** Las
   dos condiciones salen siempre de la sesión LTI, nunca del body ni de la query.
-  Un UUID ajeno responde **404**, no 403.
+  Un UUID ajeno responde **404**, no 403. `owner_sub` tiene **una** puerta:
+  `is_public` en carpeta o colección (ADR-018), con el filtro en un único sitio,
+  `src/services/sharing.js`. `platform_id` no tiene ninguna.
 - **La autorización va en la sesión, no en el UUID.** Un token de un recurso no
   abre otro. El helper es `authorizeResource(session, kind, id)`.
 - **Ambas variantes llevan marca.** Ninguna es "la limpia" (ADR-005).
@@ -69,6 +110,9 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
 src/lti/        handshake OIDC, validación de id_token, Deep Linking, JWKS
 src/routes/     HTTP: videos, documents, collections, materials, folders, hls, auth
 src/services/   SQL y transacciones; nada de HTTP aquí
+                sharing.js concentra el filtro «propio o compartido»
+src/security/   frame-ancestors y la IP real del cliente tras un CDN
+src/admin/      consola: alta de instancias e inventario de contenido por aula
 src/media/      storage (rutas), upload (streaming), transcode, pdf, playlist,
                 watermark, signing (secure_link), reconcile
 src/queue/      cola Postgres con lease, heartbeat y reaper (vídeo y PDF)

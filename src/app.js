@@ -16,6 +16,7 @@ import { healthRouter } from './routes/health.js'
 import { renderPage, uiDir } from './ui/render.js'
 import { adminRouter } from './admin/routes.js'
 import { getFrameAncestors, refreshFrameAncestors } from './security/frame-ancestors.js'
+import { clientIpMiddleware } from './security/client-ip.js'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -25,6 +26,10 @@ export async function createApp () {
   app.set('trust proxy', config.http.trustProxy)
   app.disable('x-powered-by')
   app.set('etag', false)
+
+  // Antes de registrar nada: si delante hay un CDN, `req.ip` sería la IP de su
+  // borde y no la del alumno. Con marca forense esa diferencia importa.
+  app.use(clientIpMiddleware)
 
   app.use(
     pinoHttp({

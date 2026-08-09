@@ -11,8 +11,14 @@ import {
   listFolders,
   moveFolder,
   renameFolder,
+  setFolderVisibility,
   FolderError
 } from '../../src/services/folders.js'
+import {
+  platformMaterials,
+  platformOwners,
+  platformTotals
+} from '../../src/services/platform-content.js'
 import { listMaterials, listCollectionsUsing } from '../../src/services/materials.js'
 import {
   createVideoAndJob,
@@ -32,6 +38,7 @@ import {
   listCollections,
   loadItems,
   publicItem,
+  setCollectionVisibility,
   updateCollection,
   CollectionError
 } from '../../src/services/collections.js'
@@ -1083,4 +1090,178 @@ test('T21: un PDF sigue exactamente el mismo ciclo de revisiones', async () => {
   const document = await one('SELECT page_count, active_revision_id FROM pdf_document WHERE id = $1', [documentId])
   assert.equal(document.page_count, 9)
   assert.equal(document.active_revision_id, candidate.id)
+})
+
+// ---------------------------------------------------------------------------
+// ADR-018 · Biblioteca compartida entre profesores de la misma instancia
+// ---------------------------------------------------------------------------
+
+test('compartir una carpeta la abre a los demás profesores del mismo Moodle', async () => {
+  const carpeta = await createFolder({ ...scopeA, ownerName: 'Ana', name: `Compartida ${randomUUID()}` })
+  const videoId = await readyVideo({ title: 'Tema compartido', folderId: carpeta.id })
+
+  // Antes de compartir, para Luis no existe nada de esto.
+  assert.equal((await listFolders(scopeLuis)).some((f) => f.id === carpeta.id), false)
+  assert.equal(
+    (await listMaterials(scopeLuis)).materials.some((m) => m.id === videoId), false,
+    'sin compartir, el material de Ana no puede aparecer en la biblioteca de Luis'
+  )
+
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  const vistaLuis = (await listFolders(scopeLuis)).find((f) => f.id === carpeta.id)
+  assert.ok(vistaLuis, 'Luis debe ver la carpeta compartida')
+  assert.equal(vistaLuis.shared, true)
+  assert.equal(vistaLuis.owner_name, 'Ana')
+
+  const material = (await listMaterials(scopeLuis)).materials.find((m) => m.id === videoId)
+  assert.ok(material, 'el contenido de una carpeta compartida se comparte con ella')
+  assert.equal(material.shared, true)
+
+  // Y para Ana sigue siendo suyo, no «compartido».
+  const propio = (await listMaterials(scopeA)).materials.find((m) => m.id === videoId)
+  assert.equal(propio.shared, false)
+})
+
+test('compartir se hereda al subárbol, y despublicar lo cierra entero', async () => {
+  const raiz = await createFolder({ ...scopeA, name: `Raíz ${randomUUID()}` })
+  const hija = await createFolder({ ...scopeA, name: 'Hija', parentId: raiz.id })
+  const nieta = await createFolder({ ...scopeA, name: 'Nieta', parentId: hija.id })
+  const videoId = await readyVideo({ title: 'Nieto', folderId: nieta.id })
+
+  await setFolderVisibility({ id: raiz.id, ...scopeA, isPublic: true })
+  const visibles = (await listFolders(scopeLuis)).map((f) => f.id)
+  for (const id of [raiz.id, hija.id, nieta.id]) {
+    assert.ok(visibles.includes(id), 'la publicación se hereda hacia abajo')
+  }
+  assert.ok((await listMaterials(scopeLuis)).materials.some((m) => m.id === videoId))
+
+  await setFolderVisibility({ id: raiz.id, ...scopeA, isPublic: false })
+  assert.equal((await listFolders(scopeLuis)).some((f) => f.id === raiz.id), false)
+  assert.equal((await listMaterials(scopeLuis)).materials.some((m) => m.id === videoId), false)
+})
+
+test('compartir nunca cruza instancias Moodle', async () => {
+  const carpeta = await createFolder({ ...scopeA, name: `Solo A ${randomUUID()}` })
+  const videoId = await readyVideo({ title: 'De la instancia A', folderId: carpeta.id })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  // La misma persona en OTRA instancia no ve nada: `platform_id` es la frontera.
+  assert.equal((await listFolders(scopeB)).some((f) => f.id === carpeta.id), false)
+  assert.equal((await listMaterials(scopeB)).materials.some((m) => m.id === videoId), false)
+  assert.deepEqual(
+    await listReadyVideosForDeepLink({ ids: [videoId], ...scopeB }), [],
+    'ni siquiera con el UUID en la mano se puede insertar desde otra instancia'
+  )
+})
+
+test('lo compartido se puede insertar en el curso de otro profesor', async () => {
+  const carpeta = await createFolder({ ...scopeA, name: `Insertable ${randomUUID()}` })
+  const videoId = await readyVideo({ title: 'Insertable', folderId: carpeta.id })
+
+  assert.deepEqual(await listReadyVideosForDeepLink({ ids: [videoId], ...scopeLuis }), [])
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+  const insertables = await listReadyVideosForDeepLink({ ids: [videoId], ...scopeLuis })
+  assert.equal(insertables.length, 1)
+  assert.equal(insertables[0].id, videoId)
+})
+
+test('compartir da acceso de trabajo, no de propiedad', async () => {
+  const carpeta = await createFolder({ ...scopeA, name: `Trabajo ${randomUUID()}` })
+  const videoId = await readyVideo({ title: 'Original', folderId: carpeta.id })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  // Editar metadatos: sí.
+  const editado = await updateVideoMetadata({ videoId, ...scopeLuis, title: 'Corregido' })
+  assert.equal(editado.status, 'updated')
+  assert.equal(editado.video.title, 'Corregido')
+
+  // Cambiar de carpeta: no. La carpeta es de Ana y sólo admite material suyo.
+  assert.equal(
+    (await updateVideoMetadata({ videoId, ...scopeLuis, folderId: null })).status, 'not_owned'
+  )
+
+  // Publicar, despublicar y borrar la carpeta: tampoco.
+  assert.equal(await setFolderVisibility({ id: carpeta.id, ...scopeLuis, isPublic: false }), null)
+  assert.equal((await deleteFolder({ id: carpeta.id, ...scopeLuis })).status, 'not_found')
+  assert.equal((await archiveMaterial({ kind: 'video', materialId: videoId, ...scopeLuis })).status,
+    'not_found')
+
+  // Renombrar la carpeta sí, que es corregir una errata sin mover nada.
+  const renombrada = await renameFolder({ id: carpeta.id, ...scopeLuis, name: 'Renombrada por Luis' })
+  assert.ok(renombrada, 'renombrar una carpeta compartida es parte del acceso de trabajo')
+  assert.equal(renombrada.name, 'Renombrada por Luis')
+})
+
+test('una colección compartida la ve, la edita y la duplica el otro profesor', async () => {
+  const videoId = await readyVideo({ title: 'De Ana' })
+  const collection = await createCollection({
+    ...scopeA, ownerName: 'Ana', title: `Temario ${randomUUID()}`,
+    items: [{ kind: 'video', id: videoId }]
+  })
+
+  assert.equal(
+    (await listCollectionPage(scopeLuis)).collections.some((c) => c.id === collection.id), false
+  )
+  await setCollectionVisibility({ id: collection.id, ...scopeA, isPublic: true })
+
+  const vista = (await listCollectionPage(scopeLuis)).collections.find((c) => c.id === collection.id)
+  assert.ok(vista, 'una colección compartida aparece en la biblioteca de los demás')
+  assert.equal(vista.shared, true)
+
+  const editada = await updateCollection({
+    id: collection.id, ...scopeLuis, title: 'Temario revisado por Luis'
+  })
+  assert.equal(editada.status, 'updated')
+  assert.equal(editada.collection.title, 'Temario revisado por Luis')
+
+  // La copia nace de Luis y fuera de la carpeta de Ana.
+  const copia = await duplicateCollection({ id: collection.id, ...scopeLuis, ownerName: 'Luis' })
+  assert.equal(copia.status, 'created')
+  assert.equal(copia.collection.owner_sub, LUIS)
+  assert.equal(copia.collection.folder_id, null)
+  assert.equal(copia.collection.is_public, false, 'la copia nace privada')
+
+  // Archivarla y despublicarla siguen siendo de Ana.
+  assert.equal((await archiveCollection({ id: collection.id, ...scopeLuis })).status, 'not_found')
+  assert.equal(await setCollectionVisibility({ id: collection.id, ...scopeLuis, isPublic: false }), null)
+})
+
+test('el alcance de sesión del catálogo alcanza lo compartido y nada más', async () => {
+  const carpeta = await createFolder({ ...scopeA, name: `Alcance ${randomUUID()}` })
+  const compartido = await readyVideo({ title: 'Compartido', folderId: carpeta.id })
+  const privado = await readyVideo({ title: 'Privado' })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  const sesionLuis = {
+    mode: 'catalog', isInstructor: true, sub: LUIS, platformId: PLATFORM_A
+  }
+  const abierto = await authorizeResource(sesionLuis, 'video', compartido)
+  assert.equal(abierto.ok, true)
+  assert.equal(abierto.shared, true)
+  assert.equal((await authorizeResource(sesionLuis, 'video', privado)).ok, false)
+})
+
+test('el inventario del administrador ve todo el aula, público y privado', async () => {
+  const carpeta = await createFolder({ ...scopeA, ownerName: 'Ana', name: `Inventario ${randomUUID()}` })
+  const privado = await readyVideo({ title: `Privado ${randomUUID()}`, folderId: carpeta.id })
+  const deLuis = await readyVideo({ scope: scopeLuis, title: `De Luis ${randomUUID()}` })
+
+  const materiales = await platformMaterials(PLATFORM_A)
+  const ids = materiales.map((m) => m.id)
+  assert.ok(ids.includes(privado), 'el administrador ve material privado')
+  assert.ok(ids.includes(deLuis), 'y el de cualquier otro profesor')
+  assert.equal(materiales.find((m) => m.id === privado).shared, false)
+
+  // Pero sigue sin cruzar instancias.
+  const otraInstancia = await platformMaterials(PLATFORM_B)
+  assert.equal(otraInstancia.some((m) => m.id === privado), false)
+
+  const owners = await platformOwners(PLATFORM_A)
+  assert.ok(owners.some((o) => o.owner_sub === ANA))
+  assert.ok(owners.some((o) => o.owner_sub === LUIS))
+
+  const totals = await platformTotals(PLATFORM_A)
+  assert.ok(totals.video_count >= 2)
+  assert.ok(totals.folder_count >= 1)
 })

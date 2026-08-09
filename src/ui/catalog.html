@@ -48,9 +48,19 @@
       </nav>
 
       <section id="section-folders" class="folder-section">
-        <h3>Carpetas</h3>
+        <h3>Mis carpetas</h3>
         <div id="folder-grid" class="folder-tree" role="list"></div>
         <p class="muted folder-empty" id="folder-empty" hidden>No hay carpetas todavía.</p>
+      </section>
+
+      <!--
+        Compartido por otros profesores de la misma instancia Moodle. Va en su
+        propia sección y no mezclado con lo propio porque las acciones no son
+        las mismas: aquí se puede usar y editar, pero no archivar ni borrar.
+      -->
+      <section id="section-shared" class="folder-section" hidden>
+        <h3>Compartidas conmigo</h3>
+        <div id="shared-grid" class="folder-tree" role="list"></div>
       </section>
 
       <button id="archived-toggle" type="button" class="library-view archived-view">
@@ -126,6 +136,8 @@
         <p><strong>Carpetas</strong><span>Organizan tu biblioteca privada.</span></p>
         <p><strong>Colecciones</strong><span>Agrupan varios materiales en una sola actividad.</span></p>
         <p><strong>Materiales</strong><span>Vídeos o PDF que también puedes insertar por separado.</span></p>
+        <p><strong>Compartir</strong><span>Una carpeta o colección compartida la ven y la usan
+          los demás profesores de este Moodle. Archivar y borrar siguen siendo tuyos.</span></p>
       </div>
       <p class="dialog-actions"><button type="button" class="primary" id="help-close">Entendido</button></p>
     </div>

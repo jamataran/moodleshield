@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360" role="img" aria-label="Documento PDF">
-  <rect width="640" height="360" fill="#1f232c"/>
-  <g transform="translate(320 168)">
-    <path d="M-52 -70 h68 l36 36 v104 a10 10 0 0 1 -10 10 h-94 a10 10 0 0 1 -10 -10 v-130 a10 10 0 0 1 10 -10 z"
-          fill="none" stroke="#4a5261" stroke-width="4"/>
-    <path d="M16 -70 v36 h36" fill="none" stroke="#4a5261" stroke-width="4"/>
-    <text x="0" y="42" fill="#4a5261" font-family="system-ui, sans-serif" font-size="30" font-weight="600" text-anchor="middle">PDF</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Documento PDF protegido">
+  <!-- Mismo criterio que icon-video.svg: sin fondo y con formas macizas. -->
+  <path fill="none" stroke="#c2410c" stroke-width="6" stroke-linejoin="round"
+        d="M14 6h20l16 16v36a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"/>
+  <path fill="none" stroke="#c2410c" stroke-width="6" stroke-linejoin="round" d="M34 6v18h16"/>
+  <g fill="#c2410c">
+    <rect x="21" y="35" width="22" height="5" rx="2.5"/>
+    <rect x="21" y="45" width="14" height="5" rx="2.5"/>
   </g>
-  <text x="320" y="290" fill="#6b7280" font-family="system-ui, sans-serif" font-size="18" text-anchor="middle">documento</text>
 </svg>

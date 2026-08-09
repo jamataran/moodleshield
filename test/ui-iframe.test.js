@@ -204,6 +204,49 @@ test('todos los visores muestran aviso, monitorización y descarga contextual', 
     'un estado vacío no debe dejar texto ni espacio residual en el visor')
 })
 
+test('el botón de volver hace Atrás y no rebota a la portada del curso', async () => {
+  // El return_url de Moodle lleva a mod/lti/return.php, que rebota a la
+  // portada del curso: en un curso por secciones el alumno pierde la sección
+  // desde la que abrió la actividad. Atrás de verdad es el historial (o cerrar
+  // la pestaña que abrió Moodle); el return_url sólo como último recurso.
+  const shell = await readFile(path.join(uiDir, 'assets/viewer-shell.js'), 'utf8')
+  assert.match(shell, /window\.history\.back\(\)/, 'el botón debe usar el historial')
+  assert.match(shell, /'pagehide'/,
+    'hay que detectar si Atrás no ha ido a ninguna parte antes de recurrir al plan B')
+
+  const clic = shell.slice(shell.indexOf("backButton.addEventListener('click'"))
+  const hastaFin = clic.slice(0, clic.indexOf('\n  })'))
+  assert.doesNotMatch(hastaFin, /location\.assign\(boot\.returnUrl\)/,
+    'el return_url no puede ser la primera opción: pierde la sección del curso')
+
+  for (const page of ['player.html', 'pdf.html', 'collection.html']) {
+    const html = await readFile(path.join(uiDir, page), 'utf8')
+    assert.match(html, /id="back-to-classroom"[^>]*>← Atrás</,
+      `${page} debe etiquetar el botón como Atrás`)
+  }
+})
+
+test('el catálogo distingue lo compartido de lo propio y no ofrece acciones ajenas', async () => {
+  // Compartir da acceso de trabajo, no de propiedad (ADR-018). Si la interfaz
+  // ofrece «Archivar» sobre material de otro profesor, el botón sólo puede
+  // acabar en un 404 confuso.
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  assert.ok(html.includes('id="section-shared"'), 'falta la sección de carpetas compartidas')
+  assert.ok(html.includes('id="shared-grid"'), 'falta la rejilla de carpetas compartidas')
+
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.match(code, /function isShared /, 'falta el predicado que distingue lo ajeno')
+  assert.match(code, /toggleFolderSharing/, 'falta compartir una carpeta')
+  assert.match(code, /toggleCollectionSharing/, 'falta compartir una colección')
+
+  for (const accion of ['Archivar', 'Borrar definitivamente', 'Mover a…']) {
+    const at = code.indexOf(`label: '${accion}'`)
+    assert.notEqual(at, -1, `falta la acción ${accion}`)
+    assert.match(code.slice(Math.max(0, at - 400), at), /isShared\(/,
+      `${accion} debe quedar fuera del alcance de lo compartido`)
+  }
+})
+
 test('la cabecera de una actividad compuesta prioriza el título y compacta la monitorización', async () => {
   const html = await readFile(path.join(uiDir, 'collection.html'), 'utf8')
   assert.match(html, /id="resource-kind"\s+hidden/, 'el alumno no debe ver la etiqueta Colección')

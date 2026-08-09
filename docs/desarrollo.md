@@ -61,8 +61,13 @@ verdad, que es como funciona producción.
 
 ```bash
 cd infra/local
-docker compose up -d --build      # → http://127.0.0.1:8088
+./up.sh --build                   # → http://127.0.0.1:8088
 ```
+
+Todo el ciclo de vida son scripts de esa carpeta —`up.sh`, `rebuild.sh`,
+`start-funnel.sh`, `stop-funnel.sh`, `logs.sh`, `down.sh` y `reset-db.sh`—, entre otras
+cosas para que nadie olvide los dos `--env-file`: sin `.env.local` la consola de
+administración arranca deshabilitada y cuesta media hora entender por qué.
 
 Detalle, perfiles y limpieza: [`infra/local/README.md`](../infra/local/README.md).
 
@@ -81,7 +86,7 @@ Guía completa: [`https-tunel.md`](https-tunel.md).
 
 ## Ver la marca A/B sin Moodle
 
-Con el stack del **Modo 2** levantado:
+Con el stack del **Modo 2** levantado (`cd infra/local && ./up.sh --build`):
 
 ```bash
 ./scripts/demo-local.sh
@@ -226,14 +231,18 @@ encuentras escribiendo `res.status()` dentro de `services/`, algo se ha torcido.
 ### Invariantes que no se negocian
 
 Romper cualquiera de estas rompe despliegues en producción. Están también en
-[`../CLAUDE.md`](../CLAUDE.md) y en [`decisiones.md`](decisiones.md):
+[`../CLAUDE.md`](../CLAUDE.md) —cuya **Regla 0** manda sobre todo lo demás: hay una
+instalación en producción con material real, y nada de lo que se escriba aquí puede
+asumir que se puede borrar o machacar— y en [`decisiones.md`](decisiones.md):
 
 - **El UUID lógico de un material es la identidad que conoce Moodle** (viaja en
   `custom.resourceid` / `custom.videoId`). Mover, renombrar o sustituir el fichero **nunca**
   lo cambia. Cambiarlo rompe todas las actividades ya desplegadas.
 - **`platform_id` separa instancias de Moodle; `owner_sub` separa profesores.** Las dos
   condiciones salen siempre de la sesión LTI, nunca del body ni de la query. Un UUID ajeno
-  responde **404**, no 403: un 403 confirmaría que el recurso existe.
+  responde **404**, no 403: un 403 confirmaría que el recurso existe. La única puerta en
+  `owner_sub` es `is_public` ([ADR-018](decisiones.md)), y el filtro vive en un solo sitio:
+  `src/services/sharing.js`. `platform_id` no tiene puerta ninguna.
 - **La autorización va en la sesión, no en el UUID.** Un token de un recurso no abre otro.
   El helper es `authorizeResource(session, kind, id)`.
 - **Ambas variantes llevan marca.** Ninguna es «la limpia» ([ADR-005](decisiones.md)).
@@ -324,6 +333,7 @@ Las que más se tocan durante el desarrollo:
 | `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
 | `LOG_LEVEL` | `info` | `debug` para ver las queries (ojo con los tokens) |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas |
+| `TRUST_CLOUDFLARE_CLIENT_IP` | `auto` | De dónde sale la IP del alumno tras un CDN ([ADR-019](decisiones.md)) |
 
 ---
 

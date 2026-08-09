@@ -21,7 +21,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | Documento | Qué resuelve |
 |---|---|
 | [`arquitectura.md`](arquitectura.md) | Vista general, árbol de medios, el camino de un visionado y el de una subida, modelo de datos, tabla de endpoints, modelo de seguridad capa por capa |
-| [`decisiones.md`](decisiones.md) | ADR-001…017. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
+| [`decisiones.md`](decisiones.md) | ADR-001…019. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
 | [`auditoria-seguridad-contenido-y-plan.md`](auditoria-seguridad-contenido-y-plan.md) | **Auditoría de seguridad del contenido**: modelo de amenaza, 16 hallazgos priorizados, arquitectura objetivo y plan por fases |
 | [`plan-implementacion.md`](plan-implementacion.md) | Mapa de fases, dependencias y criterios de éxito |
 
@@ -50,6 +50,12 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 El **núcleo está implementado y verificado**: handshake LTI 1.3, pipeline de
 transcodificación A/B, playlists personalizadas por alumno, entrega de segmentos firmada,
 Deep Linking, biblioteca con carpetas anidadas, colecciones, PDF y revisiones de material.
+
+Encima de eso, y posterior a la auditoría: **biblioteca compartida** entre profesores de
+la misma instancia Moodle ([ADR-018](decisiones.md)), **inventario de contenido por aula**
+en la consola de administración, e **IP real del alumno tras un CDN**
+([ADR-019](decisiones.md)) — hasta entonces todos los visionados quedaban registrados con
+la IP del borde de Cloudflare, que es justo el dato que el trazado necesita preciso.
 
 Lo que queda abierto se concentra en tres frentes: **el trazado forense**, **la matriz de
 navegadores del player** y **la línea de producción** (alertas, backup/restore, auditoría).
@@ -178,6 +184,7 @@ nadie.
 | **PDF** | Sin marca forense. El overlay del visor y el sello de la descarga son disuasión visible, no protección: los permisos de un PDF los aplica el visor, y `qpdf --decrypt` los quita. Normalizar elimina las firmas digitales |
 | **Calidad** | Una sola calidad por vídeo. Sin ABR, un alumno con mala conexión lo sufre |
 | **Instancias Moodle** | Cada una se registra a mano. El registro dinámico es T19 |
+| **Compartir** | Sólo entre profesores de la **misma** instancia Moodle, y sólo por carpeta o colección completa. No hay compartición con un profesor concreto ni entre instancias |
 | **Transcodificación** | Un ffmpeg por software a la vez (concurrencia 1). La aceleración por hardware (`h264_qsv`, `h264_nvenc`) está documentada pero no probada |
 | **Ciclo de vida** | Moodle no avisa cuando se borra una actividad. No existe callback |
 

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Vídeo protegido">
+  <!--
+    Icono de actividad en Moodle. Se dibuja a 16–32 px dentro de la lista del
+    curso, así que no lleva fondo —el marcador de Moodle ya pone el suyo, y un
+    rectángulo opaco se ve como una mancha negra— ni detalle fino: dos formas
+    macizas que se siguen distinguiendo diminutas.
+  -->
+  <rect x="5" y="13" width="54" height="38" rx="7" fill="none" stroke="#2f6df6" stroke-width="6"/>
+  <path fill="#2f6df6" d="M27 23.2 44 32 27 40.8Z"/>
+</svg>

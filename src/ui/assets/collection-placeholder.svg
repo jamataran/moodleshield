@@ -1,10 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360" role="img" aria-label="Colección de materiales">
-  <rect width="640" height="360" fill="#1f232c"/>
-  <g fill="none" stroke="#4a5261" stroke-width="4">
-    <rect x="212" y="96" width="150" height="100" rx="8"/>
-    <rect x="236" y="120" width="150" height="100" rx="8"/>
-    <rect x="260" y="144" width="150" height="100" rx="8" fill="#252a34"/>
-    <path d="M310 176 l34 18 -34 18 z" fill="#4a5261" stroke="none"/>
-  </g>
-  <text x="320" y="296" fill="#6b7280" font-family="system-ui, sans-serif" font-size="18" text-anchor="middle">colección</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Colección de materiales">
+  <!-- Mismo criterio que icon-video.svg: sin fondo y con formas macizas. -->
+  <rect x="17" y="6"  width="34" height="9"  rx="4.5" fill="#7c3aed" opacity=".45"/>
+  <rect x="12" y="17" width="44" height="9"  rx="4.5" fill="#7c3aed" opacity=".7"/>
+  <rect x="6"  y="28" width="52" height="30" rx="7" fill="none" stroke="#7c3aed" stroke-width="6"/>
+  <path fill="#7c3aed" d="M27 37.4 40 43 27 48.6Z"/>
 </svg>

@@ -153,7 +153,9 @@ lti_platform             issuer + client_id (único), deployment_ids[], endpoint
 lti_oidc_state           state (PK), nonce, platform_id, expires_at, consumed_at
 
 catalog_folder           carpeta personal por (platform_id, owner_sub); anidable
-                         vía parent_id (FK compuesta al mismo propietario)
+                         vía parent_id (FK compuesta al mismo propietario);
+                         is_public la comparte con el resto de la instancia
+catalog_folder_shared    VISTA: qué carpetas están compartidas, herencia incluida
 video                    identidad lógica, propietario, carpeta, revisión activa
 video_revision           fichero físico: estado, duración, segmentos, patrón
 pdf_document             identidad lógica de un PDF
@@ -198,6 +200,7 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | GET | `/lti/config` | — | Datos de alta en Moodle |
 | POST | `/lti/deeplink/response` | token de Deep Linking | Devuelve la selección a Moodle |
 | GET/POST | `/lti/platforms` | `LTI_ADMIN_TOKEN` | Gestión de plataformas |
+| GET | `/admin/platforms/:id/contenido` | consola admin | **Inventario del aula**: todo el material de todos sus profesores |
 | GET | `/materials` | catálogo | **Catálogo unificado** (vídeos + PDFs), filtros y cursor |
 | GET | `/materials/:kind/:id/revisions` | catálogo | Historial de revisiones |
 | POST | `/uploads` | catálogo | Iniciar subida troceada de alta o sustitución |
@@ -210,8 +213,8 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | DELETE | `/materials/:kind/:id/revisions/:rid` | catálogo | Purgar si la retención lo permite |
 | DELETE | `/materials/:kind/:id` | catálogo | Archivar el material lógico |
 | POST | `/materials/:kind/:id/restore` | catálogo | Restaurar del archivo |
-| GET/POST | `/folders` | catálogo | Árbol de carpetas del profesor (plano, con `parentId`); alta con padre opcional |
-| PATCH/DELETE | `/folders/:id` | catálogo | Renombrar y/o mover (`parentId`) / borrar subiendo contenido y subcarpetas al padre |
+| GET/POST | `/folders` | catálogo | Árbol de carpetas visibles (propias + compartidas), plano con `parentId`; alta con padre opcional |
+| PATCH/DELETE | `/folders/:id` | catálogo | Renombrar, mover (`parentId`) o compartir (`isPublic`) / borrar subiendo contenido y subcarpetas al padre |
 | GET | `/videos` | catálogo | Catálogo de vídeo (compatibilidad) |
 | POST | `/videos` | catálogo | Subida en streaming |
 | POST | `/videos/:id/revisions` | catálogo | Sustituir el fichero sin cambiar el UUID |
@@ -226,6 +229,7 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | GET | `/documents/:id/poster.jpg` | sesión con alcance | Portada (no va al content item) |
 | GET/POST | `/collections` | catálogo | Colecciones propias |
 | PATCH | `/collections/:id` | catálogo | Metadatos y lista, con control optimista |
+| PATCH | `/collections/:id/visibility` | catálogo | Compartir o dejar de compartir (sólo el autor) |
 | POST | `/collections/:id/duplicate` | catálogo | Copia lógica |
 | DELETE | `/collections/:id` | catálogo | Archivar (no borra) |
 | GET | `/collections/:id/manifest` | sesión con alcance | Índice para el visor del alumno |
@@ -249,8 +253,45 @@ Conocer un UUID no da acceso a nada. Todo pasa por
 | Vídeo directo | Sólo ese vídeo, y sólo la revisión fijada en el launch |
 | PDF directo | Sólo ese documento, y sólo su revisión |
 | Colección | Sólo los elementos que pertenezcan a ella **en ese momento** |
-| Profesor en catálogo | Sólo material propio (`platform_id` + `owner_sub`) |
+| Profesor en catálogo | Material propio, más lo que otro profesor de **su misma instancia** haya compartido |
 | Cualquier otro UUID | 404 — nunca 403, que confirmaría que existe |
+
+## Biblioteca compartida entre profesores
+
+Desde [ADR-018](decisiones.md) el profesor puede marcar una **carpeta** o una
+**colección** como pública. Publicar una carpeta comparte todo su subárbol
+—subcarpetas, materiales y colecciones— con los demás profesores de la misma
+instancia Moodle. La herencia la resuelve la vista `catalog_folder_shared` y el
+filtro vive en un único sitio: `src/services/sharing.js`.
+
+```
+platform_id  ── frontera dura. Compartir NUNCA cruza instancias Moodle
+owner_sub    ── frontera con una puerta: is_public en carpeta o colección
+```
+
+Compartir da acceso de **trabajo**, no de propiedad:
+
+| Cualquier profesor de la instancia | Sólo el autor |
+|---|---|
+| Ver, abrir e insertar en su curso | Publicar y despublicar |
+| Editar título y descripción | Archivar, borrar y purgar revisiones |
+| Componer y reordenar una colección compartida | Subir una versión nueva |
+| Renombrar la carpeta | Mover de carpeta y borrar la carpeta |
+| Duplicar una colección en su biblioteca | |
+
+Las FK compuestas `(folder_id, platform_id, owner_sub)` siguen exigiendo que una
+carpeta contenga sólo material de su autor: se ve la biblioteca del otro, no se
+escribe dentro. Subir o mover algo a una carpeta ajena responde 409 explicando
+por qué, no un 404 que despistaría.
+
+## Qué ve el administrador
+
+`/admin/platforms/:id/contenido` es la **única** vista del sistema que no filtra
+por `owner_sub`: el administrador de la herramienta ve todo el material de una
+instancia —carpetas, colecciones, vídeos y PDF de todos sus profesores,
+compartido o privado— con su ruta, estado y propietario. Sigue filtrando por
+`platform_id`: una instancia nunca ve el contenido de otra. Es de sólo lectura y
+no expone rutas de disco, tokens ni identificadores de revisión.
 
 La pertenencia a la colección se comprueba contra la base de datos en cada
 petición, no contra una lista congelada en el token: quitar un material de la

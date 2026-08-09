@@ -23,6 +23,14 @@ import {
   testPlatformConnection
 } from './platform-validator.js'
 import {
+  CONTENT_LIMIT,
+  platformCollections,
+  platformFolders,
+  platformMaterials,
+  platformOwners,
+  platformTotals
+} from '../services/platform-content.js'
+import {
   createPlatform,
   getPlatformById,
   listAuditEvents,
@@ -214,6 +222,39 @@ async function renderPlatformForm (req, res, {
 
 adminRouter.get('/platforms/new', (req, res, next) => {
   renderPlatformForm(req, res, { platform: blankPlatform() }).catch(next)
+})
+
+/**
+ * Inventario de contenido de una instancia: todo el material de todos sus
+ * profesores, compartido o privado. Es de sólo lectura y no cruza instancias.
+ */
+adminRouter.get('/platforms/:id/contenido', async (req, res, next) => {
+  try {
+    const platform = await getPlatformById(req.params.id)
+    if (!platform) return res.sendStatus(404)
+    const [owners, folders, materials, collections, totals] = await Promise.all([
+      platformOwners(platform.id),
+      platformFolders(platform.id),
+      platformMaterials(platform.id),
+      platformCollections(platform.id),
+      platformTotals(platform.id)
+    ])
+    res.type('html').send(await renderPage('admin/platform-content.html', {
+      bootstrap: {
+        platform: { id: platform.id, name: platform.name, issuer: platform.issuer },
+        owners,
+        folders,
+        materials,
+        collections,
+        totals,
+        limit: CONTENT_LIMIT,
+        truncated: materials.length >= CONTENT_LIMIT || collections.length >= CONTENT_LIMIT,
+        logoutCsrf: csrfToken(req.adminSession, 'POST', '/logout')
+      }
+    }))
+  } catch (err) {
+    next(err)
+  }
 })
 
 adminRouter.get('/platforms/:id', async (req, res, next) => {

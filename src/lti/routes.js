@@ -13,6 +13,7 @@ import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
 import { getVideoForPlatform, listReadyVideosForDeepLink } from '../services/videos.js'
 import { getDocumentForPlatform, listReadyDocumentsForDeepLink } from '../services/documents.js'
 import { getCollectionForPlatform, loadItems, publicItem } from '../services/collections.js'
+import { getVisibleCollection } from '../services/sharing.js'
 import { getActiveRevision } from '../services/revisions.js'
 import { assertUuid, isUuid } from '../media/storage.js'
 import { normalizePlatformInput } from '../admin/platform-validator.js'
@@ -432,12 +433,10 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
 async function resolveCollectionsForDeepLink ({ ids, platformId, ownerSub }) {
   const out = []
   for (const id of ids) {
-    const collection = await one(
-      `SELECT * FROM content_collection
-        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 AND archived_at IS NULL`,
-      [id, platformId, ownerSub]
-    )
-    if (!collection) continue
+    // Propia o compartida por otro profesor de la misma instancia: quien la ve
+    // en su biblioteca puede insertarla en su curso.
+    const collection = await getVisibleCollection({ id, platformId, ownerSub })
+    if (!collection || collection.archived_at) continue
     const items = await loadItems(id)
     if (items.length === 0) {
       throw new LtiError('La colección está vacía; añade materiales antes de insertarla', {

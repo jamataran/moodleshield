@@ -95,6 +95,19 @@ export const config = {
     bodyLimit: optional('BODY_LIMIT', '256kb')
   },
 
+  network: {
+    /**
+     * Cuándo creer a `CF-Connecting-IP` (ver `src/security/client-ip.js`):
+     * 'auto' sólo si la petición viene de un rango publicado de Cloudflare,
+     * 'always' siempre (túnel cloudflared, donde el borde no aparece en la
+     * cadena de proxies), 'never' nunca.
+     */
+    trustCloudflareClientIp: optional('TRUST_CLOUDFLARE_CLIENT_IP', 'auto'),
+    /** CIDR extra que cuentan como CDN de confianza, separados por coma. */
+    cdnRanges: optional('CDN_TRUSTED_RANGES', '')
+      .split(',').map((cidr) => cidr.trim()).filter(Boolean)
+  },
+
   db: {
     host: optional('DB_HOST', 'localhost'),
     port: integer('DB_PORT', 5432),
@@ -251,6 +264,24 @@ export const config = {
   }
 }
 
+/**
+ * `http://localhost` es un origen de confianza para el navegador: cuenta como
+ * contexto seguro y acepta cookies `Secure`, que es lo que usa la sesión de
+ * administración. Fuera de producción y **sólo** sobre loopback, la consola
+ * puede abrirse sin túnel; en cualquier otro host se sigue exigiendo https,
+ * porque ahí esa cookie viajaría en claro por la red.
+ */
+export function isLoopbackDevUrl (url) {
+  if (isProduction) return false
+  try {
+    const { protocol, hostname } = new URL(url)
+    return protocol === 'http:' &&
+      ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname)
+  } catch {
+    return false
+  }
+}
+
 export function assertConfigValid () {
   if (config.media.delivery === 'signed' && !config.secrets.mediaLink) {
     errors.push('MEDIA_DELIVERY=signed exige MEDIA_LINK_SECRET')
@@ -258,11 +289,15 @@ export function assertConfigValid () {
   if (config.isProduction && !config.publicUrl.startsWith('https://')) {
     errors.push('PUBLIC_URL debe ser https:// en producción (Moodle lo exige para LTI 1.3)')
   }
-  if (config.admin.enabled && !config.publicUrl.startsWith('https://')) {
-    errors.push('Activar la consola admin exige una PUBLIC_URL https://')
+  if (config.admin.enabled && !config.publicUrl.startsWith('https://') &&
+      !isLoopbackDevUrl(config.publicUrl)) {
+    errors.push('Activar la consola admin exige una PUBLIC_URL https:// (o loopback en desarrollo)')
   }
   if (config.transcode.heartbeatMs >= config.transcode.leaseSeconds * 1000) {
     errors.push('TRANSCODE_HEARTBEAT_MS debe ser menor que TRANSCODE_LEASE_SECONDS')
+  }
+  if (!['auto', 'always', 'never'].includes(config.network.trustCloudflareClientIp)) {
+    errors.push("TRUST_CLOUDFLARE_CLIENT_IP debe ser 'auto', 'always' o 'never'")
   }
   if (!['auto', 'manual'].includes(config.revisions.activation)) {
     errors.push("MATERIAL_REVISION_ACTIVATION debe ser 'auto' o 'manual'")
