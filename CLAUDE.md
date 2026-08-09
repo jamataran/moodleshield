@@ -143,11 +143,15 @@ docker compose -f compose.dev.yml up -d   # sólo Postgres en 127.0.0.1:5432
 cd infra/local && docker compose up -d --build   # sistema completo con nginx
 ```
 
-Para los tests de integración en local, el Postgres del entorno `local` escucha
-en `127.0.0.1:55432`:
+Los tests de integración corren **siempre contra la base dedicada
+`moodleshield_test`** (el lanzador la crea si falta) y **jamás** contra
+`moodleshield`, que guarda el contenido de prueba manual del entorno. Truncan
+tablas: apuntarlos a otra base destruye datos. `src/db/guard.js` lo impide en
+cerrado; no lo puentees con `DB_NAME`. Contra el Postgres del entorno `local`
+(127.0.0.1:55432):
 
 ```bash
-DB_PORT=55432 npm run test:integration
+npm run test:integration:local
 ```
 
 ## Trampas conocidas
