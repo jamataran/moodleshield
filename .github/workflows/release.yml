@@ -2,13 +2,22 @@ name: 'Release · promoción manual de test a producción'
 
 # Publicación manual desde GitHub Actions. Evita tener que localizar a mano el
 # commit padre de deploy(test): crea el tag y promueve el mismo digest.
+#
+# La versión no se teclea: se elige el tipo de salto y el job la deriva del
+# último tag vX.Y.Z. El desplegable de GitHub sólo admite literales fijos, así
+# que las etiquetas llevan la fórmula y el número real se anuncia en el resumen.
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Versión semver con prefijo v, por ejemplo v0.1.0'
+      bump:
+        description: 'Salto sobre el último tag vX.Y.Z'
         required: true
-        type: string
+        type: choice
+        default: 'SUBIR PARCHE — vX.Y.(Z+1)'
+        options:
+          - 'SUBIR PARCHE — vX.Y.(Z+1)'
+          - 'SUBIR MENOR — vX.(Y+1).0'
+          - 'SUBIR MAYOR — v(X+1).0.0'
 
 concurrency:
   group: release
@@ -33,11 +42,43 @@ jobs:
       - name: Resolver y validar versión e imagen de test
         id: meta
         env:
-          VERSION: ${{ inputs.version }}
+          BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
-          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
-            echo "::error::La versión debe tener formato vX.Y.Z, por ejemplo v0.1.0"
+          git fetch --tags --force origin
+
+          # Sin tuberías a propósito: `git tag | head` mata a git con SIGPIPE en
+          # cuanto la salida crece, y `pipefail` aborta el paso (ver más abajo).
+          # Sólo cuentan los tags limpios vX.Y.Z; una preversión no es una base.
+          previous=""
+          while IFS= read -r tag; do
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+            previous="$tag"
+            break
+          done <<< "$(git tag --list 'v*' --sort=-v:refname)"
+
+          if [[ -n "$previous" ]]; then
+            IFS='.' read -r major minor patch <<< "${previous#v}"
+          else
+            echo "No hay ningún tag vX.Y.Z todavía; partimos de v0.0.0"
+            previous="(ninguno)"
+            major=0; minor=0; patch=0
+          fi
+
+          case "$BUMP" in
+            'SUBIR PARCHE'*) patch=$((patch + 1)) ;;
+            'SUBIR MENOR'*)  minor=$((minor + 1)); patch=0 ;;
+            'SUBIR MAYOR'*)  major=$((major + 1)); minor=0; patch=0 ;;
+            *)
+              echo "::error::Salto no reconocido: $BUMP"
+              exit 1
+              ;;
+          esac
+          VERSION="v${major}.${minor}.${patch}"
+          echo "Último tag: $previous → nueva versión: $VERSION"
+
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Versión derivada inválida: $VERSION"
             exit 1
           }
 
@@ -84,6 +125,7 @@ jobs:
           echo "sha_tag=$sha_tag" >> "$GITHUB_OUTPUT"
           echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
 
       - name: Crear tag de release
         env:
@@ -152,10 +194,13 @@ jobs:
       - name: Resumen
         env:
           VERSION: ${{ steps.meta.outputs.version }}
+          PREVIOUS: ${{ steps.meta.outputs.previous }}
+          BUMP: ${{ inputs.bump }}
           SOURCE_TAG: ${{ steps.meta.outputs.sha_tag }}
         run: |
           {
             echo "### Producción → \`${VERSION}\`"
             echo ""
+            echo "Salto desde \`${PREVIOUS}\` (${BUMP})."
             echo "Promocionado desde \`${SOURCE_TAG}\` sin reconstruir."
           } >> "$GITHUB_STEP_SUMMARY"
