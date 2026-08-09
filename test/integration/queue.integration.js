@@ -8,6 +8,7 @@ import {
   deleteOwnedVideo,
   getVideoForOwner,
   getVideoForPlatform,
+  listInsertableVideosForDeepLink,
   listReadyVideosForDeepLink,
   listVideos,
   requestVideoCancellation
@@ -161,6 +162,16 @@ test('catálogo y detalle aíslan plataforma y propietario', async () => {
     ownerSub: 'teacher-a'
   })
   assert.deepEqual(deepLinkRows.map((row) => row.id), [own])
+})
+
+test('un vídeo en cola es insertable en Moodle pero todavía no está publicado', async () => {
+  const videoId = await createQueued()
+  const scope = { ids: [videoId], platformId: PLATFORM_A, ownerSub: 'teacher-a' }
+  assert.deepEqual((await listInsertableVideosForDeepLink(scope)).map((row) => row.id), [videoId])
+  assert.deepEqual(await listReadyVideosForDeepLink(scope), [])
+  const material = await getVideoForPlatform(videoId, PLATFORM_A)
+  assert.equal(material.active_revision_id, null)
+  assert.equal(await getActiveRevision({ kind: 'video', materialId: videoId }), null)
 })
 
 test('un job pendiente se cancela antes de permitir el borrado', async () => {

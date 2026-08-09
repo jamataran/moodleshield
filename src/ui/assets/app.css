@@ -490,79 +490,80 @@ dialog label { display: block; font-size: .875rem; color: var(--muted); margin-b
 #revision-list li span:first-child { flex: 1; }
 
 /* ---- Visores del alumno ---- */
+/* Dos filas: una de cromo y todo lo demás para el contenido. Cada franja extra
+   sale del alto de lo que el alumno ha venido a estudiar, y dentro del iframe
+   de Moodle ese alto ya viene recortado de casa. */
 body.viewer {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: .55rem;
-  padding: .65rem;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: .45rem;
+  padding: .5rem;
 }
 
-.viewer-header {
+.viewer-topbar {
   min-width: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(15rem, auto);
-  align-items: center;
-  gap: .75rem;
-}
-.viewer-heading { grid-column: 2; min-width: 0; }
-.viewer-heading h1,
-.viewer-heading #description {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.viewer-heading h1 { margin: 0; }
-.back-to-classroom { grid-column: 1; white-space: nowrap; }
-.viewer-monitoring {
-  grid-column: 3;
-  min-width: 0;
-  max-width: min(52vw, 48rem);
   display: flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  justify-self: end;
-  gap: .35rem;
-  color: var(--muted);
-  font-size: .75rem;
-  line-height: 1.35;
-  text-align: right;
-  white-space: nowrap;
+  align-items: stretch;
+  gap: .45rem;
 }
-.viewer-monitoring strong {
+.viewer-topbar .back-to-classroom {
   flex: none;
-  color: var(--ok);
-  font-size: .67rem;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
-.viewer-monitoring strong::after {
-  content: " ·";
-  color: var(--muted);
-  letter-spacing: normal;
-}
-.viewer-monitoring span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  padding: .3rem .65rem;
+  font-size: .82rem;
+  white-space: nowrap;
 }
 
-.legal-warning {
+/* El aviso legal completo vive en un diálogo; lo que no puede desaparecer nunca
+   es la advertencia de que la sesión está identificada, y eso es este chip. */
+.legal-chip {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  align-items: flex-start;
-  gap: .6rem;
-  padding: .48rem .65rem;
-  border: 1px solid color-mix(in srgb, var(--warn) 62%, var(--border));
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--warn) 9%, var(--surface));
+  align-items: center;
+  gap: .35rem;
+  padding: .3rem .65rem;
+  text-align: left;
+  border-color: color-mix(in srgb, var(--warn) 62%, var(--border));
+  background: color-mix(in srgb, var(--warn) 16%, var(--surface));
   color: var(--text);
-  font-size: .76rem;
-  line-height: 1.35;
+  font-size: .78rem;
+  line-height: 1.3;
 }
-.legal-warning-icon { color: var(--warn); font-size: 1rem; line-height: 1.2; }
-.legal-warning p { display: inline; margin: 0 0 0 .35rem; }
+.legal-chip:hover { background: color-mix(in srgb, var(--warn) 26%, var(--surface)); }
+.legal-chip-icon { flex: none; color: var(--warn); font-size: 1rem; line-height: 1; }
+.legal-chip strong { flex: none; white-space: nowrap; }
+.legal-chip-id {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.legal-chip-id::before { content: "· "; }
+.legal-chip-cta {
+  flex: none;
+  margin-left: auto;
+  padding-left: .5rem;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.topbar-icon {
+  flex: none;
+  width: 2.2rem;
+  min-width: 2.2rem;
+  padding: .38rem;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.topbar-icon svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+.topbar-icon[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 
 .viewer-shell {
   min-width: 0;
@@ -574,20 +575,27 @@ body.viewer {
   border-radius: calc(var(--radius) + 2px);
   background: var(--surface);
 }
+/* Plegado: fuera del árbol de accesibilidad, no sólo fuera de la vista. */
+body.is-panel-hidden .viewer-shell { grid-template-columns: minmax(0, 1fr); }
+body.is-panel-hidden .viewer-sidebar { display: none; }
+
 .viewer-sidebar {
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
-  padding: .8rem;
+  padding: 0;
   border-right: 1px solid var(--border);
   background: var(--surface-2);
 }
-.viewer-sidebar h2 {
-  margin: 0 0 .55rem;
-  color: var(--muted);
-  font-size: .7rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
+.viewer-sidebar > * + * { border-top: 1px solid var(--border); }
+/* El título del material encabeza su panel: en la barra superior repetía lo que
+   Moodle ya escribe encima del iframe y le quitaba una fila al contenido. */
+.sidebar-heading { flex: none; padding: .6rem .7rem; }
+.sidebar-heading .eyebrow { margin: 0 0 .1rem; }
+.sidebar-heading h1 { margin: 0; font-size: 1rem; line-height: 1.3; overflow-wrap: anywhere; }
+.sidebar-heading #description { margin: .2rem 0 0; font-size: .78rem; }
+.resource-actions { flex: none; padding: .7rem; }
 .sidebar-action { width: 100%; text-align: left; }
 .viewer-sidebar .notice { margin: .8rem 0 0; font-size: .78rem; }
 .viewer-status { margin-top: .8rem; overflow-wrap: anywhere; }
@@ -599,6 +607,29 @@ body.viewer {
   padding: .65rem;
 }
 .viewer-content { width: 100%; height: 100%; min-height: 0; margin: 0 auto; }
+
+.legal-dialog { width: min(44rem, 94vw); }
+.legal-copy p { margin: 0 0 .6rem; font-size: .88rem; line-height: 1.5; }
+.legal-copy p:last-child { margin-bottom: 0; }
+.legal-audit {
+  display: grid;
+  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+  gap: .3rem .9rem;
+  margin: .35rem 0 0;
+  font-size: .84rem;
+}
+.legal-audit dt { color: var(--muted); }
+.legal-audit dd { margin: 0; overflow-wrap: anywhere; }
+/* El aviso es largo y el iframe de Moodle puede ser bajo: la salida no puede
+   quedar por debajo del pliegue, o el alumno se queda encerrado en el texto. */
+.legal-dialog .dialog-actions {
+  position: sticky;
+  bottom: -1rem;
+  margin: .8rem -1rem -1rem;
+  padding: .75rem 1rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
 
 /* ---- Reproductor de vídeo ---- */
 .video-view {
@@ -799,14 +830,6 @@ body.viewer {
 .video-icon-button:disabled { opacity: .35; }
 .video-icon-button[data-unavailable="true"] { opacity: .55; }
 .video-icon-button svg { display: block; width: 100%; height: 100%; fill: currentColor; }
-.video-icon-button svg text {
-  fill: currentColor;
-  stroke: rgb(0 0 0 / .9);
-  stroke-width: .75px;
-  paint-order: stroke fill;
-  font: 900 8px/1 system-ui, sans-serif;
-  letter-spacing: -.04em;
-}
 .video-volume {
   width: clamp(3.5rem, 8vw, 5rem);
   height: 1.25rem;
@@ -833,8 +856,9 @@ body.viewer {
 }
 
 /* ---- Visor de colección ---- */
-.collection-sidebar { display: flex; flex-direction: column; padding: 0; }
-.collection-index { min-height: 0; overflow-y: auto; padding: .65rem; }
+/* Encoge y hace scroll ella sola cuando la lista es larga, pero con dos
+   materiales no separa la navegación del índice con medio panel vacío. */
+.collection-index { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: .65rem; }
 .collection-index ol { list-style: none; margin: 0; padding: 0; }
 .index-item {
   display: flex;
@@ -851,15 +875,17 @@ body.viewer {
 .index-label { display: flex; flex-direction: column; min-width: 0; }
 .index-title { font-weight: 600; font-size: .9rem; overflow-wrap: anywhere; }
 .kind-badge { flex: none; width: 1.5rem; text-align: center; }
-.resource-actions { flex: none; padding: .7rem; border-top: 1px solid var(--border); }
-.collection-main {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+/* Anterior/Siguiente viven junto a la lista que ya dice dónde estás, no bajo el
+   contenido: allí duplicaban el índice y costaban una fila entera de alto. */
+.collection-nav {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .4rem .65rem;
 }
-.collection-footer { padding-top: .55rem; }
-.collection-nav { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.collection-footer .notice { margin: .55rem 0 0; }
-.collection-footer .viewer-status { margin: .35rem 0 0; }
+.nav-step { padding: .25rem .7rem; font-size: .9rem; line-height: 1.4; }
 .only-mobile { display: none; }
 
 /* ---- Visor de PDF ---- */
@@ -884,7 +910,7 @@ body.viewer {
   overflow: hidden;
   background: #fff;
   margin: 0 auto .75rem;
-  max-width: 900px;
+  max-width: min(100%, 1080px);
   min-height: 40vh;
   border-radius: 4px;
   box-shadow: 0 1px 4px rgb(0 0 0 / .35);
@@ -912,47 +938,65 @@ body.viewer {
   body { padding: .75rem; }
 
   body.viewer { padding: .4rem; gap: .35rem; }
-  .viewer-header {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: .4rem;
-  }
-  .viewer-header .back-to-classroom { padding: .38rem .5rem; }
-  .viewer-monitoring {
-    grid-column: 1 / -1;
-    max-width: 100%;
-    display: flex;
-    justify-content: flex-end;
-    justify-self: stretch;
-    overflow-wrap: anywhere;
-    font-size: .68rem;
-    text-align: right;
-  }
-  .legal-warning { gap: .35rem; padding: .38rem .45rem; font-size: .68rem; line-height: 1.25; }
-  .legal-warning p { margin-left: .2rem; }
+  /* La barra sigue siendo UNA fila: partirla en dos es justo lo que sobraba. */
+  .viewer-topbar { gap: .3rem; }
+  .viewer-topbar .back-to-classroom { padding: .3rem .45rem; }
+  .legal-chip { gap: .3rem; padding: .28rem .45rem; font-size: .72rem; }
+  .legal-chip-cta { padding-left: .35rem; }
+  .topbar-icon { width: 2rem; min-width: 2rem; }
   .viewer-shell {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
+  body.is-panel-hidden .viewer-shell { grid-template-rows: minmax(0, 1fr); }
   .viewer-sidebar {
-    max-height: 11rem;
+    max-height: 13rem;
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
-  .viewer-single .viewer-sidebar {
+  .sidebar-heading { padding: .4rem .5rem; }
+  .sidebar-heading h1 { font-size: .92rem; }
+  .sidebar-heading .eyebrow,
+  .sidebar-heading #description { display: none; }
+  .viewer-main { padding: .4rem; }
+
+  /* El índice ya es un desplegable en móvil: las flechas caben a sus lados y la
+     banda superior deja de llevarse media pantalla del alumno. */
+  .collection-sidebar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "titulo titulo titulo"
+      "antes  indice despues"
+      "acciones acciones acciones";
+    align-items: center;
+    max-height: none;
+  }
+  .collection-sidebar > * + * { border-top: 0; }
+  .collection-sidebar .sidebar-heading {
+    grid-area: titulo;
+    border-bottom: 1px solid var(--border);
+  }
+  .collection-sidebar .collection-index { grid-area: indice; padding: .35rem .3rem; }
+  .collection-sidebar .collection-index label { font-size: .72rem; }
+  .collection-sidebar .collection-nav { display: contents; }
+  .collection-sidebar #prev { grid-area: antes; margin-left: .45rem; }
+  .collection-sidebar #next { grid-area: despues; margin-right: .45rem; }
+  /* El desplegable ya numera los materiales: repetir «1 de 2» sólo ocupa. */
+  .collection-sidebar #position { display: none; }
+  .collection-sidebar .resource-actions {
+    grid-area: acciones;
+    border-top: 1px solid var(--border);
+  }
+  .resource-actions {
     display: grid;
     grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
     align-items: center;
     gap: .3rem .55rem;
     padding: .5rem;
   }
-  .viewer-single .viewer-sidebar h2 { grid-column: 1 / -1; margin: 0; }
-  .viewer-single .viewer-sidebar .notice,
-  .viewer-single .viewer-sidebar .viewer-status { grid-column: 1 / -1; margin: .2rem 0 0; }
-  .viewer-main { padding: .4rem; }
-  .collection-sidebar { max-height: none; }
-  .collection-index { padding: .45rem; }
-  .resource-actions { display: grid; grid-template-columns: minmax(8rem, auto) 1fr; gap: .3rem .55rem; align-items: center; padding: .45rem; }
-  .resource-actions h2 { grid-column: 1 / -1; margin: 0; }
+  .resource-actions .notice,
+  .resource-actions .viewer-status { grid-column: 1 / -1; margin: .2rem 0 0; }
   .only-mobile { display: block; }
   .only-desktop { display: none; }
   .video-controls { padding: 2.6rem .4rem .3rem; }
@@ -1045,6 +1089,12 @@ body.viewer {
   .video-volume { display: none; }
 }
 
+/* En un móvil no caben advertencia, identidad y llamada: la identidad es la que
+   se puede leer entera en el diálogo, y además sigue sobre el propio contenido. */
+@media (max-width: 480px) {
+  .legal-chip-id { display: none; }
+}
+
 @media (max-width: 400px) {
   .video-controls { padding: 3.25rem .15rem .3rem; }
   .video-control-row { gap: 0; }
@@ -1079,7 +1129,7 @@ body.viewer {
 /* Objetivos táctiles cómodos en cualquier pantalla táctil. */
 @media (pointer: coarse) {
   button, .btn { min-height: 44px; }
-  button.icon, details.menu > summary { min-height: 44px; min-width: 44px; }
+  button.icon, .topbar-icon, details.menu > summary { min-height: 44px; min-width: 44px; }
   .index-item { min-height: 44px; }
   .video-icon-button { min-width: 44px; min-height: 44px; }
   .video-timeline { height: 2rem; padding: .875rem 0; }

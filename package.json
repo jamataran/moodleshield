@@ -38,7 +38,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node --test --test-reporter=spec \"test/**/*.test.js\"",
-    "test:integration": "node --test --test-concurrency=1 --test-reporter=spec \"test/integration/*.integration.js\"",
+    "test:integration": "node scripts/integration-tests.mjs",
+    "test:integration:local": "DB_PORT=55432 DB_PASSWORD=moodleshield-local node scripts/integration-tests.mjs",
     "test:coverage": "node --test --experimental-test-coverage \"test/**/*.test.js\"",
     "trace": "node tools/trace.mjs"
   },

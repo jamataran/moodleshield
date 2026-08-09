@@ -10,8 +10,10 @@ const ICONS = Object.freeze({
   play: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5.5v13l11-6.5z"/></svg>',
   pause: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>',
   replay: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5a7 7 0 1 1-6.65 9.18l1.9-.62A5 5 0 1 0 8.1 8.15L11 11H4V4l2.68 2.68A6.96 6.96 0 0 1 12 5z"/></svg>',
-  rewind: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M11.4 4a8 8 0 1 1-6.9 4L2 10.5V4h6.5L6 6.5A6 6 0 1 0 11.4 6z"/><text x="12" y="15.2" text-anchor="middle">10</text></svg>',
-  forward: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M12.6 4a8 8 0 1 0 6.9 4l2.5 2.5V4h-6.5L18 6.5A6 6 0 1 1 12.6 6z"/><text x="12" y="15.2" text-anchor="middle">10</text></svg>',
+  // El «10» va trazado como vectores, sin texto SVG: el renderizado de fuentes
+  // dentro de un SVG de 24px varía entre navegadores y se veía tosco.
+  rewind: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5.5A7.5 7.5 0 1 1 5.5 9.25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12.6 2.7 8.2 5.5l4.4 2.8z"/><path d="M7.9 11.6l1.7-1.5v6.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="13.9" cy="13.25" rx="1.8" ry="3.15" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
+  forward: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5.5A7.5 7.5 0 1 0 18.5 9.25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M11.4 2.7l4.4 2.8-4.4 2.8z"/><path d="M7.9 11.6l1.7-1.5v6.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="13.9" cy="13.25" rx="1.8" ry="3.15" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
   volume: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9v6h4l5 4V5L8 9zm11.5-.8v7.6a4.5 4.5 0 0 0 0-7.6zm0-3.2v2.1a6.5 6.5 0 0 1 0 9.8V19a8.5 8.5 0 0 0 0-14z"/></svg>',
   muted: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9v6h4l5 4V5L8 9zm12.3 3 2.35-2.35-1.3-1.3L15 10.7l-2.35-2.35-1.3 1.3L13.7 12l-2.35 2.35 1.3 1.3L15 13.3l2.35 2.35 1.3-1.3z"/></svg>',
   capture: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M8.6 5 10 3.5h4L15.4 5H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9m0-2a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5"/></svg>',
@@ -101,7 +103,8 @@ export function createVideoView ({
   video,
   user,
   onStatus,
-  globalShortcuts = false
+  globalShortcuts = false,
+  startAtSeconds = 0
 }) {
   const doc = container.ownerDocument ?? document
   const win = doc.defaultView ?? window
@@ -452,7 +455,22 @@ export function createVideoView ({
     }
   }
 
+  // La reanudación se aplica UNA vez, en cuanto se conoce la duración: el
+  // mismo handler atiende también durationchange y no debe volver a saltar.
+  // Cerca del final no se restaura: reabrir un vídeo terminado empieza de cero.
+  let startApplied = false
+  const applyStartAt = () => {
+    if (startApplied) return
+    const total = duration()
+    if (total === null) return
+    startApplied = true
+    if (startAtSeconds >= 5 && startAtSeconds < total - 5) {
+      element.currentTime = Math.min(startAtSeconds, total - 2)
+    }
+  }
+
   const onLoadedMetadata = () => {
+    applyStartAt()
     updateTimeline({ preserveThumb: false })
     updatePip()
     status('')
@@ -614,6 +632,8 @@ export function createVideoView ({
 
   return {
     element,
+    get currentTime () { return element.currentTime },
+    get duration () { return duration() },
     focus () { root.focus({ preventScroll: true }) },
     destroy () {
       if (destroyed) return

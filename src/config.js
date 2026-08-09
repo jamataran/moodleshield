@@ -71,6 +71,7 @@ const adminPasswordHash = optional('ADMIN_PASSWORD_HASH')
 const adminSessionSecret = optional('ADMIN_SESSION_SECRET')
 const anyAdminCredential = Boolean(adminUsername || adminPasswordHash || adminSessionSecret)
 const adminEnabled = Boolean(adminUsername && adminPasswordHash && adminSessionSecret)
+const contentApiToken = optional('CONTENT_API_TOKEN')
 
 if (isProduction || anyAdminCredential) {
   if (!adminUsername) errors.push('Falta la variable de entorno obligatoria ADMIN_USERNAME')
@@ -269,6 +270,11 @@ export const config = {
     adminToken: optional('LTI_ADMIN_TOKEN', '')
   },
 
+  contentApi: {
+    /** API de migración por fragmentos. Vacío = rutas deshabilitadas (404). */
+    token: contentApiToken
+  },
+
   admin: {
     enabled: adminEnabled,
     username: adminUsername,
@@ -330,6 +336,12 @@ export function assertConfigValid () {
   }
   if (config.transcode.heartbeatMs >= config.transcode.leaseSeconds * 1000) {
     errors.push('TRANSCODE_HEARTBEAT_MS debe ser menor que TRANSCODE_LEASE_SECONDS')
+  }
+  if (config.transcode.concurrency !== 1) {
+    errors.push('TRANSCODE_CONCURRENCY debe ser 1: el worker procesa un único fichero cada vez')
+  }
+  if (config.isProduction && config.contentApi.token && config.contentApi.token.length < 32) {
+    errors.push('CONTENT_API_TOKEN debe tener al menos 32 caracteres en producción')
   }
   if (!['auto', 'always', 'never'].includes(config.network.trustCloudflareClientIp)) {
     errors.push("TRUST_CLOUDFLARE_CLIENT_IP debe ser 'auto', 'always' o 'never'")

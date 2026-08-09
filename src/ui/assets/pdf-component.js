@@ -38,7 +38,8 @@ export async function createPdfView ({
   document: doc,
   user,
   onStatus,
-  onAccessibility
+  onAccessibility,
+  initialPage = 1
 }) {
   const root = window.document.createElement('div')
   root.className = 'pdf-stage'
@@ -168,9 +169,22 @@ export async function createPdfView ({
     }
   }, { root: pages, rootMargin: '200px 0px' })
 
+  // Reanudación: salto instantáneo (no suave: el scroll animado atravesaría
+  // páginas intermedias y el observer las renderizaría todas por el camino).
+  // Los placeholders aún sin dibujar tienen altura mínima por CSS, así que el
+  // offset es aproximado pero cae en la página correcta.
+  const startPage = Number.isInteger(initialPage) && initialPage >= 2 && initialPage <= pdf.numPages
+    ? initialPage
+    : 1
   for (const holder of placeholders) observer.observe(holder)
-  await renderPage(placeholders[0])
-  status(`Página 1 de ${pdf.numPages}`)
+  if (startPage > 1) {
+    const holder = placeholders[startPage - 1]
+    const top = holder.getBoundingClientRect().top - pages.getBoundingClientRect().top + pages.scrollTop
+    pages.scrollTo({ top, behavior: 'instant' })
+    currentPage = startPage
+  }
+  await renderPage(placeholders[startPage - 1])
+  status(`Página ${startPage} de ${pdf.numPages}`)
 
   // Un PDF escaneado es una imagen: no tiene texto que un lector de pantalla
   // pueda leer ni que se pueda buscar. Se detecta aquí, mirando las primeras

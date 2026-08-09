@@ -1,7 +1,8 @@
-import { createVideoView } from './video-component.js?v=video-watermark-3'
-import { createPdfView } from './pdf-component.js?v=viewer-ux-1'
+import { createVideoView } from './video-component.js?v=resume-1'
+import { createPdfView } from './pdf-component.js?v=resume-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
-import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-status-3'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
+import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
 
 /**
  * Visor de una colección: varios materiales dentro de UNA actividad Moodle.
@@ -30,6 +31,10 @@ let items = boot.items ?? []
 let index = 0
 let view = null
 let viewGeneration = 0
+
+// Marcador de reanudación: sólo restaura la primera vista. Navegar a mano
+// después empieza cada material desde el principio, como siempre.
+let saved = boot.progress ?? null
 
 function setStatus (text, isError = false) {
   shell.setStatus(text, isError)
@@ -104,6 +109,8 @@ async function show (nextIndex, { focus = true } = {}) {
   index = nextIndex
   renderIndex()
   destroyView()
+  // El aviso legal cita el material que se está viendo, no la colección.
+  shell.setMaterial({ title: item.title, id: item.id })
 
   if (!item.available) {
     shell.setDownload({
@@ -122,6 +129,11 @@ async function show (nextIndex, { focus = true } = {}) {
   }
 
   setStatus('Cargando…')
+  // El marcador se consume aquí, en la primera vista, y sólo si sigue
+  // apuntando a este material: si el profesor lo quitó o lo movió, se abre
+  // desde el principio sin más.
+  const resume = saved && saved.itemId === item.id ? saved : null
+  saved = null
   try {
     let candidate
     const currentStatus = (text, isError = false) => {
@@ -138,7 +150,8 @@ async function show (nextIndex, { focus = true } = {}) {
         sessionToken: boot.sessionToken,
         video: { id: item.id, title: item.title, playlistUrl: `/hls/${item.id}/index.m3u8` },
         user: boot.user,
-        onStatus: currentStatus
+        onStatus: currentStatus,
+        startAtSeconds: resume?.positionSeconds ?? 0
       })
     } else {
       const pdfDocument = {
@@ -167,7 +180,8 @@ async function show (nextIndex, { focus = true } = {}) {
         sessionToken: boot.sessionToken,
         document: pdfDocument,
         user: boot.user,
-        onStatus: currentStatus
+        onStatus: currentStatus,
+        initialPage: resume?.pageNumber ?? 1
       })
     }
     if (generation !== viewGeneration) {
@@ -217,7 +231,45 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowRight' && index < items.length - 1) void show(index + 1)
 })
 
+// La clave `progress` sólo viene en el bootstrap de un alumno: si no está,
+// tampoco hay nada que guardar (sesión de profesor). El marcador de una
+// colección lleva también qué elemento estaba abierto.
+if ('progress' in boot) {
+  createProgressSaver({
+    sessionToken: boot.sessionToken,
+    url: `/progress/collection/${boot.collection.id}`,
+    read: () => {
+      const item = items[index]
+      if (!view || !item) return null
+      if (item.kind === 'video') {
+        const positionSeconds = videoProgressPosition(view.currentTime, view.duration)
+        if (positionSeconds === null) return null
+        return { itemKind: 'video', itemId: item.id, itemPosition: index, positionSeconds }
+      }
+      const pageNumber = view.currentPage
+      if (!Number.isInteger(pageNumber) || pageNumber < 1) return null
+      return { itemKind: 'pdf', itemId: item.id, itemPosition: index, pageNumber }
+    }
+  })
+}
+
 window.addEventListener('pagehide', destroyView)
 
+/**
+ * Con qué elemento arrancar: el guardado si sigue en la colección y
+ * disponible; si el material salió de ella, su antigua posición; si nada de
+ * eso vale, el primero.
+ */
+function initialIndex () {
+  if (!saved) return 0
+  const byId = items.findIndex((item) => item.id === saved.itemId && item.available)
+  if (byId >= 0) return byId
+  const position = Number(saved.itemPosition)
+  if (Number.isInteger(position) && position >= 0 && position < items.length && items[position].available) {
+    return position
+  }
+  return 0
+}
+
 await refreshManifest()
-await show(0, { focus: false })
+await show(initialIndex(), { focus: false })

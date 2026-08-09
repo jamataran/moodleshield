@@ -24,8 +24,6 @@ import {
   getDocumentForOwner
 } from '../services/documents.js'
 
-export const uploadsRouter = Router()
-
 function ownerFrom (req) {
   return { platformId: req.session.platformId, ownerSub: req.session.sub }
 }
@@ -47,7 +45,10 @@ async function assertOwnedMaterial (kind, materialId, req) {
  * Reserva una subida y devuelve el tamaño que debe usar el navegador. Sólo
  * viaja JSON pequeño; los bytes del fichero van después como octet-stream.
  */
-uploadsRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
+export function createUploadsRouter (requireUploadAuth = requireCatalogInstructor) {
+  const uploadsRouter = Router()
+
+uploadsRouter.post('/', requireUploadAuth, async (req, res, next) => {
   try {
     const requestedMaterialId = req.body?.materialId || null
     let materialId = randomUUID()
@@ -81,7 +82,7 @@ uploadsRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
 })
 
 /** Permite consultar qué fragmentos sobrevivieron a un corte y reanudar. */
-uploadsRouter.get('/:uploadId', requireCatalogInstructor, async (req, res, next) => {
+uploadsRouter.get('/:uploadId', requireUploadAuth, async (req, res, next) => {
   try {
     const uploadId = assertUuid(req.params.uploadId, 'Identificador de subida')
     const { manifest, received } = await getChunkedUpload(uploadId, ownerFrom(req))
@@ -98,7 +99,7 @@ uploadsRouter.get('/:uploadId', requireCatalogInstructor, async (req, res, next)
   }
 })
 
-uploadsRouter.put('/:uploadId/chunks/:index', requireCatalogInstructor, async (req, res, next) => {
+uploadsRouter.put('/:uploadId/chunks/:index', requireUploadAuth, async (req, res, next) => {
   try {
     const uploadId = assertUuid(req.params.uploadId, 'Identificador de subida')
     await receiveChunk(req, {
@@ -112,7 +113,7 @@ uploadsRouter.put('/:uploadId/chunks/:index', requireCatalogInstructor, async (r
   }
 })
 
-uploadsRouter.post('/:uploadId/complete', requireCatalogInstructor, async (req, res, next) => {
+uploadsRouter.post('/:uploadId/complete', requireUploadAuth, async (req, res, next) => {
   const uploadId = assertUuid(req.params.uploadId, 'Identificador de subida')
   let assembled = null
   let enqueued = false
@@ -214,7 +215,7 @@ uploadsRouter.post('/:uploadId/complete', requireCatalogInstructor, async (req, 
   }
 })
 
-uploadsRouter.delete('/:uploadId', requireCatalogInstructor, async (req, res, next) => {
+uploadsRouter.delete('/:uploadId', requireUploadAuth, async (req, res, next) => {
   try {
     const uploadId = assertUuid(req.params.uploadId, 'Identificador de subida')
     await cancelChunkedUpload(uploadId, ownerFrom(req))
@@ -223,3 +224,8 @@ uploadsRouter.delete('/:uploadId', requireCatalogInstructor, async (req, res, ne
     next(err)
   }
 })
+
+  return uploadsRouter
+}
+
+export const uploadsRouter = createUploadsRouter()

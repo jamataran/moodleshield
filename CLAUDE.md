@@ -47,7 +47,7 @@ sueltos. Antes de tocar nada:
 |---|---|
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…020: por qué cada decisión y cómo revertirla |
+| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…022: por qué cada decisión y cómo revertirla |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
 | [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría detallada de la última entrega |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Mapa de fases y dependencias |
@@ -143,11 +143,15 @@ docker compose -f compose.dev.yml up -d   # sólo Postgres en 127.0.0.1:5432
 cd infra/local && docker compose up -d --build   # sistema completo con nginx
 ```
 
-Para los tests de integración en local, el Postgres del entorno `local` escucha
-en `127.0.0.1:55432`:
+Los tests de integración corren **siempre contra la base dedicada
+`moodleshield_test`** (el lanzador la crea si falta) y **jamás** contra
+`moodleshield`, que guarda el contenido de prueba manual del entorno. Truncan
+tablas: apuntarlos a otra base destruye datos. `src/db/guard.js` lo impide en
+cerrado; no lo puentees con `DB_NAME`. Contra el Postgres del entorno `local`
+(127.0.0.1:55432):
 
 ```bash
-DB_PORT=55432 npm run test:integration
+npm run test:integration:local
 ```
 
 ## Trampas conocidas

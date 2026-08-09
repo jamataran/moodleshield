@@ -238,7 +238,12 @@ repositorio; el CI comprueba que no se cuela ninguno. El commit del bump lleva
 
 **Estado**: aceptada · **Fecha**: 2026-08
 
-**Decisión.** Un solo nivel de calidad (CRF 21, 24 fps).
+**Decisión.** Un solo nivel de calidad (CRF 21). Los fps de salida siguen a la
+fuente (redondeados a entero para que el GOP sea exacto y limitados a 30:
+60→30, 50→25); si la fuente no declara fps fiables se cae a `OUTPUT_FPS` (24).
+El color se normaliza siempre a BT.709 SDR etiquetado, con tonemapping cuando
+la fuente es HDR (HLG/PQ): sin él, los vídeos de móvil salían con los colores
+lavados, y sin etiquetas cada navegador adivinaba la matriz.
 
 **Razones.** El multibitrate multiplica el número de variantes: con tres niveles
 serían seis transcodificaciones por vídeo en vez de dos, sobre el recurso más
@@ -592,3 +597,92 @@ los dos nombres a la vez. Añadir un alias es declarar que ese nombre apunta a
 esta instancia: si alguna vez apuntara a otra cosa, habría que quitarlo. La
 configuración que se copia en Moodle sigue siendo la canónica a propósito,
 para no registrar por error una URL de desarrollo.
+
+## ADR-021 · El marcador «reanudar donde lo dejó» vive en el servidor, con un solo UPSERT
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** Al reabrir una actividad, el visor arrancaba siempre desde cero:
+primer elemento de la colección, segundo 0 del vídeo, página 1 del PDF. Para
+un curso que se consume por entregas eso obliga al alumno a buscar a mano el
+punto donde iba. Se quiere reanudación automática con la solución más simple
+posible: el despliegue actual sirve a ~20 alumnos y debe aguantar ~100 accesos
+simultáneos sin tocar la infraestructura.
+
+**Decisión.** Una tabla `learner_progress` con una fila por alumno y recurso
+lanzado —`(platform_id, user_sub, resource_kind, resource_id)` como PK— que se
+machaca con un único `INSERT … ON CONFLICT DO UPDATE`. La fila de una colección
+guarda además qué elemento estaba abierto (`item_id` manda; `item_position` es
+el plan B si el material salió de la colección). La lectura no tiene endpoint:
+viaja embebida en el bootstrap del launch, que ya hace una petición a la base
+de datos de todos modos. La escritura es un solo `PUT /progress/:kind/:id`
+autorizado con el mismo `authorizeResource`/`authorizeCollection` de siempre,
+que el visor lanza cada 15 segundos si la posición cambió y al ocultarse la
+página (`fetch` con `keepalive`). La clave `progress` del bootstrap sólo existe
+para alumnos: el profesor ni guarda ni restaura.
+
+**Razones.** `localStorage` era la alternativa sin servidor, pero el visor
+corre en un iframe cross-origin dentro de Moodle: el almacenamiento de terceros
+está particionado o directamente bloqueado según navegador y modo, así que el
+marcador se perdería de forma errática; en el servidor además sobrevive al
+cambio de dispositivo. Los `view_event` no valen como soporte: son registro
+forense append-only deduplicado por sesión, no «último estado». Y no hay colas
+ni eventos porque no hacen falta: 100 alumnos guardando cada 15 s son ~7
+escrituras por segundo contra una PK — ruido para el pool actual de 6
+conexiones.
+
+**Consecuencias.** La tabla no tiene FK, a propósito: `resource_id` e `item_id`
+son polimórficos y el dato es consultivo y desechable — una fila huérfana es
+inofensiva y no debe impedir borrar un material. Un vídeo visto hasta el final
+guarda `0` (reabrir empieza de cero) por el mismo camino UPSERT, sin rama de
+borrado. El marcador es por recurso lanzado, no por material: navegar dentro de
+una colección sólo recuerda el último elemento, no la posición de cada uno.
+Revertirlo es dejar de escribir y de leer; la tabla puede quedarse donde está.
+
+---
+
+## ADR-022 · El aviso legal del visor se colapsa a un chip, y el texto completo abre un diálogo
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** El visor del alumno gastaba tres franjas de pantalla antes de
+llegar al material: cabecera con el título, banda de monitorización y banner
+legal de cuatro líneas; la colección añadía además un pie con
+Anterior/Siguiente y la línea de estado. Medido, unos **174 px** —el 17 % de una
+ventana de 1030 px— en la única pantalla donde el alumno estudia, y el visor
+asume `100dvh` sin negociar nada con el padre: dentro de un iframe corto de
+Moodle lo que sobra no hace scroll, se corta.
+
+**Decisión.** Una sola fila de cromo. El banner y la monitorización se funden en
+un chip ámbar permanente —`⚠ Sesión monitorizada · identidad · IP · Ver
+detalles`— que abre un `<dialog>` con el aviso legal ampliado **y los datos
+concretos de esa sesión**: nombre, identidad, IP, hora de inicio y de
+caducidad, referencia de auditoría, material y navegador. El título del material
+encabeza el panel lateral, la navegación entre materiales baja junto a la lista
+que ya dice dónde estás, y el estado (`Página 3 de 9`) se va al pie del panel.
+Se añade un botón que pliega el panel entero. Para poder enseñar las horas y la
+referencia, `verifySession` devuelve además `issuedAt` y el bootstrap de los
+tres lanzamientos de alumno lleva `session: { issuedAt, expiresAt, reference }`.
+
+**Razones.** La disuasión nunca estuvo en el banner: está en la identidad
+sobreimpresa en cada página del PDF y en cada fotograma del vídeo, que no se
+tocan, y en la marca forense A/B del vídeo (ADR-005). Lo que el banner aportaba
+—«se le advirtió»— se conserva con el chip, que sigue en pantalla el 100 % del
+tiempo con el símbolo de aviso y las palabras «Sesión monitorizada». Lo que
+gana el diálogo es lo que un muro de texto nunca consiguió: la
+`reference` que enseña es el `jti` de la sesión, **el mismo que se escribe en
+`view_event.session_jti`**, así que lo que el alumno lee se puede cotejar con lo
+registrado. Convence más un dato verificable que un párrafo más largo.
+
+**Consecuencias.** El aviso completo pasa a requerir un clic; se descartó
+abrirlo automáticamente una vez por sesión para no cobrar peaje al entrar, y
+queda como un `if` sobre `sessionStorage` en `viewer-shell.js` si algún día se
+quiere endurecer. El diálogo sólo puede prometer lo que el sistema tiene: LTI
+1.3 no trae ningún claim de documento de identidad —sólo el parámetro
+personalizado configurable (`docs/moodle-setup.md`)—, así que cuando no llega se
+dice «No facilitado por el aula virtual» en vez de enseñar un hueco; y no hay
+correo, ni título del curso, ni historial de accesos, porque hoy no existen en
+la sesión ni en ningún endpoint. El helper que limpia `returnValue` antes de
+`showModal()` se extrae a `src/ui/assets/dialog.js` para que el visor no arrastre
+el catálogo del profesor. Revertirlo es restaurar `.legal-warning` como tercera
+fila de `body.viewer`; el diálogo puede quedarse donde está.

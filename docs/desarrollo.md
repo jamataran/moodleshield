@@ -147,14 +147,25 @@ Los unitarios **no tocan Postgres a propósito**: son rápidos y deterministas. 
 va aparte, contra una base de datos real, y el CI valida además que las migraciones sean
 idempotentes ejecutándolas dos veces.
 
-### Integración: el puerto depende del modo
+### Integración: siempre contra `moodleshield_test`, nunca contra el contenido
+
+Los tests de integración **truncan tablas antes de cada prueba**. Por eso corren
+contra una base dedicada, `moodleshield_test`, que el lanzador
+(`scripts/integration-tests.mjs`) crea solo si no existe en el mismo servidor.
+La base `moodleshield` — la que tiene tus plataformas, vídeos y PDF de prueba
+manual — no se toca jamás. Dos cerrojos lo garantizan, ambos en cerrado:
+
+1. El lanzador aborta si `DB_NAME` no termina en `_test`.
+2. `src/db/guard.js` rechaza cualquier conexión desde un proceso de test
+   (`NODE_TEST_CONTEXT`) a una base sin ese sufijo — cubre también a quien
+   ejecute `node --test` a mano sin pasar por el script.
 
 ```bash
 # Modo 1 (compose.dev.yml, Postgres en 5432)
 npm run test:integration
 
 # Modo 2 (infra/local, Postgres publicado en 55432)
-DB_PORT=55432 npm run test:integration
+npm run test:integration:local
 ```
 
 ### Las 8 pruebas que se saltan solas
@@ -329,7 +340,8 @@ Las que más se tocan durante el desarrollo:
 | `MARK_ALPHA` | `0.06` | Opacidad de la marca A/B. Súbela a `0.5` para verla |
 | `MEDIA_DELIVERY` | `app` | `signed` en producción: los segmentos los sirve nginx |
 | `SEGMENT_SECONDS` | `4` | Duración de segmento; también la resolución del patrón |
-| `TRANSCODE_CONCURRENCY` | `1` | Súbelo sólo con aceleración por hardware |
+| `TRANSCODE_CONCURRENCY` | `1` | Debe permanecer en `1`: el arranque rechaza otro valor |
+| `CONTENT_API_TOKEN` | — | Activa la API de migración; vacío la mantiene en 404 |
 | `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
 | `LOG_LEVEL` | `info` | `debug` para ver las queries (ojo con los tokens) |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas |

@@ -7,15 +7,16 @@ import { getPublicJwks } from './keys.js'
 import { findPlatform, listPlatforms, upsertPlatform } from './platform.js'
 import { saveOidcState, validateLaunch, LtiError } from './validate.js'
 import { MESSAGE_TYPE } from './claims.js'
-import { issueSession, issueToken, verifyToken } from '../session.js'
+import { issueSession, issueToken, verifySession, verifyToken } from '../session.js'
 import { renderPage } from '../ui/render.js'
 import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
-import { getVideoForPlatform, listReadyVideosForDeepLink } from '../services/videos.js'
-import { getDocumentForPlatform, listReadyDocumentsForDeepLink } from '../services/documents.js'
+import { getVideoForPlatform, listInsertableVideosForDeepLink } from '../services/videos.js'
+import { getDocumentForPlatform, listInsertableDocumentsForDeepLink } from '../services/documents.js'
 import { getCollectionForPlatform, loadItems, publicItem } from '../services/collections.js'
 import { getVisibleCollection } from '../services/sharing.js'
 import { publicOriginFor } from '../security/public-origin.js'
 import { getActiveRevision } from '../services/revisions.js'
+import { getProgress } from '../services/progress.js'
 import { assertUuid, isUuid } from '../media/storage.js'
 import { normalizePlatformInput } from '../admin/platform-validator.js'
 import { AmbiguousPlatformError } from '../services/platforms.js'
@@ -242,6 +243,24 @@ export function displayIp (ip) {
   return value.startsWith('::ffff:') ? value.slice(7) : value
 }
 
+/**
+ * Datos de la sesión que el visor enseña al alumno en el aviso legal.
+ *
+ * `reference` es el `jti`, el mismo identificador que se escribe en
+ * `view_event.session_jti`: enseñarlo permite cotejar lo que el alumno ve con lo
+ * que quedó registrado, en vez de pedirle que se fíe. Se leen del token recién
+ * emitido en lugar de recalcularlos aquí para que no puedan divergir de él.
+ */
+function sessionAudit (sessionToken) {
+  const session = verifySession(sessionToken)
+  if (!session) return null
+  return {
+    issuedAt: session.issuedAt,
+    expiresAt: session.expiresAt,
+    reference: session.jti
+  }
+}
+
 async function renderMaterialLaunch ({ res, context, platform, identity, resource, clientIp, origin }) {
   const material = resource.kind === 'pdf'
     ? await getDocumentForPlatform(resource.id, platform.id)
@@ -276,6 +295,18 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
     ? 'Este material está archivado: sigue funcionando en las actividades existentes, pero ya no aparece en el selector.'
     : null
 
+  // El marcador de reanudación viaja en el bootstrap: el visor arranca en el
+  // punto correcto sin ninguna petición extra. La clave `progress` sólo existe
+  // para alumnos; su ausencia le dice al visor que tampoco debe guardar.
+  const progress = context.isInstructor
+    ? undefined
+    : await getProgress({
+      platformId: platform.id,
+      userSub: context.sub,
+      resourceKind: resource.kind,
+      resourceId: material.id
+    })
+
   if (resource.kind === 'pdf') {
     const documentSize = material.size_bytes === null || material.size_bytes === undefined
       ? Number.NaN
@@ -292,6 +323,7 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
             pageCount: material.page_count
           },
           user: { name: context.name, identity, ip: clientIp },
+          session: sessionAudit(sessionToken),
           returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
           contentUrl: `${origin}/documents/${material.id}/content`,
           downloadUrl: downloadAvailable
@@ -300,7 +332,10 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
           downloadHelp: downloadAvailable
             ? null
             : 'Este PDF es demasiado grande para generar una copia marcada. Sigue disponible en el visor.',
-          notice: archivedNotice
+          notice: archivedNotice,
+          ...(context.isInstructor
+            ? {}
+            : { progress: progress ? { pageNumber: progress.pageNumber } : null })
         }
       })
     )
@@ -312,9 +347,13 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
         sessionToken,
         video: { id: material.id, title: material.title },
         user: { name: context.name, identity, ip: clientIp },
+        session: sessionAudit(sessionToken),
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
         playlistUrl: `${origin}/hls/${material.id}/index.m3u8`,
-        notice: archivedNotice
+        notice: archivedNotice,
+        ...(context.isInstructor
+          ? {}
+          : { progress: progress ? { positionSeconds: progress.positionSeconds } : null })
       }
     })
   )
@@ -348,6 +387,17 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
     resource: { kind: 'collection', id: collection.id }
   })
 
+  // Igual que en el material suelto: la clave `progress` sólo existe para
+  // alumnos, y trae también qué elemento de la colección estaba abierto.
+  const progress = context.isInstructor
+    ? undefined
+    : await getProgress({
+      platformId: platform.id,
+      userSub: context.sub,
+      resourceKind: 'collection',
+      resourceId: collection.id
+    })
+
   return res.type('html').send(
     await renderPage('collection.html', {
       bootstrap: {
@@ -359,8 +409,22 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
         },
         items: items.map(publicItem),
         user: { name: context.name, identity, ip: clientIp },
+        session: sessionAudit(sessionToken),
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
-        manifestUrl: `${origin}/collections/${collection.id}/manifest`
+        manifestUrl: `${origin}/collections/${collection.id}/manifest`,
+        ...(context.isInstructor
+          ? {}
+          : {
+              progress: progress
+                ? {
+                    itemId: progress.itemId,
+                    itemKind: progress.itemKind,
+                    itemPosition: progress.itemPosition,
+                    positionSeconds: progress.positionSeconds,
+                    pageNumber: progress.pageNumber
+                  }
+                : null
+            })
       }
     })
   )
@@ -410,13 +474,13 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
       // plataforma. Devolver varios sería otra semántica y otro resultado.
       materials = await resolveCollectionsForDeepLink(scope)
     } else if (kind === 'pdf') {
-      materials = (await listReadyDocumentsForDeepLink(scope)).map((row) => ({ ...row, kind: 'pdf' }))
+      materials = (await listInsertableDocumentsForDeepLink(scope)).map((row) => ({ ...row, kind: 'pdf' }))
     } else {
-      materials = (await listReadyVideosForDeepLink(scope)).map((row) => ({ ...row, kind: 'video' }))
+      materials = (await listInsertableVideosForDeepLink(scope)).map((row) => ({ ...row, kind: 'video' }))
     }
 
     if (materials.length === 0) {
-      throw new LtiError('Ninguno de los materiales seleccionados está disponible', { code: 'not_ready' })
+      throw new LtiError('Ninguno de los materiales seleccionados se puede insertar', { code: 'not_insertable' })
     }
 
     const jwt = await buildDeepLinkingResponse({

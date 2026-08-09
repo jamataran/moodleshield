@@ -124,11 +124,25 @@ test('un diálogo no arrastra el returnValue de la vez anterior', async () => {
   // la especificación cierra «sin resultado», no con cadena vacía. Un helper que
   // resuelve mirando `returnValue === 'ok'` interpretaría entonces el Escape de
   // hoy como el «Aceptar» de ayer — y askConfirm protege borrados de material.
+  // El visor del alumno abre su aviso legal con un helper propio en
+  // `assets/dialog.js`, para no arrastrar los 70 KB del catálogo. Al haber dos
+  // puertas, las dos tienen que limpiar igual, y nadie más puede abrirse la suya.
+  const abridores = ['assets/catalog.js', 'assets/dialog.js']
+  for (const modulo of abridores) {
+    const fuente = await readFile(path.join(uiDir, modulo), 'utf8')
+    assert.match(fuente, /returnValue\s*=\s*''[\s\S]{0,120}?showModal\(\)/,
+      `${modulo}: hay que limpiar returnValue antes de showModal()`)
+  }
+
+  for (const file of await uiFiles('.js')) {
+    const relativo = path.relative(uiDir, file).split(path.sep).join('/')
+    if (abridores.includes(relativo)) continue
+    const fuente = stripCommentsAndStrings(await readFile(file, 'utf8'))
+    assert.doesNotMatch(fuente, /showModal\(\)/,
+      `${relativo} debe abrir por el helper, no con showModal() directo`)
+  }
+
   const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
-
-  assert.match(code, /returnValue\s*=\s*''[\s\S]{0,120}?showModal\(\)/,
-    'quien abre un diálogo debe limpiar returnValue antes de showModal()')
-
   for (const nombre of ['askText', 'askConfirm']) {
     const inicio = code.indexOf(`function ${nombre} (`)
     assert.notEqual(inicio, -1, `falta ${nombre}`)
@@ -247,8 +261,35 @@ test('el catálogo distingue lo compartido de lo propio y no ofrece acciones aje
   }
 })
 
-test('la cabecera de una actividad compuesta prioriza el título y compacta la monitorización', async () => {
+test('el visor del alumno reserva el alto de la pantalla para el contenido', async () => {
+  // La pantalla de estudio es la del material. Cada franja de cromo se descuenta
+  // de su alto, y dentro del iframe de Moodle ese alto ya llega recortado: el
+  // visor asume 100dvh y no negocia nada con el padre, así que lo que sobra se
+  // corta en vez de hacer scroll.
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /body\.viewer\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)/s,
+    'el visor sólo puede gastar UNA fila en cromo')
+  assert.match(css, /\.viewer-topbar\s*\{[^}]*display:\s*flex/s,
+    'atrás, aviso, identidad y plegado comparten una única barra')
+  assert.match(css, /body\.is-panel-hidden \.viewer-sidebar\s*\{[^}]*display:\s*none/s,
+    'el panel plegado tiene que salir también del árbol de accesibilidad')
+
+  for (const page of ['player.html', 'pdf.html', 'collection.html']) {
+    const html = await readFile(path.join(uiDir, page), 'utf8')
+    assert.doesNotMatch(html, /class="legal-warning"/,
+      `${page}: el aviso legal ya no puede ocupar una franja propia`)
+    const aside = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'))
+    assert.match(aside, /id="title"/, `${page}: el título encabeza el panel, no la barra`)
+    assert.match(aside, /id="status"/,
+      `${page}: el estado no puede robarle una línea al contenido`)
+  }
+
   const html = await readFile(path.join(uiDir, 'collection.html'), 'utf8')
+  const aside = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'))
+  for (const id of ['prev', 'position', 'next']) {
+    assert.ok(aside.includes(`id="${id}"`),
+      `la navegación entre materiales va junto a la lista que ya dice dónde estás`)
+  }
   assert.match(html, /id="resource-kind"\s+hidden/, 'el alumno no debe ver la etiqueta Colección')
   assert.doesNotMatch(html, />\s*Colección\s*</, 'Colección no es información útil para el alumno')
   assert.match(html, /Material de la actividad/, 'la navegación móvil debe hablar de la actividad')
@@ -258,16 +299,37 @@ test('la cabecera de una actividad compuesta prioriza el título y compacta la m
 
   const shell = await readFile(path.join(uiDir, 'assets/viewer-shell.js'), 'utf8')
   assert.match(shell, /kindEl\.hidden\s*=\s*!kindLabel/, 'una etiqueta vacía debe liberar su espacio')
+})
 
-  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
-  assert.match(css, /\.viewer-monitoring\s*\{[^}]*display:\s*flex/s,
-    'monitorización y usuario deben compartir una línea')
-  assert.match(css, /\.viewer-monitoring\s*\{[^}]*grid-column:\s*3/s,
-    'la monitorización debe conservar la columna derecha aunque Atrás esté oculto')
-  assert.match(css, /\.viewer-heading\s*\{[^}]*grid-column:\s*2/s,
-    'el título debe conservar la columna central aunque Atrás esté oculto')
-  assert.match(css, /\.viewer-monitoring strong::after\s*\{[^}]*content:\s*" ·"/s,
-    'falta el separador inline entre estado y usuario')
+test('el aviso legal completo está a un clic y trae los datos de la sesión', async () => {
+  // Encoger el aviso sólo es aceptable si la advertencia sigue permanentemente
+  // en pantalla y el texto completo está a un clic, acompañado de los datos
+  // concretos de esta sesión: eso es lo que lo hace verificable en vez de
+  // decorativo.
+  for (const page of ['player.html', 'pdf.html', 'collection.html']) {
+    const html = await readFile(path.join(uiDir, page), 'utf8')
+    assert.match(html, /id="legal-chip"[^>]*aria-haspopup="dialog"/,
+      `${page}: el chip debe anunciar que abre un diálogo`)
+    assert.match(html, /<dialog id="legal-dialog"/, `${page}: falta el diálogo del aviso`)
+    assert.ok(html.includes('id="legal-audit"'), `${page}: falta la lista de datos registrados`)
+  }
+
+  const shell = await readFile(path.join(uiDir, 'assets/viewer-shell.js'), 'utf8')
+  assert.match(shell, /abrirDialogo\(legalDialog\)/,
+    'el chip debe abrir por el helper que limpia returnValue')
+  for (const etiqueta of ['Dirección IP', 'Inicio de la sesión', 'Referencia de auditoría']) {
+    assert.ok(shell.includes(etiqueta), `el detalle de la sesión debe incluir «${etiqueta}»`)
+  }
+  // LTI 1.3 no tiene ningún claim de documento de identidad: si el Moodle no
+  // manda el parámetro personalizado, hay que decirlo en vez de dejar el hueco.
+  assert.match(shell, /No facilitado por el aula virtual/,
+    'sin identificador hay que decirlo, no enseñar un vacío')
+
+  const routes = await readFile(path.join(uiDir, '../lti/routes.js'), 'utf8')
+  assert.match(routes, /reference:\s*session\.jti/,
+    'la referencia que ve el alumno es el jti que se escribe en view_event.session_jti')
+  assert.equal((routes.match(/session: sessionAudit\(sessionToken\)/g) ?? []).length, 3,
+    'los tres lanzamientos de alumno deben enviar los datos de la sesión')
 })
 
 test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua calmada', async () => {
@@ -307,10 +369,13 @@ test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua ca
 
   assert.match(css, /container:\s*video-player\s*\/\s*inline-size/,
     'los controles deben adaptarse al ancho real del reproductor')
-  assert.match(css, /\.video-icon-button svg text\s*\{[^}]*fill:\s*currentColor[^}]*paint-order:\s*stroke fill/s,
-    'el número 10 debe conservar contraste sobre el fondo y sobre la flecha')
-  assert.doesNotMatch(css, /\.video-icon-button svg text\s*\{[^}]*fill:\s*#090b0f/s,
-    'el número 10 no puede volver a dibujarse negro sobre el reproductor')
+  // El «10» de los saltos va dibujado como trazados vectoriales: un <text> SVG
+  // a este tamaño depende de la fuente del sistema y renderiza distinto (y
+  // peor) en cada navegador.
+  assert.doesNotMatch(code, /ICONS\s*=[\s\S]*?<text/,
+    'los iconos del reproductor no deben volver a depender de <text> SVG')
+  assert.doesNotMatch(css, /\.video-icon-button svg text/,
+    'sin <text> en los iconos, su regla CSS es código muerto')
   assert.match(css, /@media \(pointer: coarse\)[\s\S]*?\.video-timeline\s*\{[^}]*height:\s*2rem/,
     'la barra necesita un objetivo táctil cómodo')
   assert.doesNotMatch(css, /\.video-volume-group\s*\{\s*display:\s*none/,

@@ -12,6 +12,8 @@ import { foldersRouter } from './routes/folders.js'
 import { materialsRouter } from './routes/materials.js'
 import { uploadsRouter } from './routes/uploads.js'
 import { hlsRouter, mediaRouter } from './routes/hls.js'
+import { progressRouter } from './routes/progress.js'
+import { contentApiRouter } from './routes/content-api.js'
 import { healthRouter } from './routes/health.js'
 import { renderPage, uiDir } from './ui/render.js'
 import { adminRouter } from './admin/routes.js'
@@ -81,6 +83,7 @@ export async function createApp () {
   app.use(express.json({ limit: config.http.bodyLimit }))
 
   app.use(healthRouter)
+  app.use('/api/v1', contentApiRouter)
   app.use('/admin', adminRouter)
   app.use('/lti', ltiRouter)
   app.use('/materials', materialsRouter)
@@ -90,6 +93,7 @@ export async function createApp () {
   app.use('/videos', videosRouter)
   app.use('/documents', documentsRouter)
   app.use('/hls', hlsRouter)
+  app.use('/progress', progressRouter)
   // En producción los segmentos los sirve nginx y esta ruta no existe. Fuera de
   // producción se monta siempre, incluso con delivery='signed', para poder
   // probar la firma secure_link sin levantar el proxy: la valida el propio Node.

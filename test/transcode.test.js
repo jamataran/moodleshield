@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { markFilter, MARK_GEOMETRY, runProcess } from '../src/media/transcode.js'
+import { markFilter, MARK_GEOMETRY, runProcess, chooseOutputFps, colorFilters } from '../src/media/transcode.js'
 
 test('las marcas A y B están en lados opuestos, a la misma altura', () => {
   const a = markFilter('A', 0.06)
@@ -37,6 +37,47 @@ test('una variante desconocida no genera un filtro silenciosamente inválido', (
   // Cualquier valor que no sea 'A' se trata como la marca izquierda; lo que no
   // puede pasar es que se genere un filtro vacío.
   assert.ok(markFilter('B').startsWith('drawbox='))
+})
+
+test('los fps de salida siguen a la fuente y mantienen el GOP entero', () => {
+  assert.equal(chooseOutputFps(23.976), 24)
+  assert.equal(chooseOutputFps(25), 25)
+  assert.equal(chooseOutputFps(29.97), 30)
+  assert.equal(chooseOutputFps(30), 30)
+  // Por encima de 30 se divide entre dos para conservar la cadencia.
+  assert.equal(chooseOutputFps(60), 30)
+  assert.equal(chooseOutputFps(59.94), 30)
+  assert.equal(chooseOutputFps(50), 25)
+  assert.equal(chooseOutputFps(120), 30)
+  // Un screencast a pocos fps no se infla artificialmente.
+  assert.equal(chooseOutputFps(15), 15)
+})
+
+test('sin fps fiables de la fuente se cae al valor configurado', () => {
+  assert.equal(chooseOutputFps(null, 24), 24)
+  assert.equal(chooseOutputFps(0, 24), 24)
+  assert.equal(chooseOutputFps(NaN, 24), 24)
+  assert.equal(chooseOutputFps(undefined, 25), 25)
+})
+
+test('una fuente HDR se tonemapea a SDR BT.709', () => {
+  for (const colorTransfer of ['smpte2084', 'arib-std-b67']) {
+    const chain = colorFilters({ colorTransfer, colorSpace: 'bt2020nc' })
+    assert.ok(chain.some((f) => f.startsWith('tonemap=')), `falta tonemap para ${colorTransfer}`)
+    assert.equal(chain.at(-1), 'format=yuv420p', 'la cadena debe acabar en 8 bits')
+  }
+})
+
+test('una fuente SDR bt709 o sin etiquetar no se toca (sólo se etiqueta la salida)', () => {
+  assert.deepEqual(colorFilters({ colorTransfer: 'bt709', colorSpace: 'bt709' }), [])
+  assert.deepEqual(colorFilters({ colorTransfer: null, colorSpace: null }), [])
+  assert.deepEqual(colorFilters({}), [])
+  assert.deepEqual(colorFilters(), [])
+})
+
+test('una fuente SD (bt601) se convierte a bt709', () => {
+  assert.deepEqual(colorFilters({ colorTransfer: 'smpte170m', colorSpace: 'smpte170m' }), ['colorspace=bt709'])
+  assert.deepEqual(colorFilters({ colorSpace: 'bt470bg' }), ['colorspace=bt709'])
 })
 
 test('AbortSignal termina un proceso hijo sin esperar a que acabe solo', async () => {

@@ -63,6 +63,22 @@ export function listReadyVideosForDeepLink ({ ids, platformId, ownerSub }) {
 }
 
 /**
+ * Un material nuevo puede enlazarse desde Moodle mientras el worker lo
+ * prepara. El launch no sirve bytes hasta que exista `active_revision_id`.
+ */
+export function listInsertableVideosForDeepLink ({ ids, platformId, ownerSub }) {
+  if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
+  return many(
+    `SELECT m.id, m.title, m.description
+       FROM video m
+      WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}
+        AND m.archived_at IS NULL
+        AND (m.active_revision_id IS NOT NULL OR m.status IN ('queued','processing'))`,
+    [platformId, ownerSub, ids]
+  )
+}
+
+/**
  * Alta de un vídeo nuevo: material lógico, revisión 1 y trabajo nacen o fallan
  * juntos. Un fallo aquí no deja ni fila visible ni fichero encolado.
  */
