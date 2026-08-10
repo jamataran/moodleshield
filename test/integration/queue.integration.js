@@ -20,7 +20,8 @@ import {
   completeJob,
   failJob,
   heartbeatJob,
-  reapExpiredJobs
+  reapExpiredJobs,
+  releaseJob
 } from '../../src/queue/postgres.js'
 import { getActiveRevision } from '../../src/services/revisions.js'
 
@@ -105,6 +106,46 @@ test('un lease expirado se recupera y el worker antiguo queda cercado', async ()
     completeJob({ jobId: first.id, materialId: videoId, revisionId: first.revision_id, workerId: oldWorker, meta: {} }),
     LostLeaseError
   )
+})
+
+test('el apagado ordenado libera el lease y el trabajo se retoma sin gastar intentos', async () => {
+  const videoId = await createQueued()
+  const worker = randomUUID()
+  const job = await claimJob({ workerId: worker, leaseSeconds: 90 })
+  assert.equal(job.video_id, videoId)
+
+  // Es lo que hace el worker al recibir SIGTERM a mitad de un trabajo
+  // (WorkerShutdownError → releaseJob): devolverlo a la cola tal cual.
+  assert.equal(await releaseJob({
+    jobId: job.id,
+    materialId: videoId,
+    revisionId: job.revision_id,
+    workerId: worker,
+    reason: 'apagado ordenado (test)'
+  }), true)
+
+  const row = await one('SELECT status, attempts, worker_id, lease_expires_at FROM transcode_job WHERE id = $1', [job.id])
+  assert.equal(row.status, 'pending')
+  assert.equal(row.attempts, job.attempts, 'liberar no es fallar: no gasta intentos')
+  assert.equal(row.worker_id, null)
+  assert.equal(row.lease_expires_at, null)
+  // La revisión vuelve a la cola, no queda colgada en processing.
+  const revision = await one('SELECT status FROM video_revision WHERE id = $1', [job.revision_id])
+  assert.equal(revision.status, 'queued')
+
+  // Otro worker lo retoma con normalidad y lo termina.
+  const relief = randomUUID()
+  const resumed = await claimJob({ workerId: relief, leaseSeconds: 90 })
+  assert.equal(resumed.id, job.id)
+  await completeJob({
+    jobId: resumed.id, materialId: videoId, revisionId: resumed.revision_id, workerId: relief, meta: { segmentCount: 5 }
+  })
+  assert.equal((await getActiveRevision({ kind: 'video', materialId: videoId }))?.id, resumed.revision_id)
+
+  // Y un releaseJob de un worker que ya no posee el trabajo es un no-op.
+  assert.equal(await releaseJob({
+    jobId: job.id, materialId: videoId, revisionId: job.revision_id, workerId: worker, reason: 'tardío'
+  }), false)
 })
 
 test('un lease que agota intentos termina en failed en vez de ciclar para siempre', async () => {

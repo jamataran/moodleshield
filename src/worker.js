@@ -97,6 +97,12 @@ async function processJob (pipeline, job) {
   const key = `${kind}:${job.id}`
   active.set(key, controller)
   let heartbeatRunning = false
+  // Un blip de red a Postgres no debe matar una transcodificación de una hora:
+  // con lease de 90 s y latido de 20 s hay margen para varios fallos
+  // transitorios. Sólo se aborta cuando la pérdida es DEFINITIVA (otro worker
+  // posee el lease) o cuando el lease está a punto de agotarse sin renovar —
+  // seguir más allá arriesgaría publicar sin lease, que el fencing rechazaría.
+  let lastRenewedAt = Date.now()
 
   const heartbeat = setInterval(async () => {
     if (heartbeatRunning || controller.signal.aborted) return
@@ -107,10 +113,21 @@ async function processJob (pipeline, job) {
         workerId,
         leaseSeconds: config.transcode.leaseSeconds
       })
+      lastRenewedAt = Date.now()
       if (state.cancelRequested) controller.abort(new JobCancellationError())
     } catch (err) {
-      log.warn({ err }, 'No se pudo renovar el lease; se detiene el proceso')
-      controller.abort(err)
+      if (err instanceof LostLeaseError) {
+        log.warn({ err }, 'El lease pertenece a otro worker; se detiene el proceso')
+        controller.abort(err)
+      } else {
+        const remainingMs = config.transcode.leaseSeconds * 1000 - (Date.now() - lastRenewedAt)
+        if (remainingMs <= config.transcode.heartbeatMs) {
+          log.warn({ err }, 'El lease expira sin poder renovarlo; se detiene el proceso')
+          controller.abort(err)
+        } else {
+          log.warn({ err, remainingMs }, 'Fallo transitorio al renovar el lease; se reintentará')
+        }
+      }
     } finally {
       heartbeatRunning = false
     }
