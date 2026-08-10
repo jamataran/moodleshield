@@ -23,34 +23,29 @@ El mapa general y las dependencias históricas están en
 
 | # | Tarea | Fase | Estado |
 |---|---|---|---|
-| [T03](backlog/T03-https-y-tunel.md) | HTTPS público con túnel | 1 · HTTPS | 🟡 El servidor Moodle resuelve la ruta privada Tailscale y no conecta |
-| [T08](backlog/T08-worker-cola.md) | Worker y cola de trabajos | 3 · Vídeo | 🟡 Un crash puede dejar el job en `running` indefinidamente; lo cierra T22 |
-| [T11](backlog/T11-player-overlay.md) | Player con overlay del DNI | 5 · Player | 🟡 Falta matriz real de navegadores y recuperación |
-| [T13](backlog/T13-trazado-forense.md) | Trazado forense de filtraciones | 7 · Forense | 🔴 El algoritmo de lectura actual es incorrecto |
-| [T14](backlog/T14-despliegue-portainer.md) | Despliegue con Portainer | 8 · Producción | 🟡 Falta validación en servidor y persistencia tras reinicio |
-| [T15](backlog/T15-cicd-gitops.md) | CI/CD y GitOps | 8 · Producción | 🟡 Test funciona; falta promoción real por tag a producción |
-| [T16](backlog/T16-observabilidad-hardening.md) | Observabilidad y hardening | 8 · Producción | 🟡 Faltan backup/restore/alertas y todavía se registran queries con tokens |
-| [T19](T19-consola-admin-instancias-moodle.md) | Consola admin multiinstancia | 9 · Administración | ⬜ Diseño técnico listo; existe API bearer básica |
-| [T22](backlog/T22-fiabilidad-pipeline-aislamiento.md) | Fiabilidad y aislamiento multiinstancia | 9 · Fundamentos | ⬜ **Prioritaria**; corrige carreras y cierra T08 |
+| [T24](backlog/T24-aislamiento-material-entre-profesores.md) | Aislamiento del material entre profesores | 9 · Seguridad | 🟡 **Prioritaria**. La referencia firmada se emite y se verifica en modo **aviso**; falta pasar a `enforce` |
+| [T11](backlog/T11-player-overlay.md) | Player con overlay del DNI | 5 · Player | 🟡 Manejo de errores arreglado y probado; falta la matriz de navegadores dentro de un Moodle real |
+| [T16](backlog/T16-observabilidad-hardening.md) | Observabilidad y hardening | 8 · Producción | 🟡 Scripts de copia y restauración hechos; falta programarla y probar una restauración |
+| [T22](backlog/T22-fiabilidad-pipeline-aislamiento.md) | Fiabilidad del pipeline | 9 · Fundamentos | 🟡 La fiabilidad está hecha y probada; el aislamiento se escindió a T24 |
 
 ## Orden recomendado
 
-La etapa de biblioteca y composición está terminada: T17, T18, T20 y T21 están
-cerradas. Lo que queda son los fundamentos y la línea de producción.
+La etapa de biblioteca y composición está terminada (T17, T18, T20, T21), y las dos
+iteraciones de seguridad de agosto de 2026 cerraron T03, T08, T13, T14, T15 y T19.
+Lo que queda **no es escribir código**, es cerrar:
 
 ```text
-T22 ──▶ (base del pipeline y del aislamiento)
-T19 ──▶ (administración multiinstancia, en paralelo, en otra rama)
-T03 · T11 · T13 · T14–T16 ──▶ cierre de MVP y producción
+T24 ──▶ pasar la referencia firmada de «aviso» a «exigir»
+T16 ──▶ programar la copia y probar una restauración
+T11 ──▶ matriz de navegadores dentro de un Moodle real
+T22 ──▶ auditoría formal de la parte de pipeline (ya verificada por pruebas)
 ```
 
-1. **T22** sigue siendo la prioridad: carpetas, PDF, colecciones y revisiones ya
-   están construidas encima, pero la ficha de fiabilidad no está cerrada.
-2. **T19** avanza en paralelo y llega por PR.
-3. **T03** es un bloqueo operativo independiente: el keyset debe ser alcanzable
-   desde el proceso PHP de Moodle.
-4. **T11, T13 y T14–T16** forman la línea de cierre del MVP y de producción; no
-   deben confundirse con las funcionalidades nuevas, que ya están.
+1. **T24** es la prioridad: es lo único que queda del hallazgo abierto más grave
+   (F-05/V-02). El trabajo pendiente es observar el log de avisos hasta comprobar
+   que ninguna actividad viva se quedaría fuera, y entonces cambiar la variable.
+2. **T16** es media hora de cron y una restauración de prueba.
+3. **T11** necesita un Moodle real; la ficha trae la checklist paso a paso.
 
 ## Completadas
 
@@ -69,8 +64,16 @@ T03 · T11 · T13 · T14–T16 ──▶ cierre de MVP y producción
 | [T18](done/T18-colecciones-una-actividad.md) | Una colección = un `content_item`; componer, editar y reordenar desde la interfaz |
 | [T20](done/T20-materiales-pdf.md) | Range 206/416, `/media/documents/**` 403, corrupto y cifrado a `failed`; 8/8 pruebas de PDF con las herramientas reales |
 | [T21](done/T21-versionado-sustitucion-materiales.md) | Sustitución sin cambiar UUID, activación atómica, rollback y purga con gracia; ocho vídeos migrados reproducidos de extremo a extremo por nginx |
+| [T03](done/T03-https-y-tunel.md) | HTTPS público con reverse proxy; cerrada por la operación real de producción, que sirve actividades Moodle |
+| [T08](done/T08-worker-cola.md) | Lease, heartbeat tolerante a fallos transitorios, reaper periódico y apagado ordenado con pruebas |
+| [T13](done/T13-trazado-forense.md) | El lector del trazado corregido: regresión sobre el fallo original y e2e con ffmpeg real |
+| [T14](done/T14-despliegue-portainer.md) | Producción desplegada hoy con este mecanismo (v1.0.5), post-mortem del 28P01 incluido |
+| [T15](done/T15-cicd-gitops.md) | Promoción por tag ejercitada cinco veces (v1.0.0 … v1.0.5), mismo digest de test a prod |
+| [T19](done/T19-consola-admin-instancias-moodle.md) | Consola completa: sesión, CSRF, límite de intentos, comprobación remota SSRF-segura y auditoría |
 
-T01–T12 se auditaron el 5 de agosto de 2026; T17, T18, T20 y T21, el 6 de agosto.
+T01–T12 se auditaron el 5 de agosto de 2026; T17, T18, T20 y T21, el 6 de agosto;
+T03, T08, T13, T14, T15 y T19, el 10 de agosto, durante la segunda iteración de
+seguridad.
 Cada ficha cerrada contiene una sección **Cierre** con la evidencia concreta y la
 lista de desviaciones respecto a su diseño.
 

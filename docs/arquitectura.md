@@ -103,7 +103,10 @@ Lo importante de este recorrido es lo que **no** aparece: ffmpeg.
             · emite token de sesión (HMAC, 4 h)
             → HTML del player con el token embebido
               (el visionado NO se registra aquí: ver «Cuándo se registra»)
-6.  player  → GET /hls/<id>/index.m3u8?st=<token>
+6.  player  → GET /hls/<id>/index.m3u8
+            · hls.js manda el token en `Authorization: Bearer` (xhrSetup)
+            · el HLS nativo de Safari/iOS, que no puede poner cabeceras, pide
+              antes POST /hls/<id>/ticket y usa `?pt=<ticket de 90 s>`
 7.  app     · deriva el patrón: HMAC(WATERMARK_SECRET, "sub:videoId:n")
             · reescribe la playlist de A: cada segmento apunta a A o a B
             · firma cada URL (secure_link) y la URI de la clave

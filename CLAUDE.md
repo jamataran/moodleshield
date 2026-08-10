@@ -90,6 +90,13 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
 - **El UUID lógico de un material es la identidad que conoce Moodle** (viaja en
   `custom.resourceid` / `custom.videoId`). Mover, renombrar o sustituir el
   fichero **nunca** lo cambia. Cambiarlo rompe todas las actividades desplegadas.
+- **Junto al UUID viaja su firma, `custom.resourcesig`** (T24): demuestra que la
+  referencia la emitimos nosotros para el propietario que consta en la fila, y es
+  lo que impide que un profesor abra material ajeno escribiendo un UUID a mano.
+  Se firma con `SESSION_SECRET`, que por tanto es **permanente** también por este
+  motivo: rotarlo invalidaría la firma de todas las actividades ya insertadas, no
+  sólo las sesiones. `LAUNCH_RESOURCE_SIGNATURE` controla si falta firma se avisa
+  (`warn`, por defecto) o se rechaza (`enforce`).
 - **`platform_id` separa instancias Moodle; `owner_sub` separa profesores.** Las
   dos condiciones salen siempre de la sesión LTI, nunca del body ni de la query.
   Un UUID ajeno responde **404**, no 403. `owner_sub` tiene **una** puerta:
@@ -101,8 +108,12 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
 - **`WATERMARK_SECRET` es permanente.** Cambiarlo invalida todas las trazas.
 - **Publicación atómica.** El worker escribe en `.staging/` y publica con un
   único `rename`. Un directorio publicado es inmutable.
-- **Nada de cookies.** Sesiones por token HMAC en `Authorization: Bearer` o
-  `?st=` (ADR-003).
+- **Nada de cookies, y ningún token de sesión en la URL.** Las sesiones son
+  tokens HMAC que viajan **sólo** en `Authorization: Bearer` (ADR-003 + T23). El
+  antiguo `?st=` se retiró: lo único que puede ir en una URL es el ticket de
+  reproducción `?pt=` del HLS nativo de Safari/iOS —90 segundos, un solo vídeo y
+  una sola revisión, porque ese camino no puede poner cabeceras— y la firma de
+  segmento que valida nginx.
 
 ## Mapa del código
 
@@ -158,7 +169,8 @@ npm run test:integration:local
 
 - `custom` de Moodle puede llegar **normalizado a minúsculas**: acepta siempre
   `videoId` y `videoid`, `resourceKind` y `resourcekind`.
-- `hls.js` **no puede añadir cabeceras** a playlist ni segmentos: de ahí `?st=`.
+- `hls.js` **sí** puede añadir cabeceras (por `xhrSetup`), y es lo que usa. Quien
+  no puede es el **HLS nativo** de Safari/iOS: de ahí el ticket `?pt=`, y sólo ahí.
 - Moodle **nunca avisa** de que se borró una actividad. No existe callback.
 - El GOP fijo (`keyint`, `scenecut=0`) es lo que hace intercambiables A y B. Si
   `assertVariantsAligned` falla, la culpa casi siempre es del GOP.

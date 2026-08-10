@@ -1560,7 +1560,7 @@ procesos.
 **Por qué entra en este plan.** El sistema no impide la copia; la hace atribuible. Si
 el trazado no funciona, no hay compensación y todo lo demás protege un contenido que,
 una vez filtrado, sigue sin señalar a nadie. La ficha existe en
-[`tasks/backlog/T13-trazado-forense.md`](tasks/backlog/T13-trazado-forense.md),
+[`tasks/done/T13-trazado-forense.md`](tasks/done/T13-trazado-forense.md),
 marcada 🔴.
 
 **Criterios de aceptación** (además de los que ya tenga la ficha)
@@ -1733,22 +1733,22 @@ He verificado cada uno contra el código actual antes de tocar nada.
 | Hallazgo | Estado | Dónde |
 |---|---|---|
 | **V-01** token en la URL | ✅ Implementado (T23) | `session.js`, `routes/hls.js`, `ui/assets/video-component.js` — probar HLS nativo iOS |
-| **V-02** material de otro profesor | ⏸️ Diferido (T24) | Ver 8.3 — migración + firma + modo gracia |
+| **V-02** material de otro profesor | ✅ Fase de aviso (T24) | `lti/resource-signature.js`, migración `011`; `LAUNCH_RESOURCE_SIGNATURE=warn`. Falta activar `enforce` (8.7) |
 | **V-03** BIND_ADDRESS publica Postgres | ✅ Ya estaba | `infra/test/compose.yml` ya usa `DB_BIND_ADDRESS` |
 | **V-04** tokens en logs | ✅ Implementado (T27) | `logger.js` (serializador `req`), nginx `log_format sin_query` |
 | **V-05** rol de profesor por regex | ✅ Implementado (T28) | `lti/claims.js` — lista blanca exacta |
 | **V-06** upsert de plataforma sin rastro | ✅ Implementado (T28) | `lti/routes.js` — alta 409, bearer timing-safe, rate limit, longitud mínima |
-| **V-07** XSS por el título | ✅ Implementado (T32, parcial) | `ui/render.js` escapa `{{VAR}}`; nonce/`unsafe-inline` diferido (8.3) |
-| **V-08** pdfjs vulnerable | ⏸️ Diferido | Ver 8.3 — salto mayor 5→6 necesita probar el visor |
+| **V-07** XSS por el título | ✅ Implementado (T32) | `ui/render.js` escapa `{{VAR}}`; `script-src` ya no lleva `'unsafe-inline'` (8.7) |
+| **V-08** pdfjs vulnerable | ✅ Implementado | `pdfjs-dist` 6.2.108 (`npm audit`: 0); `/vendor` deja de ser `immutable` (8.7) |
 | **V-09** ciego ante enlace compartido | ⏸️ Diferido (T30/T31) | Ver 8.3 — subsistema `playback_grant` |
 | **V-10** secretos y URL pública en local | ✅ Ya estaba / ✅ (V-23) | Los secretos de local viven en `compose.yml` (dev, inseguros a propósito); `infra/local/.env` sigue versionado y lo vigila el gate CI (V-23) |
 | **V-11** entrega sin firma en producción | ✅ Implementado (T26, parcial) | `config.js` exige `signed` en prod; `app.js` no monta la ruta |
 | **V-12** firma de segmento sin ligadura | ⏸️ Diferido (T26) | Depende de V-13/T29 (IP fiable). Ver 8.3 |
 | **V-13** IP forense falsificable | ⏸️ Documentado (T29) | `proxy_headers.conf` — depende de la topología del túnel |
-| **V-14** SSRF en JWKS | ⏸️ Parcial (T33) | V-19 hecho; fetch runtime SSRF-safe diferido (8.3) |
+| **V-14** SSRF en JWKS | ✅ Implementado (T33) | `lti/jwks-cache.js` con `customFetch` SSRF-safe; guard bloqueante al guardar (8.7) |
 | **V-15** token de clave portador puro | ⏸️ Diferido (T35) | Rate limit por IP retirado (falso positivo con túnel, ver 8.5); ligadura sub/pid diferida (8.3) |
-| **V-16** permisos del árbol de medios | ✅ Ya estaba (parcial) | `bootstrap-host.sh` ya usa 755 con motivo; endurecer `key.bin` recomendado (8.3) |
-| **V-17** sin límites en nginx | ✅ Parcial (T25) | `client_max_body_size` acotado a la subida; `limit_req`/cuota diferidos (8.3) |
+| **V-16** permisos del árbol de medios | ✅ Implementado | `bootstrap-host.sh` usa 755 con motivo; `key.bin`/`key.info` se escriben `0600` |
+| **V-17** sin límites en nginx | ✅ Parcial (T25) | `client_max_body_size` acotado; `pids_limit` en los contenedores; `limit_req` de borde diferido (8.3) |
 | **V-18** launch HTML sin `Cache-Control` | ✅ Ya estaba | `lti/routes.js:104` fija `private, no-store` en todo el launch |
 | **V-19** caché JWKS no revalida la URL | ✅ Implementado (T33) | `lti/jwks-cache.js` — clave = id + jwks_url |
 | **V-20** confianza al primer `deployment_id` | ✅ Mitigado (T28) | `services/platforms.js` — tope de crecimiento |
@@ -1764,16 +1764,19 @@ He verificado cada uno contra el código actual antes de tocar nada.
 | **V-30** etiqueta del overlay forjable | 📝 Limitación documentada | Sin cambio de código; la traza es el patrón A/B |
 | **V-31** robustez | ✅ Implementado (T36) | `claims.js`, `frame-ancestors.js`, `media/run.js` |
 | **V-32** `authorizeCollection` sin propiedad | ✅ Implementado (T36) | `services/authorization.js` |
-| **V-33** contenedores/cabeceras sin endurecer | ✅ Parcial (T25) | `server_tokens off`; `cap_drop`/`read_only` diferidos (8.3) |
+| **V-33** contenedores/cabeceras sin endurecer | ✅ Parcial (T25) | `server_tokens off`, `no-new-privileges`, `pids_limit` y red interna sin salida para db y worker; `cap_drop`/`read_only` diferidos (8.3) |
 | **V-34** bloqueo del admin por inundación | ✅ Implementado (T35) | `admin/auth.js` — cuenta por IP |
-| **V-35** parámetros de scrypt fijos y bajos | ⏸️ Diferido | Ver 8.3 (bajo) |
+| **V-35** parámetros de scrypt fijos y bajos | ✅ Implementado | `admin/auth.js` y `config.js`: suelo y techo en vez de igualdad exacta |
 | **V-36** backticks en `release.yml` | ✅ Ya correcto | Los backticks están escapados (`\`` = literal), no es sustitución |
 | **V-37** deriva doc/código | ✅ Implementado (T34) | `CLAUDE.md` alineado con el código |
 
-Tareas del plan: **T23** ✅, **T24** ⏸️, **T25** parcial, **T26** parcial (V-11),
-**T27** ✅, **T28** ✅, **T29** documentado, **T30/T31** ⏸️, **T32** parcial,
-**T33** parcial (V-19), **T34** ✅ (salvo V-08), **T35** parcial, **T36** ✅,
-**T37** fuera de alcance, **T38** fuera de alcance, **T39** parcial (ver 8.4).
+Tareas del plan, tras la segunda iteración (10 de agosto de 2026, ver 8.7):
+**T23** ✅, **T24** 🟡 fase de aviso, **T25** parcial, **T26** parcial (V-11),
+**T27** ✅, **T28** ✅, **T29** documentado, **T30/T31** ⏸️, **T32** ✅,
+**T33** ✅, **T34** ✅, **T35** parcial, **T36** ✅, **T37/T13** ✅ el lector
+(ver ficha T13; la promesa forense completa sigue abierta), **T38** ✅ (llegó
+por ADR-017, no por esta auditoría), **T39** ✅ salvo las pruebas que dependen
+de features diferidas (8.4).
 
 ### 8.2 Cómo probar V-01/T23 antes de subir (IMPORTANTE)
 
@@ -1791,7 +1794,14 @@ El token de sesión ya **no** viaja en la URL. Verificaciones manuales:
 4. El PDF, el catálogo, las miniaturas, el manifest de colección y la descarga
    ya usaban `Authorization: Bearer`, así que no cambian.
 
-### 8.3 Lo que NO he implementado, y por qué (con recomendación)
+### 8.3 Lo que quedó fuera de la PRIMERA iteración, y por qué
+
+> **Leer con 8.7 delante.** Esta sección es el registro de lo que se dejó fuera
+> en la primera pasada (agosto de 2026, sobre v1.0.5) y de la recomendación que
+> se dio entonces. La **segunda iteración cerró la mayoría**: V-08, V-14, V-16,
+> V-35, T32 y la fase de aviso de V-02/T24, además de F-14 y del lector forense
+> de T13. Lo que sigue abierto de verdad está listado en 8.7; se conservan aquí
+> los razonamientos porque explican por qué cada cosa fue en el orden en que fue.
 
 - **V-02 / T24 — aislamiento por propietario en el launch.** No lo he tocado
   porque es el cambio con más impacto operativo del plan: rompe las actividades
@@ -1983,3 +1993,81 @@ resultado tenga sentido:
 
 No se tocó ninguna migración aplicada, ningún secreto de entorno ni ningún UUID
 lógico. La rama queda lista para probar y subir.
+
+### 8.7 Segunda iteración (10 de agosto de 2026)
+
+La primera pasada cerró el riesgo de aplicación, sesión y logs. Ésta cierra casi
+todo lo que 8.3 había dejado pendiente, arregla el trazador forense —que el
+README declaraba roto— y añade la funcionalidad de colecciones con material en
+cola. Todo sobre la misma rama, sin tocar ninguna migración aplicada, ningún
+secreto de entorno ni ningún UUID lógico.
+
+#### Lo que se cerró
+
+| Hallazgo | Qué se hizo |
+|---|---|
+| **F-07 / T13** · el lector forense clasificaba mal | Causa: el lector restaba la luminancia de la esquina derecha menos la izquierda, y como el **contenido** de las dos esquinas es distinto, esa diferencia aplastaba la señal de la marca — todos los bits salían iguales, con riesgo de señalar a un inocente. Nuevo `src/media/trace-reader.js`: cada región se clasifica contra su propia distribución temporal, o contra los artefactos A/B originales descifrados del disco. Con test de regresión sobre los datos literales del diagnóstico y una e2e con ffmpeg real |
+| **F-14** · purgar destruía la evidencia | Antes de borrar una revisión se escribe una **lápida forense** (ámbito del patrón, geometría, segmentos y la lista de quién la vio) fuera del directorio que la purga elimina; `tools/trace.mjs` sabe trazar desde ella. Y `legal_hold`, que existía en el esquema pero no se podía activar, ya tiene endpoint |
+| **V-02 / F-05 / T24** · material de otro profesor | Fase de **aviso** desplegada: `custom.resourcesig` firmado en el Deep Linking, verificado en el launch con `LAUNCH_RESOURCE_SIGNATURE` (`off`/`warn`/`enforce`, por defecto `warn`), migración `011` con `deep_link_grant`. Ficha propia: `docs/tasks/backlog/T24-…` |
+| **V-08 / F-09** · pdfjs vulnerable | `pdfjs-dist` 6.2.108 (`npm audit`: 0 vulnerabilidades). Y lo que hacía inútil el parche: `/vendor` se servía `immutable` 7 días **sin `?v=` en la URL**, así que un navegador con la versión vulnerable cacheada la habría seguido usando una semana después del despliegue |
+| **V-14 / T33** · SSRF en el JWKS | El fetch de runtime va por el mismo transporte SSRF-seguro que ya usaba la consola (`customFetch` de `jose`), y el guard pasó de aviso opcional a **bloqueante** al guardar — incluido el alta por API, que antes ni lo miraba |
+| **V-35** · scrypt | Suelo y techo en vez de igualdad exacta: un hash **más fuerte** ya se despliega sin tocar código |
+| **T32** · `unsafe-inline` en la CSP | Retirado de `script-src`. No había ni un `<script>` ejecutable en línea salvo el `onload=` del formulario de Deep Linking, que pasó a `/assets/autosubmit.js` |
+| **V-16** · permisos | `key.bin` y `key.info` se escriben `0600` |
+| **V-33 / F-10** · contenedores | `no-new-privileges` y `pids_limit` en los cuatro servicios de test y prod, y la red partida en dos: **`db` y `worker` sin salida a Internet**. El worker es justo quien abre ficheros hostiles con ffmpeg, qpdf y Ghostscript |
+| **T08** · worker | El heartbeat tolera fallos transitorios: un blip de red a Postgres ya no aborta una transcodificación de una hora. Y por fin hay prueba de que `stop_grace_period` supera `WORKER_SHUTDOWN_MS`, y del apagado ordenado |
+| **T11** · player | Un 401 dejó de ser «Problema de red; reintentando…» en bucle infinito: ahora corta con un mensaje de sesión caducada. Reintentos acotados con retardo creciente y guarda en la recuperación de medio |
+
+Además, funcionalidad pedida por el dueño: **las colecciones admiten material aún
+en cola**. El profesor ya no espera al worker para montar la actividad; el visor
+del alumno sondea el manifest y abre el material solo en cuanto se publica. El
+backend ya lo permitía —la revisión de una sesión de colección se resuelve en
+cada petición—, así que no hizo falta ni cambiar el esquema ni la autorización:
+un ítem en cola sigue dando 404 hasta que existe revisión activa.
+
+#### Lo que sigue abierto
+
+- **T24 en `enforce`.** La firma está desplegada, pero el modo que de verdad
+  cierra V-02 es `enforce`, y activarlo hoy rompería toda actividad insertada
+  antes de la firma. El camino está escrito en la ficha de T24: observar el
+  aviso hasta que deje de aparecer, y entonces cambiar la variable.
+- **V-09 / T30 / T31** · detección y revocación de sesiones compartidas. Sigue
+  siendo un subsistema nuevo y sigue sin empezar.
+- **V-12 / T26** · ligar la firma de segmento a la IP. Depende de la topología
+  (V-13) y cambia el manejo de cambios de red del reproductor.
+- **`read_only` y `cap_drop: [ALL]`.** Chocan con el arranque como root del
+  entrypoint, que baja a `node` con `su-exec`. Exige inventariar lo que ffmpeg y
+  Ghostscript escriben fuera de los volúmenes, y probarlo en un host Linux.
+- **El worker sigue recibiendo todos los secretos.** Comparte el bloque
+  `*app-env` con la aplicación, así que ve `SESSION_SECRET`, `LTI_ADMIN_TOKEN` y
+  las credenciales de administración que no necesita. Recortarlo exige que
+  `config.js` sepa qué rol arranca: hoy valida las credenciales de admin en
+  **todo** proceso de producción, así que quitárselas al worker le impediría
+  arrancar. Es un refactor con riesgo de dejar producción sin arrancar, y por eso
+  no se ha hecho a última hora.
+- **La promesa forense completa** (recorte de bordes, colusión, audio): el lector
+  está arreglado, la marca sigue viviendo sólo en dos esquinas del fotograma.
+  Códigos de Tardos y marca en el audio son línea de producto, no un arreglo.
+
+#### Verificación
+
+| Comprobación | Resultado |
+|---|---|
+| `npm run lint` | limpio |
+| `npm test` | 284 pruebas · 275 pasan · 9 saltadas · 0 fallan |
+| `DB_PORT=5432 npm run test:integration` | 91 pruebas · 91 pasan · 0 fallan |
+| `test/trace-reader.test.js` + `test/pdf-processing.test.js` dentro de `moodleshield/worker:local` | 19 · 19 pasan |
+| `npm audit` | 0 vulnerabilidades |
+| `docker compose config` de los tres entornos | los tres validan |
+
+Las 9 saltadas en el host son las que necesitan `qpdf`/`pdfinfo`/`gs` o `ffmpeg`:
+viven en la imagen del worker, que es donde se ejecutan y pasan.
+
+#### Antes de desplegar
+
+1. **El cambio de redes de los contenedores toca la topología**: desplegar
+   primero en test y comprobar que `app` sigue alcanzando el JWKS de Moodle.
+2. **Probar el visor de PDF** tras el salto a pdfjs 6.
+3. **Comprobar la consola del navegador dentro de Moodle**: `script-src` perdió
+   `'unsafe-inline'` y un bloqueo de CSP aparecería ahí.
+4. Dejar `LAUNCH_RESOURCE_SIGNATURE` en `warn` y mirar el log unos días.

@@ -260,8 +260,13 @@ asumir que se puede borrar o machacar— y en [`decisiones.md`](decisiones.md):
 - **`WATERMARK_SECRET` es permanente.** Cambiarlo invalida todas las trazas anteriores.
 - **Publicación atómica.** El worker escribe en `.staging/` y publica con un único `rename`.
   Un directorio publicado es inmutable.
-- **Nada de cookies.** Sesiones por token HMAC en `Authorization: Bearer` o `?st=`
-  ([ADR-003](decisiones.md)).
+- **Nada de cookies, y ningún token de sesión en la URL.** Sesiones por token HMAC que
+  viajan **sólo** en `Authorization: Bearer` ([ADR-003](decisiones.md) + T23). Lo único
+  que puede ir en una URL es el ticket `?pt=` del HLS nativo de Safari/iOS (90 s, un
+  vídeo, una revisión) y la firma de segmento que valida nginx.
+- **La referencia al material va firmada** (`custom.resourcesig`, T24): es lo que impide
+  que un profesor abra material ajeno escribiendo su UUID a mano. Se firma con
+  `SESSION_SECRET`, que por eso también es permanente.
 
 ---
 
@@ -272,8 +277,9 @@ Cada una de éstas costó tiempo de alguien. Léelas antes, no después.
 **`custom` de Moodle llega a veces en minúsculas.** Acepta siempre las dos formas:
 `videoId` y `videoid`, `resourceKind` y `resourcekind`.
 
-**`hls.js` no puede añadir cabeceras** a playlist ni segmentos. De ahí que el token viaje
-en `?st=` y no en `Authorization`.
+**`hls.js` sí puede añadir cabeceras**, por su `xhrSetup`, y es lo que hace: el token
+viaja en `Authorization: Bearer`. Quien no puede es el **HLS nativo** de Safari/iOS, que
+carga la playlist él solo; para ése existe el ticket corto `?pt=`, y sólo para ése.
 
 **Nada de `alert` / `confirm` / `prompt` en `src/ui/`.** Chrome y Edge los retiraron de los
 iframes cross-origin: dentro de Moodle no abren nada y el botón que dependa de ellos

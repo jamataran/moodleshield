@@ -12,7 +12,7 @@ No proprietary DRM, no per-view licensing, no shipping your videos to someone el
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
-[![Tests](https://img.shields.io/badge/tests-333-success)](docs/desarrollo.md#tests)
+[![Tests](https://img.shields.io/badge/tests-375-success)](docs/desarrollo.md#tests)
 [![No frontend frameworks](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
@@ -24,14 +24,15 @@ No proprietary DRM, no per-view licensing, no shipping your videos to someone el
 > **Version 0.x — read this before deploying it to real students.** The video pipeline, the
 > LTI integration and the library work and are tested. An
 > [internal security audit](docs/auditoria-seguridad-contenido-y-plan.md) from August 2026
-> found 16 findings; a later hardening pass closed the bulk of the application, session and
-> log risk (session token out of the URL, logs without tokens, signed delivery mandatory in
-> production — [detail](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)). But
-> **two findings still hit what this README promises directly**:
+> found 16 findings, and two hardening passes closed most of them
+> ([finding-by-finding detail](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)).
+> What **still affects what this README promises**:
 >
-> - **The forensic tracer is not reliable yet** (F-07). The A/B mechanism is built, but the
->   pattern reader misclassifies and the mark is removed by cropping the edges. **It must
->   not be used today to attribute a leak to a specific person.**
+> - **Attribution cannot be promised yet.** The A/B pattern reader was broken and is now
+>   fixed and tested, but the mark only lives in two corners of the frame: **cropping the
+>   edges removes it**, and two students comparing copies can forge a third that points at
+>   nobody (F-07). Use it to deter and to investigate; **not to sustain disciplinary
+>   proceedings**.
 > - **The development profile (`infra/local`) ships known secrets**, and they are now public
 >   (F-01). It's fine for `localhost` development; **never** expose it to the internet.
 >
@@ -94,13 +95,17 @@ Most likely source: Ana García Pérez (12345678Z) — 100.0% match.
 ```
 
 > [!CAUTION]
-> **That last part is not trustworthy yet.** The pipeline that produces the variants and
-> the divergent playlists is built and tested; the **reader** that interprets the pattern
-> back out is not — it misclassifies, and the mark disappears if the edges are cropped
-> ([T13](docs/README.md#hoja-de-ruta) and [F-07](docs/auditoria-seguridad-contenido-y-plan.md)).
-> Fixing it properly means collusion-resistant codes (Tardos), marks distributed across the
-> frame, and a fail-closed decode test battery. It's the single most valuable contribution
-> anyone could make right now.
+> **Read that last part carefully.** The pipeline that produces the variants and the
+> divergent playlists is built and tested, and the **reader** that interprets the pattern
+> back out — which until August 2026 misclassified and could point at an innocent student —
+> is now fixed and covered by tests, including an end-to-end one with real ffmpeg
+> ([T13](docs/tasks/done/T13-trazado-forense.md)).
+>
+> What has **not** changed is where the mark lives: two boxes in the lower corners.
+> Cropping the edges still removes it, collusion still works, and an audio-only extract
+> carries no pattern at all. Closing that means marks distributed across the frame and
+> collusion-resistant codes (Tardos): it is the single most valuable contribution anyone
+> could make right now, and until then attribution cannot be promised.
 
 **CPU cost per view: zero ffmpeg.** Playback is rewriting a text file (microseconds) and
 serving static files with nginx. It makes no difference whether you have 10 students or
@@ -140,7 +145,7 @@ the contract:
 | Per-student access control | ✅ | ✅ |
 | Encryption in transit and at rest | ✅ AES-128 per revision | ✅ (never exposed as a static file) |
 | Visible deterrent | ✅ Overlay | ✅ Overlay + stamped download |
-| **Attributing a leak** | 🚧 **A/B pattern built, reader not reliable yet** | ❌ **No** — the stamp is removable |
+| **Attributing a leak** | 🚧 **Works if the video arrives intact**: A/B pattern and reader are tested, but cropping the edges or collusion defeat it | ❌ **No** — the stamp is removable |
 | Preventing the copy | ❌ Not DRM | ❌ Not DRM |
 
 **Protects against:** forwarding a video link · downloading a loose `.ts` · pulling an
@@ -168,7 +173,7 @@ self-hosted, auditable foundation with no per-student cost to build that on, thi
 | Model | Self-hosted, AGPL-3.0 | Paid SaaS | SaaS / on-prem, licensed | SaaS |
 | Where your videos live | **Your server** | Their cloud | Their cloud | Their cloud |
 | Cost per view | **€0** | Per GB / plan | Per licence | Plan |
-| Per-student forensic watermark | 🚧 **A/B in pixels, in development** | ✅ (dynamic, plan-dependent) | Product-dependent | ❌ |
+| Per-student forensic watermark | 🚧 **A/B in pixels; no crop or collusion resistance** | ✅ (dynamic, plan-dependent) | Product-dependent | ❌ |
 | DRM (Widevine / FairPlay) | ❌ | ✅ | Product-dependent | Partial |
 | Moodle integration | **Native LTI 1.3** | Plugin / embed | Plugin | Embed |
 | Auditable source | ✅ **All of it** | ❌ | Partial | ❌ |
@@ -384,12 +389,16 @@ Depends what for. The core — LTI, A/B pipeline, playlists, signed delivery, li
 revisions — is implemented and verified, and does serve material to real students with
 access control.
 
-What is **not** ready is the forensic promise: the tracer still misclassifies (F-07). The
-application, session and infrastructure hardening the audit flagged — session token out of
-the URL (F-02), logs without tokens (F-03) and signed delivery mandatory in production
-(F-04) — is now applied. What remains are lower-impact open findings and cross-teacher
-material isolation (F-05: another teacher's UUID pasted into the URL still opens). The
-finding-by-finding state is in
+The hardening the audit flagged is applied: the session token no longer travels in the URL
+(F-02), logs carry no tokens (F-03), signed delivery is mandatory in production (F-04),
+`pdfjs` is current (F-09), the CSP no longer needs `unsafe-inline` (F-13), purging a
+revision no longer destroys the forensic evidence (F-14), and the worker — which is what
+opens the files teachers upload — runs with no route to the internet (F-10).
+
+What is **not** closed: the **forensic promise** — the reader works, but cropping the edges
+removes the mark (F-07) — and the last step of **cross-teacher isolation** (F-05): the
+signed reference is already issued and verified, but in warn mode, because enforcing it
+today would break activities inserted before it existed. The finding-by-finding state is in
 [`docs/README.md`](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
 
 In practice: use it to impose order and deter, not to sustain disciplinary proceedings

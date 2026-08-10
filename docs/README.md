@@ -23,7 +23,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | [`arquitectura.md`](arquitectura.md) | Vista general, árbol de medios, el camino de un visionado y el de una subida, modelo de datos, tabla de endpoints, modelo de seguridad capa por capa |
 | [`decisiones.md`](decisiones.md) | ADR-001…022. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
 | [`auditoria-seguridad-contenido-y-plan.md`](auditoria-seguridad-contenido-y-plan.md) | **Auditoría de seguridad del contenido**: modelo de amenaza, 16 hallazgos priorizados, arquitectura objetivo y plan por fases |
-| [`auditoria-seguridad.md`](auditoria-seguridad.md) | **Segunda auditoría (V-01…V-37)** y, en su [§8](auditoria-seguridad.md#8-notas-de-implementación--claude-fable-5), el registro de qué se implementó, qué se difirió y por qué en la iteración de endurecimiento |
+| [`auditoria-seguridad.md`](auditoria-seguridad.md) | **Segunda auditoría (V-01…V-37)** y, en su [§8](auditoria-seguridad.md#8-notas-de-implementación--claude-fable-5), el registro de qué se implementó, qué se difirió y por qué en las dos iteraciones de endurecimiento |
 | [`plan-implementacion.md`](plan-implementacion.md) | Mapa de fases, dependencias y criterios de éxito |
 
 ### Para trabajar en él
@@ -47,7 +47,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 
 ## Estado del proyecto
 
-**Última auditoría**: 7 de agosto de 2026.
+**Última auditoría**: 7 de agosto de 2026 · **última iteración de seguridad**: 10 de agosto de 2026.
 
 El **núcleo está implementado y verificado**: handshake LTI 1.3, pipeline de
 transcodificación A/B, playlists personalizadas por alumno, entrega de segmentos firmada,
@@ -59,8 +59,19 @@ en la consola de administración, e **IP real del alumno tras un CDN**
 ([ADR-019](decisiones.md)) — hasta entonces todos los visionados quedaban registrados con
 la IP del borde de Cloudflare, que es justo el dato que el trazado necesita preciso.
 
-Lo que queda abierto se concentra en tres frentes: **el trazado forense**, **la matriz de
-navegadores del player** y **la línea de producción** (alertas, backup/restore, auditoría).
+Tras las dos iteraciones de seguridad de agosto de 2026, lo abierto se concentra en tres
+frentes, y ninguno es escribir código nuevo:
+
+1. **Exigir la referencia firmada del material** ([T24](tasks/backlog/T24-aislamiento-material-entre-profesores.md)):
+   está desplegada en modo aviso; falta comprobar en el log que ninguna actividad viva se
+   quedaría fuera y cambiar la variable a `enforce`.
+2. **Programar la copia de seguridad y probar una restauración**
+   ([T16](tasks/backlog/T16-observabilidad-hardening.md)): los scripts están hechos.
+3. **La matriz de navegadores del player dentro de un Moodle real**
+   ([T11](tasks/backlog/T11-player-overlay.md)).
+
+Aparte, y en otra escala: la **promesa forense completa** —marcas repartidas por el
+fotograma y códigos resistentes a colusión— sigue siendo línea de producto, no cierre.
 
 ### Auditoría de seguridad · 7 de agosto de 2026
 
@@ -69,36 +80,48 @@ Por encima del backlog de tareas hay una
 hallazgos priorizados** y un plan por fases. Es la lectura obligatoria antes de desplegar
 esto en serio, y manda sobre cualquier otra prioridad de esta página.
 
-La columna **Estado** refleja la iteración de seguridad de agosto de 2026 (rama
-`feature/seguridad-auditoria`), que partió de una segunda auditoría más granular
-([`auditoria-seguridad.md`](auditoria-seguridad.md), V-01…V-37) y aplicó lo que tenía
+La columna **Estado** refleja las dos iteraciones de seguridad de agosto de 2026 (rama
+`feature/seguridad-auditoria`), que partieron de una segunda auditoría más granular
+([`auditoria-seguridad.md`](auditoria-seguridad.md), V-01…V-37) y aplicaron lo que tenía
 sentido sin tocar migraciones aplicadas, secretos ni UUID lógicos. El detalle hallazgo a
-hallazgo está en su [§8](auditoria-seguridad.md#8-notas-de-implementación--claude-fable-5).
+hallazgo está en su [§8](auditoria-seguridad.md#8-notas-de-implementación--claude-fable-5),
+y lo que cerró la segunda pasada, en
+[§8.7](auditoria-seguridad.md#87-segunda-iteración-10-de-agosto-de-2026).
 
 | ID | Sev. | Hallazgo | Estado (rama seguridad) |
 |---|---|---|---|
-| F-01 | 🔴 Crítica (condicional) | Perfil `infra/local` con secretos deterministas conocidos. **Al hacerse público el repositorio, cualquiera los conoce**: nunca expongas ese perfil a Internet, y rota si alguna vez lo estuvo | ⚪ Por diseño (dev en `localhost`). El gate de CI ahora impide que aterrice un token real en un `.env` versionado (V-23) |
+| F-01 | 🔴 Crítica (condicional) | Perfil `infra/local` con secretos deterministas conocidos. **Al hacerse público el repositorio, cualquiera los conoce**: nunca expongas ese perfil a Internet, y rota si alguna vez lo estuvo | ⚪ Por diseño (dev en `localhost`). El gate de CI impide que aterrice un token real en un `.env` versionado (V-23) |
 | F-02 | 🟠 Alta | Sesión bearer en la URL; el TTL hijo no se acota al padre, así que el acceso efectivo se acerca a 8 h | ✅ Cerrado el vector principal — el token de sesión ya **no** viaja en la URL (V-01/T23); el HLS nativo usa un ticket de 90 s |
 | F-03 | 🟠 Alta | Tokens registrados en los logs de Node y nginx | ✅ Cerrado (V-04/T27) — serializador de pino + `log_format` sin query en nginx |
 | F-04 | 🟠 Alta (condicional) | Entrega de medios *fail-open* con `MEDIA_DELIVERY=app` si se expone la app directamente | ✅ Cerrado (V-11) — prod exige `signed` y la app no monta la ruta de medios |
-| F-05 | 🟠 Alta | La autorización LTI no liga el UUID a una colocación concreta de Moodle | ⏸️ Abierto (V-02/T24) — necesita migración + referencia firmada; diferido |
+| F-05 | 🟠 Alta | La autorización LTI no liga el UUID a una colocación concreta de Moodle | 🟡 Fase de aviso desplegada ([T24](tasks/backlog/T24-aislamiento-material-entre-profesores.md)): `custom.resourcesig` firmado y verificado, migración `011`. Falta activar `enforce` |
 | F-06 | 🟠 Alta | AES-HLS no es DRM: la clave llega al navegador | ⚪ Por diseño (no es DRM; la protección es la atribución) |
-| F-07 | 🟠 Alta | **Trazador no fiable**, y la marca se elimina recortando bordes o extrayendo sólo el audio | ⏸️ Abierto (T13) — fuera del alcance de esta iteración |
+| F-07 | 🟠 Alta | **Trazador no fiable**, y la marca se elimina recortando bordes o extrayendo sólo el audio | 🟡 El **lector** está corregido y probado ([T13](tasks/done/T13-trazado-forense.md)). Recorte de bordes, colusión y audio siguen abiertos: son línea de producto |
 | F-08 | 🟠 Alta | El PDF se entrega completo; la marca es una capa del DOM | ⚪ Por diseño (documentado; el sello es removible) |
-| F-09 | 🟠 Alta | `pdfjs-dist` con vulnerabilidad alta publicada en 2026 | ⏸️ Diferido (V-08) — salto mayor 5→6, hay que probar el visor |
-| F-10 | 🟠 Alta | El worker procesa ficheros hostiles con demasiados privilegios y sin sandbox suficiente | ⏸️ Parcial (V-31) — `spawn` detached + `killTree`; `cap_drop`/`read_only` diferidos |
+| F-09 | 🟠 Alta | `pdfjs-dist` con vulnerabilidad alta publicada en 2026 | ✅ Cerrado — `pdfjs-dist` 6.2.108, `npm audit` en 0; y `/vendor` deja de servirse `immutable`, que era lo que retrasaba el parche hasta una semana |
+| F-10 | 🟠 Alta | El worker procesa ficheros hostiles con demasiados privilegios y sin sandbox suficiente | 🟡 Parcial — `spawn` detached + `killTree`, `no-new-privileges`, `pids_limit` y **el worker sin salida a Internet**; `cap_drop`/`read_only` y recortarle los secretos siguen pendientes |
 | F-11 | 🟠 Alta | Sesiones sin revocación; validación LTI incompleta | ⏸️ Parcial — validación LTI reforzada (V-29 `azp`/`target_link_uri`); revocación diferida (T30/T31) |
-| F-12 | 🟠 Alta | Sin cuotas ni límites globales: CPU, disco, cola y ancho de banda agotables | ⏸️ Parcial (V-17) — `client_max_body_size` acotado; cuotas globales y `limit_req` de borde diferidos |
-| F-13 | 🟡 Media | Inyección HTML almacenada en flujos legacy y CSP permisiva | ⏸️ Parcial (V-07) — `{{VAR}}` escapado en las plantillas; nonce CSP diferido (T32) |
-| F-14 | 🟡 Media-alta | La purga destruye evidencia forense antes de tiempo | ⏸️ Abierto — V-26 cerró la **carrera** de purga, no el calendario de retención |
-| F-15 | 🟡 Media-alta | Mínimo privilegio, TLS de base de datos y cadena de suministro insuficientes | ⏸️ Parcial — gate de secretos del CI ampliado; TLS de BD y cadena de suministro diferidos |
+| F-12 | 🟠 Alta | Sin cuotas ni límites globales: CPU, disco, cola y ancho de banda agotables | ⏸️ Parcial (V-17) — `client_max_body_size` acotado y `pids_limit` por servicio; cuotas globales y `limit_req` de borde diferidos |
+| F-13 | 🟡 Media | Inyección HTML almacenada en flujos legacy y CSP permisiva | ✅ Cerrado — `{{VAR}}` escapado y `script-src` sin `'unsafe-inline'` (T32) |
+| F-14 | 🟡 Media-alta | La purga destruye evidencia forense antes de tiempo | ✅ Cerrado — antes de purgar se escribe una lápida forense con el patrón y los espectadores, y `legal_hold` ya se puede activar desde la API |
+| F-15 | 🟡 Media-alta | Mínimo privilegio, TLS de base de datos y cadena de suministro insuficientes | ⏸️ Parcial — gate de secretos del CI ampliado y contenedores endurecidos; TLS de base de datos y cadena de suministro diferidos |
 | F-16 | ⚪ Baja | Divulgación operativa en errores de readiness | ✅ Cerrado (V-21) — `/readyz` deja de filtrar el error de BD |
 
-**La consecuencia que afecta a cómo se presenta el proyecto**: mientras F-07 siga abierto,
-no se puede prometer atribución. Está retirada de los README a propósito, y así debe
-seguir hasta que exista un decodificador validado con umbrales de confianza explícitos.
-La iteración de seguridad cerró el endurecimiento de aplicación, sesión y logs (F-02, F-03,
-F-04, F-16), pero **no** tocó el trazador: la promesa forense sigue sin poder sostenerse.
+**La consecuencia que afecta a cómo se presenta el proyecto.** El **lector** del trazado
+ya no clasifica mal: se corrigió y se probó contra vídeo sintético generado con la marca
+real (ver [T13](tasks/done/T13-trazado-forense.md)). Pero eso no basta para prometer
+atribución, y conviene no confundir las dos cosas:
+
+- Lo que se arregló es el algoritmo que **lee** el patrón. Antes podía señalar a un
+  inocente; ahora recupera el patrón exacto o se declara no concluyente.
+- Lo que **no** cambió es dónde vive la marca: dos recuadros en las esquinas inferiores.
+  Recortar los bordes sigue eliminándola, dos alumnos que comparen copias siguen pudiendo
+  fabricar una tercera que no señala a nadie, y un extracto de audio no lleva patrón.
+
+Así que la atribución sigue **sin poder prometerse** en los README, y así debe seguir
+hasta que existan marcas repartidas por el fotograma y códigos resistentes a colusión.
+Lo que sí se puede decir ya, y es distinto, es que la herramienta forense dejó de estar
+rota. El lector tampoco se ha validado todavía contra una grabación de pantalla real.
 
 > **Cómo se cierra una tarea aquí.** Estar implementada en el recorrido feliz no basta.
 > Una tarea sólo pasa a `tasks/done/` con **evidencia y pruebas** de sus criterios
@@ -141,31 +164,34 @@ Leyenda: ✅ hecha · 🟡 parcial · 🔴 rota · ⬜ pendiente
 
 | # | Tarea | Estado | Qué falta exactamente |
 |---|---|---|---|
-| [T22](tasks/backlog/T22-fiabilidad-pipeline-aislamiento.md) | Fiabilidad y aislamiento multiinstancia | ⬜ **Prioritaria** | El código ya está en el repositorio (migración `002`, lease con heartbeat y reaper en `src/queue/postgres.js`); lo que falta es la **auditoría formal** de la ficha, no la implementación |
-| [T13](tasks/backlog/T13-trazado-forense.md) | Trazado forense de filtraciones | 🔴 **Rota** | El algoritmo de lectura de patrones es incorrecto. Hay que diagnosticar si falla el HMAC, el muestreo o la comparación |
-| [T03](tasks/backlog/T03-https-y-tunel.md) | HTTPS público con túnel | 🟡 | El proceso PHP de Moodle no alcanza el keyset por una ruta privada de Tailscale. Bloqueo operativo, independiente del resto |
-| [T11](tasks/backlog/T11-player-overlay.md) | Player con overlay del DNI | 🟡 | Falta matriz real de navegadores (Chrome, Safari, Firefox) y recuperación ante error de red |
-| [T08](tasks/backlog/T08-worker-cola.md) | Worker y cola de trabajos | 🟡 | Un crash puede dejar el job en `running` indefinidamente. Lo cierra T22 |
-| [T14](tasks/backlog/T14-despliegue-portainer.md) | Despliegue con Portainer | 🟡 | Falta validación en servidor y persistencia comprobada tras reinicio |
-| [T15](tasks/backlog/T15-cicd-gitops.md) | CI/CD y GitOps | 🟡 | Test funciona; falta ejercitar la promoción real por tag a producción |
-| [T16](tasks/backlog/T16-observabilidad-hardening.md) | Observabilidad y hardening | 🟡 | Faltan backup/restore y alertas. La fuga de tokens en logs ya está cerrada (F-03/V-04, rama seguridad) |
-| [T19](tasks/T19-consola-admin-instancias-moodle.md) | Consola admin multiinstancia | ⬜ | Diseño técnico listo, sin código. Existe una API bearer básica |
+| [T13](tasks/done/T13-trazado-forense.md) | Trazado forense de filtraciones | ✅ | El **lector** ya no clasifica mal: corregido y probado con vídeo sintético real. La marca sigue viviendo en dos esquinas: recorte, colusión y audio son línea de producto, no esta ficha |
+| [T03](tasks/done/T03-https-y-tunel.md) | HTTPS público con reverse proxy | ✅ | Cerrada por la operación real: producción sirve actividades Moodle, luego el keyset es alcanzable desde Moodle |
+| [T08](tasks/done/T08-worker-cola.md) | Worker y cola de trabajos | ✅ | Lease, heartbeat tolerante a fallos transitorios, reaper periódico y apagado ordenado, con pruebas |
+| [T14](tasks/done/T14-despliegue-portainer.md) | Despliegue con Portainer | ✅ | Producción corre hoy con este mecanismo (v1.0.5). Quedan dos comprobaciones operativas listadas en la ficha |
+| [T15](tasks/done/T15-cicd-gitops.md) | CI/CD y GitOps | ✅ | La promoción por tag se ha ejercitado cinco veces (v1.0.0 … v1.0.5) |
+| [T19](tasks/done/T19-consola-admin-instancias-moodle.md) | Consola admin multiinstancia | ✅ | Estaba implementada entera; lo que faltaba era auditarla y cerrarla |
+| [T24](tasks/backlog/T24-aislamiento-material-entre-profesores.md) | Aislamiento del material entre profesores | 🟡 **Prioritaria** | La referencia firmada está desplegada en modo **aviso**. Falta observar el log hasta que no queden actividades sin firma y pasar a `enforce` |
+| [T11](tasks/backlog/T11-player-overlay.md) | Player con overlay del DNI | 🟡 | El manejo de errores está arreglado y probado. Falta la matriz de navegadores **dentro de un Moodle real** (checklist de 10 minutos en la ficha) |
+| [T16](tasks/backlog/T16-observabilidad-hardening.md) | Observabilidad y hardening | 🟡 | Los scripts de copia y restauración están hechos; falta **programar** la copia, sacarla del servidor y probar una restauración |
+| [T22](tasks/backlog/T22-fiabilidad-pipeline-aislamiento.md) | Fiabilidad del pipeline | 🟡 | La parte de fiabilidad está hecha y probada; el aislamiento se escindió a T24 |
 
 ### Orden recomendado
 
 ```text
-T22 ──▶ fundamentos del pipeline y del aislamiento
-T19 ──▶ administración multiinstancia (en paralelo, en otra rama)
-T03 · T11 · T13 · T14–T16 ──▶ cierre de MVP y producción
+T24 ──▶ pasar la referencia firmada de «aviso» a «exigir»
+T16 ──▶ programar la copia y probar una restauración
+T11 ──▶ matriz de navegadores dentro de un Moodle real
 ```
 
-1. **T22** es la prioridad: carpetas, PDF, colecciones y revisiones se construyeron encima
-   de ese código, pero su ficha nunca se cerró.
-2. **T19** avanza en paralelo y llega por PR.
-3. **T03** es un bloqueo operativo independiente: el keyset tiene que ser alcanzable desde
-   el proceso PHP de Moodle, que no es el navegador del profesor.
-4. **T11, T13 y T14–T16** forman la línea de cierre; no se confundan con funcionalidad
-   nueva, que ya está.
+1. **T24** es la prioridad: es lo único que queda del hallazgo abierto más grave, y el
+   trabajo restante no es escribir código —ya está— sino mirar el log de avisos hasta
+   comprobar que ninguna actividad viva se quedaría fuera al exigir la firma.
+2. **T16** es media hora de cron y una restauración de prueba. Una copia que nunca se ha
+   restaurado no es una copia.
+3. **T11** necesita un Moodle real y veinte minutos de navegador; la ficha trae la
+   checklist paso a paso.
+
+Nada de esto es funcionalidad nueva: es cierre.
 
 ### Después de eso: la línea de producto
 
@@ -212,6 +238,9 @@ Ninguno bloquea un criterio de aceptación. Cada ficha cerrada los detalla en su
 | T18 | No se avisa en la bandeja de un elemento que deje de estar listo: sólo al guardar, con el 409 `items_unavailable` |
 | T20 | El fichero de origen de una subida fallida sobrevive hasta que `reconcileStorage()` lo recoge (ventana mínima de una hora). Es deliberado: esa ventana existe para no borrar el fichero de un trabajo que aún no confirmó su fila |
 | T21 | Las columnas físicas **no** se retiraron de `video`/`pdf_document`; se conservan como proyección de la revisión activa. Motivo en [ADR-011](decisiones.md) |
+| T08 | El healthcheck del worker sólo comprueba que el proceso vive: no expone puerto, así que si se bloqueara esperando a la base de datos, Docker no lo detectaría. Los logs sí lo dicen |
+| T13 | El lector forense está probado contra vídeo sintético, **no** contra una grabación de pantalla real ni contra una recompresión agresiva |
+| T24 | El worker sigue recibiendo secretos que no usa (comparte el bloque de entorno con la aplicación). Recortarlo exige que `config.js` sepa qué rol arranca; ver [§8.7](auditoria-seguridad.md#87-segunda-iteración-10-de-agosto-de-2026) |
 
 ---
 
@@ -223,14 +252,17 @@ está desglosada en tareas con estimación.
 
 1. **Probar el conjunto contra un Moodle real** y reportar lo que se rompa. No hace falta
    escribir código y es lo que más falta hace.
-2. **Matriz de navegadores del player** (T11): Chrome, Safari, Firefox, iOS. Documentar qué
-   funciona y qué no.
-3. **Diagnosticar el trazado forense** (T13): el algoritmo de lectura falla. `tools/trace.mjs`
-   y `test/watermark.test.js` son el punto de entrada.
-4. **Aislar el material entre profesores** (F-05/V-02/T24): hoy un UUID ajeno pegado en la
-   URL se abre. Necesita migración + referencia firmada y un despliegue avisar→exigir; es el
-   hallazgo abierto más importante tras la iteración de seguridad.
-5. **Auditar y cerrar T22**, si te apetece un trabajo de verificación más que de código.
+2. **Matriz de navegadores del player** ([T11](tasks/backlog/T11-player-overlay.md)): Chrome,
+   Safari, Firefox, iOS, dentro del iframe. La ficha trae la checklist paso a paso.
+3. **Terminar el aislamiento entre profesores**
+   ([T24](tasks/backlog/T24-aislamiento-material-entre-profesores.md)): la referencia firmada
+   ya se emite y se verifica en modo aviso; falta medir el log y pasar a `enforce`. Sigue
+   siendo lo más importante de la lista.
+4. **Programar la copia de seguridad y probar una restauración**
+   ([T16](tasks/backlog/T16-observabilidad-hardening.md)): los scripts están hechos.
+5. **Marcas repartidas por el fotograma y códigos de Tardos**: es lo que separa «la
+   herramienta forense funciona» de «se puede prometer atribución». Trabajo de verdad, con
+   contexto en [T13](tasks/done/T13-trazado-forense.md).
 
 Antes de ponerte, lee [`desarrollo.md`](desarrollo.md) y la ficha de la tarea. Cada ficha
 lleva su propia lista de trampas conocidas, que suele ahorrar una tarde.

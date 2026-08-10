@@ -43,6 +43,10 @@ x-app-env: &app-env
   ADMIN_SESSION_TTL_SECONDS: ${ADMIN_SESSION_TTL_SECONDS:-28800}
   ADMIN_ALLOW_PRIVATE_LTI_HOSTS: ${ADMIN_ALLOW_PRIVATE_LTI_HOSTS:-false}
   LTI_IDENTITY_CUSTOM_PARAM: ${LTI_IDENTITY_CUSTOM_PARAM:-username}
+  # T24: verificación de la referencia firmada del material en el launch.
+  # `warn` (por defecto) sirve el launch sin firma y deja aviso en el log;
+  # pásalo a `enforce` cuando el aviso deje de aparecer.
+  LAUNCH_RESOURCE_SIGNATURE: ${LAUNCH_RESOURCE_SIGNATURE:-warn}
   # IP real del alumno tras un CDN (ADR-019): auto | always | never.
   # Otros nombres por los que se alcanza la MISMA instancia. Vacío = sólo
   # PUBLIC_URL, que es el comportamiento de siempre.
