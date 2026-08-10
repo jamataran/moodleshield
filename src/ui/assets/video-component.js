@@ -76,6 +76,71 @@ export function mediaShortcut (rawKey, { onButton = false } = {}) {
   })[key] ?? null
 }
 
+/**
+ * Decide qué hacer ante un ERROR de hls.js. Función pura para poder probarla.
+ *
+ * La distinción importante es el 401/403: hls.js lo clasifica como error de red,
+ * pero reintentar una sesión caducada es un bucle infinito con un mensaje
+ * engañoso («problema de red»). Se corta y se dice la verdad. El resto de
+ * errores de red reintenta con retardo creciente y cupo, y los de medio siguen
+ * el protocolo de hls.js: recuperar, luego cambiar el códec de audio, rendirse.
+ */
+export function classifyHlsError (data, {
+  networkRetries = 0,
+  mediaRecoveries = 0,
+  maxNetworkRetries = 3,
+  maxMediaRecoveries = 2
+} = {}) {
+  if (!data?.fatal) return { action: 'ignore', message: null }
+  const httpCode = data.response?.code
+  if (data.type === 'networkError') {
+    if (httpCode === 401 || httpCode === 403) {
+      return {
+        action: 'auth',
+        message: 'Tu sesión ha caducado. Vuelve a abrir la actividad en Moodle.'
+      }
+    }
+    if (networkRetries < maxNetworkRetries) {
+      return {
+        action: 'retry',
+        delayMs: 1000 * 2 ** networkRetries,
+        message: `Problema de red; reintentando (${networkRetries + 1} de ${maxNetworkRetries})…`
+      }
+    }
+    return {
+      action: 'fatal',
+      message: 'No se pudo recuperar la conexión. Comprueba tu red y vuelve a abrir la actividad.'
+    }
+  }
+  if (data.type === 'mediaError') {
+    if (mediaRecoveries === 0) return { action: 'recover', message: 'Recuperando la reproducción…' }
+    if (mediaRecoveries < maxMediaRecoveries) return { action: 'swap', message: 'Recuperando la reproducción…' }
+    return { action: 'fatal', message: 'No se pudo reproducir el vídeo. Vuelve a abrir la actividad.' }
+  }
+  return { action: 'fatal', message: 'No se pudo reproducir el vídeo. Vuelve a abrir la actividad.' }
+}
+
+/**
+ * Decide qué hacer ante un `error` del <video> en HLS nativo (Safari/iOS).
+ * Un error de descodificación (código 3) no se arregla pidiendo otro ticket:
+ * gastarlo sólo consumiría el cupo. Los de red (2) y de origen (4, que es como
+ * aflora un 401 de playlist en iOS) sí justifican re-pedir el ticket.
+ */
+export function classifyNativeError (mediaErrorCode, { attempts = 0, maxAttempts = 3 } = {}) {
+  if (mediaErrorCode === 1) return { action: 'ignore', message: null }
+  if (mediaErrorCode === 3) {
+    return {
+      action: 'fatal',
+      message: 'No se pudo descodificar el vídeo en este navegador. Vuelve a abrir la actividad.'
+    }
+  }
+  if (attempts < maxAttempts) return { action: 'reticket', message: null }
+  return {
+    action: 'fatal',
+    message: 'No se pudo iniciar la reproducción. Vuelve a abrir la actividad.'
+  }
+}
+
 function iconButton (doc, icon, label, className = '') {
   const element = doc.createElement('button')
   element.type = 'button'
@@ -607,10 +672,21 @@ export function createVideoView ({
   // El ticket dura segundos, y iOS suele aplazar la carga de la playlist hasta
   // el gesto de play: si el alumno tarda en pulsar, el ticket caduca y la
   // playlist da 401, que el elemento emite como `error`. Por eso el ticket se
-  // vuelve a pedir (acotado) ante un `error`, reanudando en la posición actual
-  // en vez de volver al principio. Cubre también una caducación a mitad.
+  // vuelve a pedir (acotado) ante un `error` de red, reanudando en la posición
+  // actual en vez de volver al principio. Cubre también una caducación a mitad.
+  //
+  // La reanudación usa UN listener permanente con `pendingResumeAt` en vez de
+  // un `{ once: true }` por reintento: aquéllos apilaban su limpieza en
+  // `cleanups` para siempre y podían encolar seeks duplicados.
   let nativeAttempts = 0
+  let pendingResumeAt = 0
   const NATIVE_MAX_ATTEMPTS = 3
+  listen(element, 'loadedmetadata', () => {
+    if (pendingResumeAt > 0) {
+      try { element.currentTime = pendingResumeAt } catch { /* posición fuera de rango */ }
+      pendingResumeAt = 0
+    }
+  })
   const loadNativeHls = async ({ resumeAt = 0 } = {}) => {
     if (destroyed) return
     if (nativeAttempts >= NATIVE_MAX_ATTEMPTS) {
@@ -627,11 +703,7 @@ export function createVideoView ({
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const { ticket } = await res.json()
       if (destroyed || !ticket) return
-      if (resumeAt > 0) {
-        listen(element, 'loadedmetadata', () => {
-          try { element.currentTime = resumeAt } catch { /* posición fuera de rango */ }
-        }, { once: true })
-      }
+      pendingResumeAt = resumeAt
       element.src = `${playlistUrl}?pt=${encodeURIComponent(ticket)}`
     } catch {
       status('No se pudo iniciar la reproducción. Vuelve a abrir la actividad.', true)
@@ -639,9 +711,27 @@ export function createVideoView ({
   }
   const onNativeError = () => {
     if (destroyed) return
+    const decision = classifyNativeError(element.error?.code, {
+      attempts: nativeAttempts,
+      maxAttempts: NATIVE_MAX_ATTEMPTS
+    })
+    if (decision.action === 'ignore') return
+    if (decision.action === 'fatal') return status(decision.message, true)
     const resumeAt = Number.isFinite(element.currentTime) ? element.currentTime : 0
     void loadNativeHls({ resumeAt })
   }
+
+  // Un tropiezo superado devuelve el cupo de reintentos: la reproducción que se
+  // recupera a mitad de vídeo no debe agotar el presupuesto para el siguiente.
+  let networkRetries = 0
+  let mediaRecoveries = 0
+  let retryTimer = null
+  cleanups.push(() => clearTimeout(retryTimer))
+  listen(element, 'canplay', () => {
+    networkRetries = 0
+    mediaRecoveries = 0
+    nativeAttempts = 0
+  })
 
   // Se prefiere hls.js cuando existe (T23): sus peticiones llevan la cabecera
   // Authorization y NINGÚN token viaja en la URL. El HLS nativo queda de
@@ -649,26 +739,48 @@ export function createVideoView ({
   // que usa el ticket.
   if (win.Hls?.isSupported()) {
     const HlsClass = win.Hls
+    // Reintentos internos acotados: sin esto, hls.js martillea también los 4xx
+    // a nivel de loader antes de emitir el error fatal que corta el bucle.
+    const loadPolicy = (maxLoadTimeMs, maxNumRetry) => ({
+      default: {
+        maxTimeToFirstByteMs: 10000,
+        maxLoadTimeMs,
+        timeoutRetry: { maxNumRetry: 1, retryDelayMs: 0, maxRetryDelayMs: 0 },
+        errorRetry: { maxNumRetry, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
+      }
+    })
     hls = new HlsClass({
       enableWorker: true,
       lowLatencyMode: false,
       maxBufferLength: 30,
       backBufferLength: 30,
+      manifestLoadPolicy: loadPolicy(20000, 2),
+      playlistLoadPolicy: loadPolicy(20000, 2),
+      fragLoadPolicy: loadPolicy(60000, 3),
       xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', `Bearer ${sessionToken}`)
     })
     hls.loadSource(playlistUrl)
     hls.attachMedia(element)
     hls.on(HlsClass.Events.MANIFEST_PARSED, () => status(''))
     hls.on(HlsClass.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return
-      if (data.type === HlsClass.ErrorTypes.NETWORK_ERROR) {
-        status('Problema de red; reintentando…', true)
-        hls.startLoad()
-      } else if (data.type === HlsClass.ErrorTypes.MEDIA_ERROR) {
-        status('Recuperando la reproducción…', true)
+      if (destroyed || !hls) return
+      const decision = classifyHlsError(data, { networkRetries, mediaRecoveries })
+      if (decision.action === 'ignore') return
+      if (decision.message) status(decision.message, true)
+      if (decision.action === 'retry') {
+        networkRetries++
+        retryTimer = setTimeout(() => {
+          if (!destroyed && hls) hls.startLoad()
+        }, decision.delayMs)
+      } else if (decision.action === 'recover') {
+        mediaRecoveries++
+        hls.recoverMediaError()
+      } else if (decision.action === 'swap') {
+        mediaRecoveries++
+        hls.swapAudioCodec()
         hls.recoverMediaError()
       } else {
-        status('No se pudo reproducir el vídeo. Vuelve a abrir la actividad.', true)
+        // auth | fatal: no hay nada que reintentar con esta sesión.
         hls.destroy()
         hls = null
       }

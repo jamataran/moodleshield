@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  classifyHlsError,
+  classifyNativeError,
   formatMediaTime,
   mediaProgress,
   mediaShortcut,
@@ -47,4 +49,59 @@ test('los atajos siguen activos sin robar espacio o enter a un botón', () => {
   assert.equal(mediaShortcut(' ', { onButton: true }), null)
   assert.equal(mediaShortcut('Enter', { onButton: true }), null)
   assert.equal(mediaShortcut('Escape'), null)
+})
+
+// Los ErrorTypes de hls.js son cadenas ('networkError'/'mediaError'): los
+// fixtures las usan tal cual para no cargar hls.js en el test.
+
+test('un error no fatal de hls.js se ignora siempre', () => {
+  assert.equal(classifyHlsError({ fatal: false, type: 'networkError' }).action, 'ignore')
+  assert.equal(classifyHlsError(undefined).action, 'ignore')
+})
+
+test('un 401 o 403 corta la reproducción con el mensaje de sesión, no con «problema de red»', () => {
+  for (const code of [401, 403]) {
+    const decision = classifyHlsError({ fatal: true, type: 'networkError', response: { code } })
+    assert.equal(decision.action, 'auth')
+    assert.match(decision.message, /Vuelve a abrir la actividad/)
+    assert.doesNotMatch(decision.message, /red/)
+  }
+})
+
+test('los errores de red reintentan con retardo creciente y cupo', () => {
+  const first = classifyHlsError({ fatal: true, type: 'networkError' }, { networkRetries: 0 })
+  const second = classifyHlsError({ fatal: true, type: 'networkError' }, { networkRetries: 1 })
+  const third = classifyHlsError({ fatal: true, type: 'networkError' }, { networkRetries: 2 })
+  const spent = classifyHlsError({ fatal: true, type: 'networkError' }, { networkRetries: 3 })
+  assert.deepEqual(
+    [first, second, third].map((d) => [d.action, d.delayMs]),
+    [['retry', 1000], ['retry', 2000], ['retry', 4000]]
+  )
+  assert.match(first.message, /1 de 3/)
+  assert.equal(spent.action, 'fatal')
+})
+
+test('los errores de medio siguen el protocolo: recuperar, cambiar códec, rendirse', () => {
+  const data = { fatal: true, type: 'mediaError' }
+  assert.equal(classifyHlsError(data, { mediaRecoveries: 0 }).action, 'recover')
+  assert.equal(classifyHlsError(data, { mediaRecoveries: 1 }).action, 'swap')
+  assert.equal(classifyHlsError(data, { mediaRecoveries: 2 }).action, 'fatal')
+})
+
+test('un error de claves o de mux es fatal directamente', () => {
+  assert.equal(classifyHlsError({ fatal: true, type: 'keySystemError' }).action, 'fatal')
+  assert.equal(classifyHlsError({ fatal: true, type: 'muxError' }).action, 'fatal')
+})
+
+test('el HLS nativo no gasta tickets en errores de descodificación', () => {
+  assert.equal(classifyNativeError(3, { attempts: 0 }).action, 'fatal')
+  assert.equal(classifyNativeError(1, { attempts: 0 }).action, 'ignore')
+})
+
+test('el HLS nativo re-pide ticket ante errores de red o de origen, con cupo', () => {
+  for (const code of [2, 4, undefined]) {
+    assert.equal(classifyNativeError(code, { attempts: 0 }).action, 'reticket')
+    assert.equal(classifyNativeError(code, { attempts: 2 }).action, 'reticket')
+    assert.equal(classifyNativeError(code, { attempts: 3 }).action, 'fatal')
+  }
 })
