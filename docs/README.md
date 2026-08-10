@@ -23,6 +23,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | [`arquitectura.md`](arquitectura.md) | Vista general, árbol de medios, el camino de un visionado y el de una subida, modelo de datos, tabla de endpoints, modelo de seguridad capa por capa |
 | [`decisiones.md`](decisiones.md) | ADR-001…022. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
 | [`auditoria-seguridad-contenido-y-plan.md`](auditoria-seguridad-contenido-y-plan.md) | **Auditoría de seguridad del contenido**: modelo de amenaza, 16 hallazgos priorizados, arquitectura objetivo y plan por fases |
+| [`auditoria-seguridad.md`](auditoria-seguridad.md) | **Segunda auditoría (V-01…V-37)** y, en su [§8](auditoria-seguridad.md#8-notas-de-implementación--claude-fable-5), el registro de qué se implementó, qué se difirió y por qué en la iteración de endurecimiento |
 | [`plan-implementacion.md`](plan-implementacion.md) | Mapa de fases, dependencias y criterios de éxito |
 
 ### Para trabajar en él
@@ -68,28 +69,36 @@ Por encima del backlog de tareas hay una
 hallazgos priorizados** y un plan por fases. Es la lectura obligatoria antes de desplegar
 esto en serio, y manda sobre cualquier otra prioridad de esta página.
 
-| ID | Sev. | Hallazgo |
-|---|---|---|
-| F-01 | 🔴 Crítica (condicional) | Perfil `infra/local` con secretos deterministas conocidos. **Al hacerse público el repositorio, cualquiera los conoce**: nunca expongas ese perfil a Internet, y rota si alguna vez lo estuvo |
-| F-02 | 🟠 Alta | Sesión bearer en la URL; el TTL hijo no se acota al padre, así que el acceso efectivo se acerca a 8 h |
-| F-03 | 🟠 Alta | Tokens registrados en los logs de Node y nginx |
-| F-04 | 🟠 Alta (condicional) | Entrega de medios *fail-open* con `MEDIA_DELIVERY=app` si se expone la app directamente |
-| F-05 | 🟠 Alta | La autorización LTI no liga el UUID a una colocación concreta de Moodle |
-| F-06 | 🟠 Alta | AES-HLS no es DRM: la clave llega al navegador |
-| F-07 | 🟠 Alta | **Trazador no fiable**, y la marca se elimina recortando bordes o extrayendo sólo el audio |
-| F-08 | 🟠 Alta | El PDF se entrega completo; la marca es una capa del DOM |
-| F-09 | 🟠 Alta | `pdfjs-dist` con vulnerabilidad alta publicada en 2026 |
-| F-10 | 🟠 Alta | El worker procesa ficheros hostiles con demasiados privilegios y sin sandbox suficiente |
-| F-11 | 🟠 Alta | Sesiones sin revocación; validación LTI incompleta |
-| F-12 | 🟠 Alta | Sin cuotas ni límites globales: CPU, disco, cola y ancho de banda agotables |
-| F-13 | 🟡 Media | Inyección HTML almacenada en flujos legacy y CSP permisiva |
-| F-14 | 🟡 Media-alta | La purga destruye evidencia forense antes de tiempo |
-| F-15 | 🟡 Media-alta | Mínimo privilegio, TLS de base de datos y cadena de suministro insuficientes |
-| F-16 | ⚪ Baja | Divulgación operativa en errores de readiness |
+La columna **Estado** refleja la iteración de seguridad de agosto de 2026 (rama
+`feature/seguridad-auditoria`), que partió de una segunda auditoría más granular
+([`auditoria-seguridad.md`](auditoria-seguridad.md), V-01…V-37) y aplicó lo que tenía
+sentido sin tocar migraciones aplicadas, secretos ni UUID lógicos. El detalle hallazgo a
+hallazgo está en su [§8](auditoria-seguridad.md#8-notas-de-implementación--claude-fable-5).
+
+| ID | Sev. | Hallazgo | Estado (rama seguridad) |
+|---|---|---|---|
+| F-01 | 🔴 Crítica (condicional) | Perfil `infra/local` con secretos deterministas conocidos. **Al hacerse público el repositorio, cualquiera los conoce**: nunca expongas ese perfil a Internet, y rota si alguna vez lo estuvo | ⚪ Por diseño (dev en `localhost`). El gate de CI ahora impide que aterrice un token real en un `.env` versionado (V-23) |
+| F-02 | 🟠 Alta | Sesión bearer en la URL; el TTL hijo no se acota al padre, así que el acceso efectivo se acerca a 8 h | ✅ Cerrado el vector principal — el token de sesión ya **no** viaja en la URL (V-01/T23); el HLS nativo usa un ticket de 90 s |
+| F-03 | 🟠 Alta | Tokens registrados en los logs de Node y nginx | ✅ Cerrado (V-04/T27) — serializador de pino + `log_format` sin query en nginx |
+| F-04 | 🟠 Alta (condicional) | Entrega de medios *fail-open* con `MEDIA_DELIVERY=app` si se expone la app directamente | ✅ Cerrado (V-11) — prod exige `signed` y la app no monta la ruta de medios |
+| F-05 | 🟠 Alta | La autorización LTI no liga el UUID a una colocación concreta de Moodle | ⏸️ Abierto (V-02/T24) — necesita migración + referencia firmada; diferido |
+| F-06 | 🟠 Alta | AES-HLS no es DRM: la clave llega al navegador | ⚪ Por diseño (no es DRM; la protección es la atribución) |
+| F-07 | 🟠 Alta | **Trazador no fiable**, y la marca se elimina recortando bordes o extrayendo sólo el audio | ⏸️ Abierto (T13) — fuera del alcance de esta iteración |
+| F-08 | 🟠 Alta | El PDF se entrega completo; la marca es una capa del DOM | ⚪ Por diseño (documentado; el sello es removible) |
+| F-09 | 🟠 Alta | `pdfjs-dist` con vulnerabilidad alta publicada en 2026 | ⏸️ Diferido (V-08) — salto mayor 5→6, hay que probar el visor |
+| F-10 | 🟠 Alta | El worker procesa ficheros hostiles con demasiados privilegios y sin sandbox suficiente | ⏸️ Parcial (V-31) — `spawn` detached + `killTree`; `cap_drop`/`read_only` diferidos |
+| F-11 | 🟠 Alta | Sesiones sin revocación; validación LTI incompleta | ⏸️ Parcial — validación LTI reforzada (V-29 `azp`/`target_link_uri`); revocación diferida (T30/T31) |
+| F-12 | 🟠 Alta | Sin cuotas ni límites globales: CPU, disco, cola y ancho de banda agotables | ⏸️ Parcial (V-17) — `client_max_body_size` acotado; cuotas globales y `limit_req` de borde diferidos |
+| F-13 | 🟡 Media | Inyección HTML almacenada en flujos legacy y CSP permisiva | ⏸️ Parcial (V-07) — `{{VAR}}` escapado en las plantillas; nonce CSP diferido (T32) |
+| F-14 | 🟡 Media-alta | La purga destruye evidencia forense antes de tiempo | ⏸️ Abierto — V-26 cerró la **carrera** de purga, no el calendario de retención |
+| F-15 | 🟡 Media-alta | Mínimo privilegio, TLS de base de datos y cadena de suministro insuficientes | ⏸️ Parcial — gate de secretos del CI ampliado; TLS de BD y cadena de suministro diferidos |
+| F-16 | ⚪ Baja | Divulgación operativa en errores de readiness | ✅ Cerrado (V-21) — `/readyz` deja de filtrar el error de BD |
 
 **La consecuencia que afecta a cómo se presenta el proyecto**: mientras F-07 siga abierto,
 no se puede prometer atribución. Está retirada de los README a propósito, y así debe
 seguir hasta que exista un decodificador validado con umbrales de confianza explícitos.
+La iteración de seguridad cerró el endurecimiento de aplicación, sesión y logs (F-02, F-03,
+F-04, F-16), pero **no** tocó el trazador: la promesa forense sigue sin poder sostenerse.
 
 > **Cómo se cierra una tarea aquí.** Estar implementada en el recorrido feliz no basta.
 > Una tarea sólo pasa a `tasks/done/` con **evidencia y pruebas** de sus criterios
@@ -139,7 +148,7 @@ Leyenda: ✅ hecha · 🟡 parcial · 🔴 rota · ⬜ pendiente
 | [T08](tasks/backlog/T08-worker-cola.md) | Worker y cola de trabajos | 🟡 | Un crash puede dejar el job en `running` indefinidamente. Lo cierra T22 |
 | [T14](tasks/backlog/T14-despliegue-portainer.md) | Despliegue con Portainer | 🟡 | Falta validación en servidor y persistencia comprobada tras reinicio |
 | [T15](tasks/backlog/T15-cicd-gitops.md) | CI/CD y GitOps | 🟡 | Test funciona; falta ejercitar la promoción real por tag a producción |
-| [T16](tasks/backlog/T16-observabilidad-hardening.md) | Observabilidad y hardening | 🟡 | Faltan backup/restore y alertas, y **todavía se registran queries con tokens** en los logs |
+| [T16](tasks/backlog/T16-observabilidad-hardening.md) | Observabilidad y hardening | 🟡 | Faltan backup/restore y alertas. La fuga de tokens en logs ya está cerrada (F-03/V-04, rama seguridad) |
 | [T19](tasks/T19-consola-admin-instancias-moodle.md) | Consola admin multiinstancia | ⬜ | Diseño técnico listo, sin código. Existe una API bearer básica |
 
 ### Orden recomendado
@@ -218,7 +227,9 @@ está desglosada en tareas con estimación.
    funciona y qué no.
 3. **Diagnosticar el trazado forense** (T13): el algoritmo de lectura falla. `tools/trace.mjs`
    y `test/watermark.test.js` son el punto de entrada.
-4. **Purgar tokens de los logs** (parte de T16): hoy se registran queries que los contienen.
+4. **Aislar el material entre profesores** (F-05/V-02/T24): hoy un UUID ajeno pegado en la
+   URL se abre. Necesita migración + referencia firmada y un despliegue avisar→exigir; es el
+   hallazgo abierto más importante tras la iteración de seguridad.
 5. **Auditar y cerrar T22**, si te apetece un trabajo de verificación más que de código.
 
 Antes de ponerte, lee [`desarrollo.md`](desarrollo.md) y la ficha de la tarea. Cada ficha

@@ -12,7 +12,7 @@ No proprietary DRM, no per-view licensing, no shipping your videos to someone el
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
-[![Tests](https://img.shields.io/badge/tests-164-success)](docs/desarrollo.md#tests)
+[![Tests](https://img.shields.io/badge/tests-333-success)](docs/desarrollo.md#tests)
 [![No frontend frameworks](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
@@ -22,9 +22,12 @@ No proprietary DRM, no per-view licensing, no shipping your videos to someone el
 
 > [!WARNING]
 > **Version 0.x — read this before deploying it to real students.** The video pipeline, the
-> LTI integration and the library work and are tested. But an
+> LTI integration and the library work and are tested. An
 > [internal security audit](docs/auditoria-seguridad-contenido-y-plan.md) from August 2026
-> left 16 open findings, and two hit what this README promises directly:
+> found 16 findings; a later hardening pass closed the bulk of the application, session and
+> log risk (session token out of the URL, logs without tokens, signed delivery mandatory in
+> production — [detail](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)). But
+> **two findings still hit what this README promises directly**:
 >
 > - **The forensic tracer is not reliable yet** (F-07). The A/B mechanism is built, but the
 >   pattern reader misclassifies and the mark is removed by cropping the edges. **It must
@@ -381,10 +384,13 @@ Depends what for. The core — LTI, A/B pipeline, playlists, signed delivery, li
 revisions — is implemented and verified, and does serve material to real students with
 access control.
 
-What is **not** ready is the forensic promise and part of the hardening: the
-[August 2026 audit](docs/auditoria-seguridad-contenido-y-plan.md) left 16 open findings,
-including the session token travelling in the URL with a chainable 4-hour TTL (F-02),
-tokens in logs (F-03) and the unreliable tracer (F-07).
+What is **not** ready is the forensic promise: the tracer still misclassifies (F-07). The
+application, session and infrastructure hardening the audit flagged — session token out of
+the URL (F-02), logs without tokens (F-03) and signed delivery mandatory in production
+(F-04) — is now applied. What remains are lower-impact open findings and cross-teacher
+material isolation (F-05: another teacher's UUID pasted into the URL still opens). The
+finding-by-finding state is in
+[`docs/README.md`](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
 
 In practice: use it to impose order and deter, not to sustain disciplinary proceedings
 against a student. And deploy it behind the reverse proxy with `MEDIA_DELIVERY=signed`,

@@ -12,7 +12,7 @@ Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de t
 [![Licencia: AGPL v3](https://img.shields.io/badge/licencia-AGPL--3.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
-[![Tests](https://img.shields.io/badge/tests-164-success)](docs/desarrollo.md#tests)
+[![Tests](https://img.shields.io/badge/tests-333-success)](docs/desarrollo.md#tests)
 [![Sin dependencias de frontend](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
 [![Autohospedado](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
@@ -22,10 +22,12 @@ Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de t
 
 > [!WARNING]
 > **Versión 0.x — léelo antes de desplegarlo con alumnos reales.** El pipeline de vídeo, la
-> integración LTI y la biblioteca funcionan y están probados. Pero una
+> integración LTI y la biblioteca funcionan y están probados. Una
 > [auditoría de seguridad interna](docs/auditoria-seguridad-contenido-y-plan.md) de agosto
-> de 2026 encontró 16 hallazgos abiertos, y dos afectan directamente a lo que promete este
-> README:
+> de 2026 encontró 16 hallazgos; una iteración de endurecimiento posterior cerró el grueso
+> del riesgo de aplicación, sesión y logs (token de sesión fuera de la URL, logs sin tokens,
+> entrega firmada obligatoria en producción — [detalle](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)).
+> Pero **dos hallazgos siguen afectando directamente a lo que promete este README**:
 >
 > - **El trazador forense no es fiable todavía** (F-07). El mecanismo A/B está construido,
 >   pero el lector de patrones clasifica mal y la marca se elimina recortando los bordes.
@@ -375,10 +377,13 @@ Depende de contra qué. El núcleo —LTI, pipeline A/B, playlists, entrega firm
 biblioteca, PDF, revisiones— está implementado y verificado, y sirve material a alumnos
 reales con control de acceso.
 
-Lo que **no** está listo es la promesa forense y parte del endurecimiento: la
-[auditoría de agosto de 2026](docs/auditoria-seguridad-contenido-y-plan.md) dejó 16
-hallazgos abiertos, incluidos el token de sesión viajando en la URL con TTL de 4 h
-encadenable (F-02), tokens en los logs (F-03) y el trazador no fiable (F-07).
+Lo que **no** está listo es la promesa forense: el trazador aún clasifica mal (F-07). El
+endurecimiento de aplicación, sesión e infraestructura que señalaba la auditoría —token de
+sesión fuera de la URL (F-02), logs sin tokens (F-03) y entrega firmada obligatoria en
+producción (F-04)— ya está aplicado. Quedan hallazgos abiertos de menor calado y el
+aislamiento de material entre profesores (F-05, un UUID ajeno pegado en la URL aún se abre).
+El estado hallazgo a hallazgo está en
+[`docs/README.md`](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
 
 Traducción práctica: úsalo para poner orden y disuadir, no para sostener un expediente
 disciplinario contra un alumno. Y despliégalo detrás del reverse proxy con
