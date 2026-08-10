@@ -31,7 +31,19 @@ test('el token CSRF queda ligado a sesión, método y ruta', () => {
 
 test('un formato o parámetros scrypt no permitidos se rechazan', async () => {
   assert.equal(await verifyAdminPassword('x', 'texto'), false)
-  assert.equal(await verifyAdminPassword('x', 'scrypt:32768:8:1:c2FsdHNhbHRzYWx0c2FsdA:ZGlnaWVzdGRpZ2VzdGRpZ2VzdGRpZ2VzdGRpZ2VzdA'), false)
+  // Por debajo del suelo (V-35): debilitar los parámetros sigue prohibido.
+  assert.equal(await verifyAdminPassword('x', 'scrypt:8192:8:1:c2FsdHNhbHRzYWx0c2FsdA:ZGlnaWVzdGRpZ2VzdGRpZ2VzdGRpZ2VzdGRpZ2VzdA'), false)
+  // Un N desorbitado tampoco: agotaría la memoria del proceso al verificar.
+  assert.equal(await verifyAdminPassword('x', 'scrypt:1048576:8:1:c2FsdHNhbHRzYWx0c2FsdA:ZGlnaWVzdGRpZ2VzdGRpZ2VzdGRpZ2VzdGRpZ2VzdA'), false)
+})
+
+test('un hash con parámetros MÁS fuertes que el suelo se acepta (V-35)', async () => {
+  const encoded = await hashAdminPassword('otra contraseña larga', {
+    N: 32768, r: 8, p: 2, salt: Buffer.alloc(16, 9)
+  })
+  assert.match(encoded, /^scrypt:32768:8:2:/)
+  assert.equal(await verifyAdminPassword('otra contraseña larga', encoded), true)
+  assert.equal(await verifyAdminPassword('incorrecta', encoded), false)
 })
 
 test('el login exige el nonce firmado que coincide con su cookie', () => {

@@ -15,6 +15,13 @@ log_format sin_query '$remote_addr - $remote_user [$time_local] '
 # No anunciar la versión de nginx en cada respuesta, ni siquiera en las de error.
 server_tokens off;
 
+# Sobre el Host (V-13): este gateway escucha SOLO en loopback del host (los
+# compose publican 127.0.0.1) y detrás va el proxy de borde del operador, que
+# es quien fija server_name al dominio público. Un Host desconocido que llegara
+# hasta la aplicación no le sirve a un atacante para envenenar URLs: los
+# orígenes se calculan contra PUBLIC_URL/PUBLIC_URL_ALIASES (public-origin.js),
+# nunca desde la cabecera. Si tu borde no filtra por server_name, añade allí:
+#     server { listen 443 ssl default_server; return 444; }
 upstream moodleshield_app {
     # Docker puede asignar otra IP a `app` al recrearla. Nginx 1.27 permite
     # resolver el nombre periódicamente sin tener que reiniciar el gateway.

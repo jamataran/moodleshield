@@ -193,8 +193,11 @@ export async function transcodeVideo (videoId, inputPath, {
   // rompería la intercambiabilidad de las variantes sin previo aviso.
   const key = randomBytes(16)
   const iv = randomBytes(16).toString('hex')
-  await writeFile(keyFile, key)
-  await writeFile(keyInfoFile, `key\n${keyFile}\n${iv}\n`)
+  // Sólo el dueño (el usuario node de app y worker) lee la clave (V-16): los
+  // segmentos los sirve nginx, pero key.bin sale únicamente por /hls/:id/key
+  // tras validar el token, y no hay motivo para que otro uid del host la vea.
+  await writeFile(keyFile, key, { mode: 0o600 })
+  await writeFile(keyInfoFile, `key\n${keyFile}\n${iv}\n`, { mode: 0o600 })
 
   for (const variant of ['A', 'B']) {
     const started = Date.now()

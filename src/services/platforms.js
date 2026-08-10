@@ -1,8 +1,9 @@
 import { many, one, query, transaction } from '../db/index.js'
+import config from '../config.js'
 import logger from '../logger.js'
 import { invalidateJwksCache } from '../lti/jwks-cache.js'
 import { refreshFrameAncestors } from '../security/frame-ancestors.js'
-import { normalizePlatformInput } from '../admin/platform-validator.js'
+import { normalizePlatformInput, resolveSafeHost } from '../admin/platform-validator.js'
 
 export class PlatformConflictError extends Error {
   constructor (existing) {
@@ -82,6 +83,22 @@ async function afterPlatformChange (platformId) {
   await refreshFrameAncestors()
 }
 
+/**
+ * Guard SSRF bloqueante al guardar (V-14): el `jwks_url` es la única URL de la
+ * plataforma que la aplicación descarga por su cuenta, así que no se admite un
+ * destino que resuelva a red privada — antes esto era sólo un aviso de la
+ * comprobación opcional de la consola, y el alta por API ni lo miraba. La
+ * escotilla `ADMIN_ALLOW_PRIVATE_LTI_HOSTS` sigue cubriendo el desarrollo con
+ * un Moodle en red privada. Un host que ni resuelve también se rechaza: esa
+ * plataforma no podría validar ningún launch de todas formas.
+ */
+async function assertSafeJwksHost (input) {
+  if (config.admin.allowPrivateLtiHosts) return
+  const url = new URL(input.jwksUrl)
+  if (url.protocol !== 'https:') return // http: sólo existe fuera de producción
+  await resolveSafeHost(url.hostname, false)
+}
+
 async function throwConflict (input, exceptId, err) {
   if (err?.code !== '23505') throw err
   throw new PlatformConflictError(await findConflict(input.issuer, input.clientId, exceptId))
@@ -89,6 +106,7 @@ async function throwConflict (input, exceptId, err) {
 
 export async function createPlatform (input, { audit } = {}) {
   input = normalizePlatformInput(input)
+  await assertSafeJwksHost(input)
   let row
   try {
     row = await transaction(async (client) => {
@@ -136,6 +154,7 @@ export function changedPlatformFields (current, input) {
 
 export async function updatePlatform (id, input, { audit } = {}) {
   input = normalizePlatformInput(input)
+  await assertSafeJwksHost(input)
   let row
   try {
     row = await transaction(async (client) => {
@@ -215,6 +234,7 @@ export function listAuditEvents (limit = 50) {
 /** Compatibilidad con el script y la API existentes: crea o actualiza y reactiva. */
 export async function upsertPlatform (input) {
   input = normalizePlatformInput(input)
+  await assertSafeJwksHost(input)
   const row = await one(
     `INSERT INTO lti_platform
        (name, issuer, client_id, deployment_ids, auth_login_url, auth_token_url, jwks_url)

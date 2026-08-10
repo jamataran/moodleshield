@@ -56,9 +56,16 @@ export function normalizeOrigin (value) {
 function looksLikeScryptHash (value) {
   const match = /^scrypt:(\d+):(\d+):(\d+):([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(value)
   if (!match) return false
-  const [, n, r, p, salt, digest] = match
+  const [, rawN, rawR, rawP, salt, digest] = match
+  const n = Number(rawN)
+  const r = Number(rawR)
+  const p = Number(rawP)
   try {
-    return Number(n) === 16384 && Number(r) === 8 && Number(p) === 1 &&
+    // Suelo y techo, no igualdad exacta (V-35): un hash generado con
+    // parámetros más fuertes debe poder desplegarse sin tocar código. El mismo
+    // rango lo aplica src/admin/auth.js al verificar.
+    return Number.isInteger(n) && n >= 16384 && (n & (n - 1)) === 0 && n <= 131_072 &&
+      r >= 8 && r <= 16 && p >= 1 && p <= 4 &&
       Buffer.from(salt, 'base64url').length >= 16 &&
       Buffer.from(digest, 'base64url').length >= 32
   } catch {

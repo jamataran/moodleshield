@@ -55,7 +55,10 @@ export async function createApp () {
     // necesitamos. El control lo hace frame-ancestors, que es más fino.
     res.set('Content-Security-Policy', [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      // Sin 'unsafe-inline' (T32): no hay ni un <script> ejecutable en línea.
+      // Los bloques `type="application/json"` del bootstrap son datos y no los
+      // gobierna script-src; el código va siempre en módulos del mismo origen.
+      "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "media-src 'self' blob:",
