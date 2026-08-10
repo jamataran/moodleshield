@@ -104,7 +104,7 @@ services:
     networks: [internal]
 
   app:
-    image: ghcr.io/jamataran/moodleshield/app:sha-2325a7e
+    image: ghcr.io/jamataran/moodleshield/app:sha-6b0f1f9
     restart: unless-stopped
     init: true
     depends_on:
@@ -125,7 +125,7 @@ services:
     networks: [internal]
 
   worker:
-    image: ghcr.io/jamataran/moodleshield/worker:sha-2325a7e
+    image: ghcr.io/jamataran/moodleshield/worker:sha-6b0f1f9
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -146,7 +146,7 @@ services:
   # La configuración de nginx viaja dentro de la imagen (docker/Dockerfile.proxy)
   # y se etiqueta a la vez que app y worker.
   proxy:
-    image: ghcr.io/jamataran/moodleshield/proxy:sha-2325a7e
+    image: ghcr.io/jamataran/moodleshield/proxy:sha-6b0f1f9
     restart: unless-stopped
     depends_on:
       app:
