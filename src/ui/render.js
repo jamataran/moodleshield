@@ -23,19 +23,45 @@ function safeJson (value) {
 }
 
 /**
+ * Escapa un valor para incrustarlo como texto o dentro de un atributo con
+ * comillas. Cubre los cinco caracteres que rompen el marcado. Es lo que impide
+ * el XSS almacenado por el título del material (V-07): sin esto, un título
+ * `<script>…</script>` se ejecutaba en `processing.html`.
+ */
+export function escapeHtml (value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+/**
  * Render mínimo: sustituye `{{BOOTSTRAP}}` por los datos serializados y
  * `{{VAR}}` por el resto de valores. Suficiente para dos páginas; si algún día
  * hacen falta más, aquí es donde entra un motor de plantillas de verdad.
+ *
+ * `{{VAR}}` se escapa SIEMPRE como HTML. Un valor que sea marcado a propósito
+ * —hoy ninguno— debe declararse en `opts.raw`, de modo que saltarse el escapado
+ * sea una decisión explícita y localizable con un `grep`. Lo vigila
+ * `test/security/plantillas-escapadas.test.js`.
  */
-export async function renderPage (name, { bootstrap = {}, ...vars } = {}) {
+export async function renderPage (name, { bootstrap = {}, ...vars } = {}, { raw = [] } = {}) {
   let html = await loadTemplate(name)
-  html = html.replace('{{BOOTSTRAP}}', safeJson(bootstrap))
+  // OJO: las sustituciones usan una FUNCIÓN de reemplazo, no una cadena. Con una
+  // cadena, `String#replace(All)` interpreta `$$`, `$&`, `` $` `` y `$'` dentro
+  // del valor: un título con `$&` reinyectaría el propio `{{VAR}}`. La función
+  // devuelve el texto literal y no dispara esos patrones.
+  html = html.replace('{{BOOTSTRAP}}', () => safeJson(bootstrap))
   // Los HTML se generan en cada navegación LTI, pero los estáticos pueden
   // permanecer en la caché del navegador. Al variar esta query con cada imagen
   // desplegada nunca se mezcla un HTML nuevo con su JavaScript anterior.
-  html = html.replaceAll('{{ASSET_VERSION}}', encodeURIComponent(process.env.APP_VERSION ?? 'dev'))
+  const assetVersion = encodeURIComponent(process.env.APP_VERSION ?? 'dev')
+  html = html.replaceAll('{{ASSET_VERSION}}', () => assetVersion)
   for (const [key, value] of Object.entries(vars)) {
-    html = html.replaceAll(`{{${key}}}`, String(value ?? ''))
+    const rendered = raw.includes(key) ? String(value ?? '') : escapeHtml(value)
+    html = html.replaceAll(`{{${key}}}`, () => rendered)
   }
   return html
 }

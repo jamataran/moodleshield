@@ -3,6 +3,18 @@
 # Sólo se sustituyen las variables listadas en NGINX_ENVSUBST_FILTER, así que
 # las variables propias de nginx ($uri, $arg_*, …) llegan intactas.
 
+# Formato de acceso SIN query string (V-04): el formato `combined` registra
+# `$request`, que lleva `?st=`, `?kt=`, `?pt=` y `?md5=` en claro; cualquiera con
+# acceso a los logs (grupo docker, Portainer) reproduciría sesiones. Aquí se
+# registra `$uri` —la ruta sin query— para conservar el diagnóstico sin el
+# secreto. Lo vigila `test/security/tokens-en-logs.test.js` en la capa de app.
+log_format sin_query '$remote_addr - $remote_user [$time_local] '
+                     '"$request_method $uri $server_protocol" $status $body_bytes_sent '
+                     '"$http_referer" "$http_user_agent"';
+
+# No anunciar la versión de nginx en cada respuesta, ni siquiera en las de error.
+server_tokens off;
+
 upstream moodleshield_app {
     # Docker puede asignar otra IP a `app` al recrearla. Nginx 1.27 permite
     # resolver el nombre periódicamente sin tener que reiniciar el gateway.
@@ -19,10 +31,15 @@ server {
     # El TLS lo termina el túnel (Cloudflare / Tailscale) o el proxy externo.
     # Aquí sólo se habla HTTP dentro de la red de Docker.
 
-    client_max_body_size ${MAX_UPLOAD_SIZE};
+    # Límite pequeño por defecto (V-17): `client_max_body_size` en el bloque
+    # `server` se hereda en TODAS las locations. Con el valor de subida (varios
+    # GB) aquí, `/lti/login` y `/admin/login` aceptarían cuerpos enormes que
+    # nginx bufferiza en disco antes de proxear. El límite grande se sube SÓLO en
+    # la location de subida, más abajo.
+    client_max_body_size 1m;
     client_body_timeout 300s;
 
-    access_log /var/log/nginx/access.log combined;
+    access_log /var/log/nginx/access.log sin_query;
     error_log  /var/log/nginx/error.log warn;
 
     # ------------------------------------------------------------------
@@ -93,6 +110,9 @@ server {
     # disco de nginx que en el del backend. Cubre también las sustituciones
     # (POST /videos/<id>/revisions) y los PDF.
     location ~ "^/(videos|documents)(/[0-9a-fA-F-]{36}/revisions)?$" {
+        # La subida es la ÚNICA ruta que necesita el cuerpo grande (V-17): aquí
+        # se sube el límite; el resto del server se queda en 1m.
+        client_max_body_size ${MAX_UPLOAD_SIZE};
         proxy_pass http://moodleshield_app;
         proxy_request_buffering off;
         proxy_http_version 1.1;

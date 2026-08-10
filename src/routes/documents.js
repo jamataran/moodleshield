@@ -33,8 +33,8 @@ import { displayOwnerName } from '../services/sharing.js'
 
 export const documentsRouter = Router()
 
-function publicDocument (document) {
-  return toMaterialDto({ ...document, kind: 'pdf' })
+function publicDocument (document, { owner = true } = {}) {
+  return toMaterialDto({ ...document, kind: 'pdf' }, { owner })
 }
 
 /**
@@ -134,7 +134,7 @@ documentsRouter.get('/:id', requireSession, async (req, res, next) => {
     const id = assertDocumentId(req.params.id)
     const scope = await authorizeResource(req.session, 'pdf', id)
     if (!scope.ok) return res.status(404).json({ error: 'Documento no encontrado' })
-    res.json({ document: publicDocument(scope.material) })
+    res.json({ document: publicDocument(scope.material, { owner: scope.viaOwner }) })
   } catch (err) {
     next(err)
   }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { many, one, transaction } from '../db/index.js'
+import { many, one, query, transaction } from '../db/index.js'
 import config from '../config.js'
 import logger from '../logger.js'
 import { isUuid, removeRevisionFiles } from '../media/storage.js'
@@ -148,12 +148,15 @@ export async function insertRevision (client, kind, {
 
 export function listRevisions ({ kind, materialId }) {
   const { revisions, fk, table } = kindConfig(kind)
+  // Cota de filas (V-27): la retención mantiene pocas revisiones por material,
+  // pero la consulta no debe poder crecer sin límite.
   return many(
     `SELECT r.*, (m.active_revision_id = r.id) AS is_active
        FROM ${revisions} r
        JOIN ${table} m ON m.id = r.${fk}
       WHERE r.${fk} = $1
-      ORDER BY r.revision_number DESC`,
+      ORDER BY r.revision_number DESC
+      LIMIT 500`,
     [materialId]
   )
 }
@@ -406,12 +409,27 @@ export function listPurgeCandidates (kind, { limit = 50 } = {}) {
 export async function purgeRetiredRevisions () {
   const purged = { video: 0, pdf: 0, failed: 0 }
   for (const kind of ['video', 'pdf']) {
-    const { revisions } = kindConfig(kind)
+    const { revisions, table } = kindConfig(kind)
     for (const row of await listPurgeCandidates(kind)) {
       try {
-        await one(`UPDATE ${revisions} SET status = 'purging' WHERE id = $1 RETURNING id`, [row.id])
+        // Marca condicional y atómica (V-26): sólo pasa a `purging` si la
+        // revisión sigue retirada/purging y NO es la activa. Si un `activate`
+        // concurrente la reactivó entre `listPurgeCandidates` y aquí, el UPDATE
+        // no afecta ninguna fila y se salta — nunca se borran los ficheros de una
+        // revisión activa. El bloqueo de fila que toma `activate` sobre la propia
+        // revisión serializa las dos operaciones. Antes esto se hacía con un
+        // UPDATE incondicional sin releer estado, con la misma carrera que la
+        // purga manual arreglaba sólo en su lado.
+        const marked = await one(
+          `UPDATE ${revisions} r SET status = 'purging'
+            WHERE r.id = $1 AND r.status IN ('retired','purging')
+              AND NOT EXISTS (SELECT 1 FROM ${table} m WHERE m.active_revision_id = r.id)
+            RETURNING r.id`,
+          [row.id]
+        )
+        if (!marked) continue
         await removeRevisionFiles(kind, row.material_id, row.id, row.storage_layout)
-        await one(`DELETE FROM ${revisions} WHERE id = $1 RETURNING id`, [row.id])
+        await query(`DELETE FROM ${revisions} WHERE id = $1`, [row.id])
         purged[kind]++
       } catch (err) {
         logger.error({ err, kind, revisionId: row.id }, 'No se pudo purgar una revisión retirada')
@@ -423,6 +441,71 @@ export async function purgeRetiredRevisions () {
     logger.info(purged, 'Purga de revisiones retiradas')
   }
   return purged
+}
+
+/**
+ * Purga manual de una revisión retirada, pedida por el profesor.
+ *
+ * Corrige la carrera de V-26. Antes vivía en la capa de rutas con `one()`
+ * sueltos —cada uno su propia transacción— y sin bloquear el material: un
+ * `activate` concurrente (otra pestaña, un doble clic) podía activar justo esta
+ * revisión entre la comprobación y el borrado de ficheros, dejándola `ready` y
+ * activa con sus segmentos, su clave AES y su poster ya borrados del disco. El
+ * material se rompía en caliente para todos los alumnos.
+ *
+ * Aquí se toma `FOR UPDATE` sobre el material —el mismo orden de bloqueo que
+ * `activateRevision`/`discardRevision`— y sólo tras marcar la revisión `purging`
+ * dentro de esa transacción se borran los ficheros. Un `activate` que llegue
+ * después adquiere el bloqueo, ve el estado `purging` y la rechaza (no está en
+ * `ready`/`retired`), así que nunca se reactiva una revisión ya vaciada.
+ */
+export async function purgeRevisionManually ({ kind, materialId, revisionId, platformId, ownerSub }) {
+  const { table, revisions, fk } = kindConfig(kind)
+  // `active_revision_id` vuelve de pg en minúsculas; `assertUuid` valida el
+  // formato pero no normaliza la caja. Un `:rid` en mayúsculas pasaba la
+  // comparación JS `=== active_revision_id` (fallo) mientras el tipo `uuid` de
+  // Postgres sí encontraba la fila: se podía purgar la revisión activa (V-26,
+  // matiz). Se normaliza antes de cualquier comparación en JavaScript.
+  revisionId = String(revisionId).toLowerCase()
+  const gate = await transaction(async (client) => {
+    const { rows: materials } = await client.query(
+      `SELECT id, active_revision_id FROM ${table}
+        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 FOR UPDATE`,
+      [materialId, platformId, ownerSub]
+    )
+    if (materials.length === 0) return { status: 'material_not_found' }
+    if (materials[0].active_revision_id === revisionId) return { status: 'active_revision' }
+
+    const { rows } = await client.query(
+      `SELECT r.*,
+              (r.retired_at IS NOT NULL AND r.retired_at < now() - make_interval(secs => $3)) AS grace_elapsed
+         FROM ${revisions} r
+        WHERE r.id = $1 AND r.${fk} = $2
+        FOR UPDATE`,
+      [revisionId, materialId, minimumGraceSeconds()]
+    )
+    if (rows.length === 0) return { status: 'revision_not_found' }
+    const row = rows[0]
+    if (row.legal_hold) return { status: 'on_hold' }
+    if (!['retired', 'failed', 'cancelled', 'purging'].includes(row.status)) {
+      return { status: 'not_purgeable', revisionStatus: row.status }
+    }
+    if (row.status === 'retired' && !row.grace_elapsed) return { status: 'in_grace' }
+
+    await client.query(`UPDATE ${revisions} SET status = 'purging' WHERE id = $1`, [revisionId])
+    return { status: 'ok', storageLayout: row.storage_layout }
+  })
+
+  if (gate.status !== 'ok') return gate
+
+  // Ya está `purging` y confirmado: el borrado de ficheros y de la fila ocurre
+  // fuera del bloqueo sin riesgo de reactivación. `query` (no `one`) porque la
+  // purga automática podría haber borrado la fila entre medias, y eso no es un
+  // error.
+  await removeRevisionFiles(kind, materialId, revisionId, gate.storageLayout)
+  await query(`DELETE FROM ${revisions} WHERE id = $1`, [revisionId])
+  logger.info({ kind, materialId, revisionId }, 'Revisión purgada a petición del profesor')
+  return { status: 'purged' }
 }
 
 /**

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import config from '../config.js'
 
 /**
@@ -33,5 +33,10 @@ export function verifyMediaUrl (uri, { md5, expires, secret = config.secrets.med
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '')
-  return expected === md5
+  // Comparación en tiempo constante (V-24): sólo afecta al modo de desarrollo
+  // —en producción firma nginx—, pero se mantiene la disciplina del resto del
+  // proyecto y así la ruta de Node no distingue una firma casi correcta.
+  const a = Buffer.from(String(md5 ?? ''))
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
 }

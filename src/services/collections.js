@@ -196,6 +196,11 @@ async function queryCollectionRows ({
   if (folderId !== undefined) {
     if (folderId === null || folderId === 'root' || folderId === '') {
       clauses += ' AND c.folder_id IS NULL'
+    } else if (!isUuid(folderId)) {
+      // Un folderId no-UUID daría 22P02 → 500 (V-25); se rechaza con 400.
+      throw new CollectionError('El parámetro folderId no es un identificador válido', {
+        code: 'invalid_folder_id'
+      })
     } else {
       params.push(folderId)
       clauses += ` AND c.folder_id = $${params.length}`
@@ -215,11 +220,10 @@ async function queryCollectionRows ({
       ($${params.length - 1}::timestamptz, $${params.length}::uuid)`
   }
 
-  let limitClause = ''
-  if (rowLimit !== null) {
-    params.push(rowLimit)
-    limitClause = `LIMIT $${params.length}`
-  }
+  // Siempre hay tope: un listado sin `rowLimit` explícito cae al techo de página
+  // (V-27), para que ninguna ruta pueda devolver la tabla entera sin querer.
+  params.push(rowLimit ?? config.catalog.maxPageSize)
+  const limitClause = `LIMIT $${params.length}`
 
   return many(
     `SELECT c.*,

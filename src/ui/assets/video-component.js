@@ -202,7 +202,10 @@ export function createVideoView ({
   container.replaceChildren(root)
 
   const status = (text, isError = false) => onStatus?.(text, isError)
-  const playlistUrl = `${video.playlistUrl}?st=${encodeURIComponent(sessionToken)}`
+  // El token de sesión NO viaja en la URL (T23): la playlist se pide con la
+  // cabecera Authorization (hls.js `xhrSetup`) o, en el HLS nativo que no puede
+  // poner cabeceras, con un ticket corto en `?pt=`.
+  const playlistUrl = video.playlistUrl
   const cleanups = []
   let hls = null
   let watermarkIndex = 0
@@ -598,16 +601,60 @@ export function createVideoView ({
   updatePip()
   updateFullscreen()
 
-  if (element.canPlayType('application/vnd.apple.mpegurl')) {
-    // Safari e iOS reproducen HLS de forma nativa, incluido AES-128.
-    element.src = playlistUrl
-  } else if (win.Hls?.isSupported()) {
+  // Pide un ticket corto (POST /hls/<id>/ticket con Authorization) y arranca el
+  // HLS NATIVO con `?pt=`. Es el único camino que no puede poner cabeceras.
+  //
+  // El ticket dura segundos, y iOS suele aplazar la carga de la playlist hasta
+  // el gesto de play: si el alumno tarda en pulsar, el ticket caduca y la
+  // playlist da 401, que el elemento emite como `error`. Por eso el ticket se
+  // vuelve a pedir (acotado) ante un `error`, reanudando en la posición actual
+  // en vez de volver al principio. Cubre también una caducación a mitad.
+  let nativeAttempts = 0
+  const NATIVE_MAX_ATTEMPTS = 3
+  const loadNativeHls = async ({ resumeAt = 0 } = {}) => {
+    if (destroyed) return
+    if (nativeAttempts >= NATIVE_MAX_ATTEMPTS) {
+      status('No se pudo iniciar la reproducción. Vuelve a abrir la actividad.', true)
+      return
+    }
+    nativeAttempts++
+    try {
+      const ticketUrl = playlistUrl.replace(/\/index\.m3u8(\?.*)?$/, '/ticket')
+      const res = await win.fetch(ticketUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}` }
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const { ticket } = await res.json()
+      if (destroyed || !ticket) return
+      if (resumeAt > 0) {
+        listen(element, 'loadedmetadata', () => {
+          try { element.currentTime = resumeAt } catch { /* posición fuera de rango */ }
+        }, { once: true })
+      }
+      element.src = `${playlistUrl}?pt=${encodeURIComponent(ticket)}`
+    } catch {
+      status('No se pudo iniciar la reproducción. Vuelve a abrir la actividad.', true)
+    }
+  }
+  const onNativeError = () => {
+    if (destroyed) return
+    const resumeAt = Number.isFinite(element.currentTime) ? element.currentTime : 0
+    void loadNativeHls({ resumeAt })
+  }
+
+  // Se prefiere hls.js cuando existe (T23): sus peticiones llevan la cabecera
+  // Authorization y NINGÚN token viaja en la URL. El HLS nativo queda de
+  // respaldo para los navegadores sin Media Source (iOS antiguo), y es el único
+  // que usa el ticket.
+  if (win.Hls?.isSupported()) {
     const HlsClass = win.Hls
     hls = new HlsClass({
       enableWorker: true,
       lowLatencyMode: false,
       maxBufferLength: 30,
-      backBufferLength: 30
+      backBufferLength: 30,
+      xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', `Bearer ${sessionToken}`)
     })
     hls.loadSource(playlistUrl)
     hls.attachMedia(element)
@@ -626,6 +673,9 @@ export function createVideoView ({
         hls = null
       }
     })
+  } else if (element.canPlayType('application/vnd.apple.mpegurl')) {
+    listen(element, 'error', onNativeError)
+    void loadNativeHls()
   } else {
     status('Este navegador no puede reproducir HLS.', true)
   }

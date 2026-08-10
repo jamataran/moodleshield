@@ -84,7 +84,16 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for f in infra/*/.env.sample; do
+          # V-23: antes sólo recorría `.env.sample`, así que un token real en un
+          # `.env` o `.env.example` versionado por error no lo veía. Ahora recorre
+          # todos los ficheros con formato KEY=VALUE que git tenga trackeados
+          # bajo infra/, SALVO los `.env.ci`: ésos llevan valores de relleno de CI
+          # a propósito (DB_PASSWORD=ci, …) que el paso «Validar compose»
+          # necesita, y son de baja entropía, no secretos reales. (Los compose.yml
+          # son YAML y no pasan por este parser; su saneado se documenta en
+          # docs/auditoria-seguridad.md.)
+          for f in $(git ls-files 'infra/*/.env' 'infra/*/.env.sample' 'infra/*/.env.example'); do
+            [ -f "$f" ] || continue
             while IFS= read -r line; do
               case "$line" in \#*|'') continue ;; esac
               key=${line%%=*}; value=${line#*=}

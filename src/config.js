@@ -152,7 +152,14 @@ export const config = {
 
   session: {
     /** Duración del token de sesión emitido tras un launch LTI. */
-    ttlSeconds: integer('SESSION_TTL_SECONDS', 4 * 60 * 60)
+    ttlSeconds: integer('SESSION_TTL_SECONDS', 4 * 60 * 60),
+    /**
+     * Duración del ticket de reproducción (`?pt=`) del HLS nativo de Safari/iOS
+     * (T23). Corto a propósito: una URL con el ticket copiada caduca en
+     * segundos. Sólo tiene que durar lo que tarda el reproductor en pedir la
+     * playlist tras recibirlo.
+     */
+    playbackTicketTtlSeconds: integer('PLAYBACK_TICKET_TTL_SECONDS', 90)
   },
 
   media: {
@@ -327,12 +334,25 @@ export function assertConfigValid () {
   if (config.media.delivery === 'signed' && !config.secrets.mediaLink) {
     errors.push('MEDIA_DELIVERY=signed exige MEDIA_LINK_SECRET')
   }
+  // En producción la entrega DEBE ir firmada (V-11): la ruta de Node que sirve
+  // segmentos sin firma no se monta, así que un `app` en producción sólo puede
+  // ser un error de configuración que dejaría al sistema sin forma de entregar
+  // vídeo. Se falla al arrancar, nombrando la variable, en vez de a mitad de un
+  // visionado. Los tres composes ya fijan `signed`.
+  if (config.isProduction && config.media.delivery !== 'signed') {
+    errors.push('En producción MEDIA_DELIVERY debe ser "signed" (nginx firma los segmentos con secure_link)')
+  }
   if (config.isProduction && !config.publicUrl.startsWith('https://')) {
     errors.push('PUBLIC_URL debe ser https:// en producción (Moodle lo exige para LTI 1.3)')
   }
   if (config.admin.enabled && !config.publicUrl.startsWith('https://') &&
       !isLoopbackDevUrl(config.publicUrl)) {
     errors.push('Activar la consola admin exige una PUBLIC_URL https:// (o loopback en desarrollo)')
+  }
+  // El bearer de alta de plataformas abre el registro de tenants LTI. Sin
+  // longitud mínima, `LTI_ADMIN_TOKEN=x` pasaba la validación (V-06).
+  if (config.lti.adminToken && config.lti.adminToken.length < 32) {
+    errors.push('LTI_ADMIN_TOKEN debe tener al menos 32 caracteres cuando está definido')
   }
   if (config.transcode.heartbeatMs >= config.transcode.leaseSeconds * 1000) {
     errors.push('TRANSCODE_HEARTBEAT_MS debe ser menor que TRANSCODE_LEASE_SECONDS')

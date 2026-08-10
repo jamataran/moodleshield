@@ -7,9 +7,14 @@ import config from './config.js'
  * El launch LTI ocurre dentro de un iframe de terceros, donde las cookies son
  * poco fiables (bloqueo de terceros en Safari/Firefox, particionado CHIPS en
  * Chrome). En vez de pelearse con eso, tras validar el id_token emitimos un
- * token firmado y lo llevamos en la URL o en la cabecera Authorization. El
- * player lo necesita igualmente en la URL de la playlist, porque hls.js no
- * puede añadir cabeceras a las peticiones de segmentos.
+ * token firmado y lo entregamos al JavaScript de la página en `{{BOOTSTRAP}}`.
+ *
+ * El token de sesión viaja SÓLO en `Authorization: Bearer` (T23/ADR-016): ya no
+ * se acepta en la URL (`?st=`). Copiar cualquier URL del reproductor dejó de dar
+ * acceso al contenido. `hls.js` añade la cabecera con `xhrSetup`; PDF.js con
+ * `httpHeaders`. El único caso que no puede poner cabeceras es el HLS NATIVO de
+ * Safari/iOS, y para eso está el "ticket de reproducción": un pase de segundos,
+ * ligado a un recurso y una revisión, que viaja en `?pt=`.
  *
  * Formato: base64url(payloadJSON).base64url(HMAC-SHA256)  — un JWT sin la parte
  * de negociación de algoritmo, que aquí sólo sería superficie de ataque.
@@ -134,10 +139,67 @@ export function verifyKeyToken (token, videoId) {
   return payload
 }
 
-/** Extrae el token de sesión de `Authorization: Bearer` o del query `?st=`. */
+/**
+ * Ticket de reproducción (T23): un pase corto para el HLS nativo de Safari/iOS,
+ * que no puede añadir cabeceras. Se emite tras `authorizeResource`, así que ya
+ * prueba la autorización; lleva la revisión fijada y los datos que necesita el
+ * registro forense, para que un visionado por esta vía quede igual de trazado.
+ * Dura segundos (`PLAYBACK_TICKET_TTL_SECONDS`, por defecto 90), así que una URL
+ * `?pt=` copiada caduca antes de servir para nada.
+ */
+export function issuePlaybackTicket (ctx) {
+  return issueToken(
+    {
+      typ: 'pt',
+      k: ctx.kind,
+      id: ctx.id,
+      rv: ctx.revisionId ?? null,
+      cid: ctx.collectionId ?? null,
+      vo: ctx.viaOwner ? 1 : 0,
+      sub: ctx.sub,
+      pid: ctx.platformId,
+      name: ctx.name ?? null,
+      idn: ctx.identity ?? null,
+      ctx: ctx.contextId ?? null,
+      rl: ctx.resourceLinkId ?? null,
+      sj: ctx.sessionJti ?? null
+    },
+    { secret: config.secrets.session, ttlSeconds: config.session.playbackTicketTtlSeconds }
+  )
+}
+
+export function verifyPlaybackTicket (token, { kind, id }) {
+  const payload = verifyToken(token, { secret: config.secrets.session })
+  if (!payload || payload.typ !== 'pt') return null
+  if (payload.k !== kind || payload.id !== id) return null
+  return {
+    kind: payload.k,
+    id: payload.id,
+    revisionId: payload.rv ?? null,
+    collectionId: payload.cid ?? null,
+    viaOwner: payload.vo === 1,
+    sub: payload.sub,
+    platformId: payload.pid,
+    name: payload.name ?? null,
+    identity: payload.idn ?? null,
+    contextId: payload.ctx ?? null,
+    resourceLinkId: payload.rl ?? null,
+    sessionJti: payload.sj ?? null
+  }
+}
+
+/**
+ * Extrae el token de sesión de `Authorization: Bearer`. Ya NO se acepta `?st=`
+ * en la URL (T23): copiar la URL del reproductor dejó de dar acceso.
+ */
 export function readSessionToken (req) {
   const header = req.get?.('authorization') ?? req.headers?.authorization
   if (header && header.startsWith('Bearer ')) return header.slice(7).trim()
-  const fromQuery = req.query?.st
+  return null
+}
+
+/** Ticket de reproducción del query `?pt=` (sólo HLS nativo). */
+export function readPlaybackTicket (req) {
+  const fromQuery = req.query?.pt
   return typeof fromQuery === 'string' ? fromQuery : null
 }

@@ -11,7 +11,15 @@ import { buildUserPlaylist } from '../media/playlist.js'
 import { patternToHex } from '../media/watermark.js'
 import { verifyMediaUrl } from '../media/signing.js'
 import { publicOriginFor } from '../security/public-origin.js'
-import { issueKeyToken, verifyKeyToken } from '../session.js'
+import {
+  issueKeyToken,
+  verifyKeyToken,
+  issuePlaybackTicket,
+  verifyPlaybackTicket,
+  readPlaybackTicket,
+  readSessionToken,
+  verifySession
+} from '../session.js'
 import {
   assertVideoId,
   assertUuid,
@@ -26,6 +34,65 @@ export const hlsRouter = Router()
 
 const NO_STORE = 'no-store, no-cache, must-revalidate, private'
 
+// Nota: NO se pone un rate limit por IP en /hls/:id/key. Con el túnel delante,
+// `req.ip` puede ser una dirección compartida (V-13), así que un límite por IP
+// podría dar 429 a alumnos legítimos de un despliegue grande. Y un `kt` inválido
+// ya se rechaza con 403 sin tocar la base de datos, así que el abuso es barato
+// de absorber. El freno fino por `jti` necesita el modelo de T30; el grueso, el
+// `limit_req` de borde en nginx una vez `TRUST_PROXY` sea fiable (T25/T29).
+
+/**
+ * Resuelve el acceso a la playlist por sesión (cabecera Bearer) o por ticket de
+ * reproducción (`?pt=`) (T23). El caso normal —hls.js en Chrome/Firefox/Edge/
+ * Safari moderno— llega por cabecera y no lleva ningún token en la URL. El
+ * ticket es SÓLO para el HLS nativo de Safari/iOS, que no puede añadir
+ * cabeceras: se emitió tras `authorizeResource`, así que ya prueba el acceso, y
+ * trae la revisión fijada y los datos del registro forense.
+ */
+async function resolvePlaylistAccess (req, videoId) {
+  const session = verifySession(readSessionToken(req))
+  if (session) {
+    const scope = await authorizeResource(session, 'video', videoId)
+    if (!scope.ok) return { ok: false, status: 404 }
+    return {
+      ok: true,
+      viaOwner: scope.viaOwner,
+      revision: scope.revision ?? null,
+      revisionId: scope.revisionId,
+      collectionId: scope.collectionId,
+      record: {
+        sub: session.sub,
+        name: session.name,
+        contextId: session.contextId,
+        resourceLinkId: session.resourceLinkId,
+        identity: session.identity,
+        platformId: session.platformId,
+        jti: session.jti
+      }
+    }
+  }
+  const ticket = verifyPlaybackTicket(readPlaybackTicket(req), { kind: 'video', id: videoId })
+  if (ticket) {
+    return {
+      ok: true,
+      viaOwner: ticket.viaOwner,
+      revision: null,
+      revisionId: ticket.revisionId,
+      collectionId: ticket.collectionId,
+      record: {
+        sub: ticket.sub,
+        name: ticket.name,
+        contextId: ticket.contextId,
+        resourceLinkId: ticket.resourceLinkId,
+        identity: ticket.identity,
+        platformId: ticket.platformId,
+        jti: ticket.sessionJti
+      }
+    }
+  }
+  return { ok: false, status: 401 }
+}
+
 /**
  * Playlist personalizada. Es el corazón del sistema y no toca ffmpeg: sólo
  * decide, para cada segmento, si apunta a la variante A o a la B según el
@@ -35,14 +102,18 @@ const NO_STORE = 'no-store, no-cache, must-revalidate, private'
  * launch. Una activación a mitad de reproducción no puede mezclar versiones
  * porque la playlist ya está escrita.
  */
-hlsRouter.get('/:id/index.m3u8', requireSession, async (req, res, next) => {
+hlsRouter.get('/:id/index.m3u8', async (req, res, next) => {
   try {
     const videoId = assertVideoId(req.params.id)
-    const scope = await authorizeResource(req.session, 'video', videoId)
-    if (!scope.ok) return res.status(404).json({ error: 'Vídeo no encontrado' })
+    const access = await resolvePlaylistAccess(req, videoId)
+    if (!access.ok) {
+      return access.status === 404
+        ? res.status(404).json({ error: 'Vídeo no encontrado' })
+        : res.status(401).json({ error: 'Sesión no válida o caducada. Vuelve a abrir la actividad en Moodle.' })
+    }
 
-    const revision = scope.revision ??
-      (scope.revisionId ? await getRevision({ kind: 'video', materialId: videoId, revisionId: scope.revisionId }) : null)
+    const revision = access.revision ??
+      (access.revisionId ? await getRevision({ kind: 'video', materialId: videoId, revisionId: access.revisionId }) : null)
     if (!revision) {
       return res.status(409).json({ error: 'Este vídeo todavía no tiene ninguna versión publicada' })
     }
@@ -53,20 +124,20 @@ hlsRouter.get('/:id/index.m3u8', requireSession, async (req, res, next) => {
     // Registro forense en el primer uso REAL, no al abrir la actividad. Con
     // colecciones, registrar en el launch produciría candidatos de vídeos que
     // el alumno nunca reprodujo. El `jti` de la sesión lo desduplica.
-    if (!scope.viaOwner) {
+    if (!access.viaOwner) {
       await recordView({
         videoId,
         revisionId: revision.id,
-        platformId: req.session.platformId,
-        collectionId: scope.collectionId,
-        sessionJti: req.session.jti,
+        platformId: access.record.platformId,
+        collectionId: access.collectionId,
+        sessionJti: access.record.jti,
         context: {
-          sub: req.session.sub,
-          name: req.session.name,
-          contextId: req.session.contextId,
-          resourceLinkId: req.session.resourceLinkId
+          sub: access.record.sub,
+          name: access.record.name,
+          contextId: access.record.contextId,
+          resourceLinkId: access.record.resourceLinkId
         },
-        identity: req.session.identity,
+        identity: access.record.identity,
         ip: req.ip,
         userAgent: req.get('user-agent')
       }).catch((err) => req.log?.warn({ err, videoId }, 'No se pudo registrar el visionado'))
@@ -75,15 +146,15 @@ hlsRouter.get('/:id/index.m3u8', requireSession, async (req, res, next) => {
     const keyToken = issueKeyToken({
       videoId,
       revisionId: revision.id,
-      sub: req.session.sub,
-      platformId: req.session.platformId
+      sub: access.record.sub,
+      platformId: access.record.platformId
     })
     const { body, pattern } = await buildUserPlaylist({
       videoId,
       revisionId: revision.id,
       layout: revision.storage_layout,
       patternScope: revision.pattern_scope,
-      userSub: req.session.sub,
+      userSub: access.record.sub,
       keyToken,
       origin: publicOriginFor(req)
     })
@@ -92,7 +163,7 @@ hlsRouter.get('/:id/index.m3u8', requireSession, async (req, res, next) => {
       {
         videoId,
         revisionId: revision.id,
-        sub: req.session.sub,
+        sub: access.record.sub,
         pattern: patternToHex(pattern).slice(0, 16)
       },
       'Playlist personalizada generada'
@@ -100,6 +171,45 @@ hlsRouter.get('/:id/index.m3u8', requireSession, async (req, res, next) => {
 
     res.set('Cache-Control', NO_STORE)
     res.type('application/vnd.apple.mpegurl').send(body)
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * Emite un ticket de reproducción para el HLS nativo de Safari/iOS (T23), que no
+ * puede añadir la cabecera `Authorization` a la petición de la playlist. Exige
+ * sesión (cabecera Bearer) y que la sesión autorice este vídeo; el ticket que
+ * devuelve dura segundos y sólo abre esta revisión de este vídeo.
+ */
+hlsRouter.post('/:id/ticket', requireSession, async (req, res, next) => {
+  try {
+    const videoId = assertVideoId(req.params.id)
+    const scope = await authorizeResource(req.session, 'video', videoId)
+    if (!scope.ok) return res.status(404).json({ error: 'Vídeo no encontrado' })
+
+    const revision = scope.revision ??
+      (scope.revisionId ? await getRevision({ kind: 'video', materialId: videoId, revisionId: scope.revisionId }) : null)
+    if (!revision || !['ready', 'retired'].includes(revision.status)) {
+      return res.status(409).json({ error: 'Este vídeo todavía no tiene ninguna versión publicada' })
+    }
+
+    const ticket = issuePlaybackTicket({
+      kind: 'video',
+      id: videoId,
+      revisionId: revision.id,
+      collectionId: scope.collectionId,
+      viaOwner: scope.viaOwner,
+      sub: req.session.sub,
+      platformId: req.session.platformId,
+      name: req.session.name,
+      identity: req.session.identity,
+      contextId: req.session.contextId,
+      resourceLinkId: req.session.resourceLinkId,
+      sessionJti: req.session.jti
+    })
+    res.set('Cache-Control', NO_STORE)
+    res.json({ ticket, ttlSeconds: config.session.playbackTicketTtlSeconds })
   } catch (err) {
     next(err)
   }

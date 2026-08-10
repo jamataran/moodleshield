@@ -1,7 +1,7 @@
 import { many, one, query, transaction } from '../db/index.js'
 import logger from '../logger.js'
 import { assertFolderInTransaction, normalizeName } from './folders.js'
-import { listCollectionsUsing, listMaterials } from './materials.js'
+import { listCollectionsUsing, listMaterials, VIEWERS_LIMIT } from './materials.js'
 import { insertRevision, syncMaterialStatus } from './revisions.js'
 import { visibleClause } from './sharing.js'
 
@@ -293,7 +293,8 @@ export function listDocumentViewers (documentId) {
        FROM document_view_event
       WHERE document_id = $1
       GROUP BY user_sub
-      ORDER BY last_seen DESC`,
+      ORDER BY last_seen DESC
+      LIMIT ${VIEWERS_LIMIT}`,
     [documentId]
   )
 }

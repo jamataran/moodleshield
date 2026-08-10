@@ -238,12 +238,22 @@ export async function upsertPlatform (input) {
   return row
 }
 
+/**
+ * Confianza al primer uso del `deployment_id` (V-20): la lista arranca vacía y
+ * el primer valor que llega se acepta y queda grabado. El aislamiento real es
+ * por `platform_id`, así que el impacto es acotado, pero se pone tope al
+ * crecimiento para que una plataforma comprometida no engorde la fila sin
+ * límite. Un Moodle real tiene un puñado de deployments, no decenas.
+ */
+const MAX_DEPLOYMENT_IDS = 64
+
 export async function rememberDeploymentId (platformId, deploymentId) {
   if (!deploymentId) return
   await query(
     `UPDATE lti_platform
         SET deployment_ids = array_append(deployment_ids, $2), updated_at = now()
-      WHERE id = $1 AND enabled = true AND NOT ($2 = ANY (deployment_ids))`,
-    [platformId, deploymentId]
+      WHERE id = $1 AND enabled = true AND NOT ($2 = ANY (deployment_ids))
+        AND cardinality(deployment_ids) < $3`,
+    [platformId, deploymentId, MAX_DEPLOYMENT_IDS]
   )
 }

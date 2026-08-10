@@ -19,6 +19,9 @@ import { visibleClause } from './sharing.js'
 
 export const MATERIAL_KINDS = ['video', 'pdf']
 
+/** Tope de filas de las listas de espectadores para la interfaz (V-27). */
+export const VIEWERS_LIMIT = 2000
+
 /**
  * Escapa los comodines de LIKE. Sin esto, buscar `100%` devolvería todo el
  * catálogo y `_` casaría con cualquier carácter.
@@ -62,6 +65,14 @@ function folderCondition (folderId, params, alias) {
   if (folderId === undefined) return ''
   if (folderId === null || folderId === 'root' || folderId === '') {
     return ` AND ${alias}.folder_id IS NULL`
+  }
+  // Un `folderId` que no es UUID (p.ej. `?folderId=abc`) produciría un error
+  // `22P02` de Postgres y un 500 con detalle SQL fuera de producción (V-25). Se
+  // rechaza limpiamente con 400 antes de tocar la base de datos.
+  if (!isUuid(folderId)) {
+    const err = new Error('El parámetro folderId no es un identificador válido')
+    err.status = 400
+    throw err
   }
   params.push(folderId)
   return ` AND ${alias}.folder_id = $${params.length}`
@@ -157,14 +168,21 @@ export async function listMaterials ({
   }
 }
 
-export function toMaterialDto (row) {
-  return {
+/**
+ * @param {object} row
+ * @param {object} [opts]
+ * @param {boolean} [opts.owner=true]  Si es el propietario. Para un alumno
+ *   (`owner: false`) se omiten `folderId` —dato de organización del profesor— y
+ *   `error` —que puede llevar stderr de ffmpeg/qpdf con rutas del contenedor—
+ *   (V-28). El DTO deja así de servir la misma forma a las dos audiencias.
+ */
+export function toMaterialDto (row, { owner = true } = {}) {
+  const dto = {
     id: row.id,
     kind: row.kind,
     title: row.title,
     description: row.description,
     status: row.status,
-    folderId: row.folder_id,
     durationSeconds: row.duration_seconds === null || row.duration_seconds === undefined
       ? null
       : Number(row.duration_seconds),
@@ -173,7 +191,6 @@ export function toMaterialDto (row) {
     height: row.height ?? null,
     pageCount: row.page_count ?? null,
     sizeBytes: row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),
-    error: row.error ?? null,
     archived: Boolean(row.archived_at),
     hasActiveRevision: Boolean(row.active_revision_id),
     // `shared` es «de otro profesor, visible porque lo compartió». La interfaz
@@ -184,6 +201,11 @@ export function toMaterialDto (row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
+  if (owner) {
+    dto.folderId = row.folder_id
+    dto.error = row.error ?? null
+  }
+  return dto
 }
 
 /**

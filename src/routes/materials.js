@@ -1,19 +1,15 @@
 import { Router } from 'express'
-import logger from '../logger.js'
 import { requireCatalogInstructor } from './auth.js'
 import { assertUuid } from '../media/storage.js'
-import { removeRevisionFiles } from '../media/storage.js'
 import { getOwnedMaterial, listMaterials } from '../services/materials.js'
-import { one } from '../db/index.js'
 import {
   activateRevision,
   archiveMaterial,
   discardRevision,
   getCandidateRevision,
-  kindConfig,
   listRevisions,
-  minimumGraceSeconds,
   publicRevision,
+  purgeRevisionManually,
   restoreMaterial
 } from '../services/revisions.js'
 
@@ -134,55 +130,35 @@ materialsRouter.post('/:kind/:id/revisions/:rid/discard', requireCatalogInstruct
 materialsRouter.delete('/:kind/:id/revisions/:rid', requireCatalogInstructor, async (req, res, next) => {
   try {
     const kind = assertKind(req.params.kind)
-    const materialId = assertUuid(req.params.id, 'Identificador de material')
-    const revisionId = assertUuid(req.params.rid, 'Identificador de revisión')
-    const { table, revisions, fk } = kindConfig(kind)
-
-    const material = await getOwnedMaterial({
+    const result = await purgeRevisionManually({
       kind,
-      id: materialId,
+      materialId: assertUuid(req.params.id, 'Identificador de material'),
+      revisionId: assertUuid(req.params.rid, 'Identificador de revisión'),
       platformId: req.session.platformId,
       ownerSub: req.session.sub
     })
-    if (!material) return res.status(404).json({ error: 'Material no encontrado' })
-    if (material.active_revision_id === revisionId) {
-      return res.status(409).json({
-        error: 'No se puede purgar la revisión publicada',
-        code: 'revision_active'
-      })
+    switch (result.status) {
+      case 'material_not_found':
+        return res.status(404).json({ error: 'Material no encontrado' })
+      case 'revision_not_found':
+        return res.status(404).json({ error: 'Revisión no encontrada' })
+      case 'active_revision':
+        return res.status(409).json({ error: 'No se puede purgar la revisión publicada', code: 'revision_active' })
+      case 'on_hold':
+        return res.status(409).json({ error: 'La revisión está retenida para una investigación', code: 'revision_on_hold' })
+      case 'not_purgeable':
+        return res.status(409).json({
+          error: `Una revisión en estado "${result.revisionStatus}" no se purga`,
+          code: 'revision_not_purgeable'
+        })
+      case 'in_grace':
+        return res.status(409).json({
+          error: 'Todavía puede haber sesiones abiertas usando esta revisión. Inténtalo más tarde.',
+          code: 'revision_in_grace'
+        })
+      default:
+        return res.sendStatus(204)
     }
-
-    const row = await one(
-      `SELECT r.*, (r.retired_at IS NOT NULL AND r.retired_at < now() - make_interval(secs => $3)) AS grace_elapsed
-         FROM ${revisions} r JOIN ${table} m ON m.id = r.${fk}
-        WHERE r.id = $1 AND r.${fk} = $2`,
-      [revisionId, materialId, minimumGraceSeconds()]
-    )
-    if (!row) return res.status(404).json({ error: 'Revisión no encontrada' })
-    if (row.legal_hold) {
-      return res.status(409).json({
-        error: 'La revisión está retenida para una investigación',
-        code: 'revision_on_hold'
-      })
-    }
-    if (!['retired', 'failed', 'cancelled', 'purging'].includes(row.status)) {
-      return res.status(409).json({
-        error: `Una revisión en estado "${row.status}" no se purga`,
-        code: 'revision_not_purgeable'
-      })
-    }
-    if (row.status === 'retired' && !row.grace_elapsed) {
-      return res.status(409).json({
-        error: 'Todavía puede haber sesiones abiertas usando esta revisión. Inténtalo más tarde.',
-        code: 'revision_in_grace'
-      })
-    }
-
-    await one(`UPDATE ${revisions} SET status = 'purging' WHERE id = $1 RETURNING id`, [revisionId])
-    await removeRevisionFiles(kind, materialId, revisionId, row.storage_layout)
-    await one(`DELETE FROM ${revisions} WHERE id = $1 RETURNING id`, [revisionId])
-    logger.info({ kind, materialId, revisionId }, 'Revisión purgada a petición del profesor')
-    res.sendStatus(204)
   } catch (err) {
     next(err)
   }

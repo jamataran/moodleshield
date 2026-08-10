@@ -1,5 +1,6 @@
 import { many, one, transaction } from '../db/index.js'
 import config from '../config.js'
+import { isUuid } from '../media/storage.js'
 
 /**
  * Carpetas personales anidadas (n niveles).
@@ -398,6 +399,14 @@ export function setFolderVisibility ({ id, platformId, ownerSub, isPublic }) {
 export async function assertFolderInTransaction (client, { folderId, platformId, ownerSub }) {
   if (folderId === null || folderId === undefined || folderId === '' || folderId === 'root') {
     return null
+  }
+  // Un folderId no-UUID (subida, movimiento, colección) daría 22P02 → 500
+  // (V-25). Se rechaza con 400 antes de tocar la base de datos.
+  if (!isUuid(folderId)) {
+    throw new FolderError('La carpeta indicada no es un identificador válido', {
+      status: 400,
+      code: 'invalid_folder_id'
+    })
   }
   const { rows } = await client.query(
     `SELECT id FROM catalog_folder

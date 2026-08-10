@@ -10,7 +10,17 @@ export function getFrameAncestors () {
 export async function refreshFrameAncestors () {
   try {
     const platforms = await many('SELECT issuer FROM lti_platform WHERE enabled = true')
-    const origins = [...new Set(platforms.map((row) => new URL(row.issuer).origin))]
+    // El parseo va por fila (V-31): un único `issuer` no parseable no debe
+    // congelar en silencio la lista entera para siempre. Se descarta esa fila y
+    // el resto de plataformas siguen pudiendo enmarcar la herramienta.
+    const origins = [...new Set(platforms.flatMap((row) => {
+      try {
+        return [new URL(row.issuer).origin]
+      } catch {
+        logger.warn({ issuer: row.issuer }, 'issuer no parseable; se excluye de frame-ancestors')
+        return []
+      }
+    }))]
     frameAncestors = origins.length ? `'self' ${origins.join(' ')}` : "'self'"
     return frameAncestors
   } catch (err) {

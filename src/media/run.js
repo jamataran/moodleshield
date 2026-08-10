@@ -19,11 +19,15 @@ export function runProcess (command, args, {
 } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason ?? new Error('Proceso cancelado'))
-    const useNice = nice > 0 && process.platform !== 'win32'
+    const posix = process.platform !== 'win32'
+    const useNice = nice > 0 && posix
     const bin = useNice ? 'nice' : command
     const argv = useNice ? ['-n', String(nice), command, ...args] : args
 
-    const child = spawn(bin, argv, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    // `detached` hace del hijo el líder de su grupo de procesos, para poder
+    // matar el grupo entero y no sólo al hijo directo (V-31): si una herramienta
+    // forkea un ayudante, al perder el lease o agotar el plazo se van los dos.
+    const child = spawn(bin, argv, { cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: posix })
     let stdout = ''
     let stderr = ''
     let abortTimer = null
@@ -31,9 +35,20 @@ export function runProcess (command, args, {
     let aborted = false
     let timedOut = false
 
+    const killTree = (sig) => {
+      try {
+        if (posix && child.pid) process.kill(-child.pid, sig)
+        else child.kill(sig)
+      } catch (err) {
+        // ESRCH = el grupo ya no existe (el proceso terminó entre medias).
+        if (err.code !== 'ESRCH') {
+          try { child.kill(sig) } catch { /* ya está muerto */ }
+        }
+      }
+    }
     const stop = () => {
-      child.kill('SIGTERM')
-      abortTimer = setTimeout(() => child.kill('SIGKILL'), config.transcode.childKillMs)
+      killTree('SIGTERM')
+      abortTimer = setTimeout(() => killTree('SIGKILL'), config.transcode.childKillMs)
       abortTimer.unref?.()
     }
     const onAbort = () => {

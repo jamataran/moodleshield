@@ -1,10 +1,11 @@
 import { Router } from 'express'
-import { randomUUID, randomBytes } from 'node:crypto'
+import { rateLimit } from 'express-rate-limit'
+import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto'
 import config from '../config.js'
 import logger from '../logger.js'
 import { one } from '../db/index.js'
 import { getPublicJwks } from './keys.js'
-import { findPlatform, listPlatforms, upsertPlatform } from './platform.js'
+import { findPlatform, listPlatforms } from './platform.js'
 import { saveOidcState, validateLaunch, LtiError } from './validate.js'
 import { MESSAGE_TYPE } from './claims.js'
 import { issueSession, issueToken, verifySession, verifyToken } from '../session.js'
@@ -18,10 +19,39 @@ import { publicOriginFor } from '../security/public-origin.js'
 import { getActiveRevision } from '../services/revisions.js'
 import { getProgress } from '../services/progress.js'
 import { assertUuid, isUuid } from '../media/storage.js'
-import { normalizePlatformInput } from '../admin/platform-validator.js'
-import { AmbiguousPlatformError } from '../services/platforms.js'
+import { AmbiguousPlatformError, createPlatform } from '../services/platforms.js'
 
 export const ltiRouter = Router()
+
+/**
+ * Freno al alta de plataformas por API (V-06): sin él, el bearer de
+ * administración se podía probar a fuerza bruta sin límite —`rateLimit` sólo
+ * estaba montado en la consola, no en `ltiRouter`, y nginx tampoco ponía
+ * `limit_req`—. No afecta a alumnos: sólo cuelga de `/lti/platforms`.
+ */
+const platformsLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ error: 'Demasiadas peticiones' })
+})
+
+/**
+ * Comparación en tiempo constante del bearer de administración (V-06). Era la
+ * única comparación de secreto del proyecto con `!==`, que filtra por tiempo el
+ * prefijo correcto. Con el token vacío devuelve siempre false: el endpoint ya
+ * responde 404 antes de llegar aquí.
+ */
+function adminBearerOk (req) {
+  const token = config.lti.adminToken
+  if (!token) return false
+  const header = req.get('authorization') ?? ''
+  const presented = header.startsWith('Bearer ') ? header.slice(7) : ''
+  const a = createHash('sha256').update(presented).digest()
+  const b = createHash('sha256').update(token).digest()
+  return timingSafeEqual(a, b)
+}
 
 /** Moodle manda el initiation login por GET o por POST según la versión. */
 function loginParams (req) {
@@ -533,32 +563,37 @@ async function resolveCollectionsForDeepLink ({ ids, platformId, ownerSub }) {
  * Alta de plataformas por API, para poder automatizar el registro desde un
  * script en vez de a mano. Protegido con un bearer token de administración
  * que, si no se configura, deja el endpoint deshabilitado.
+ *
+ * Es alta, no *upsert* (V-06): registrar un `(issuer, client_id)` ya existente
+ * responde **409** en vez de sobrescribir en silencio su `jwks_url` y reactivar
+ * la plataforma. Actualizar una plataforma existente se hace por la consola de
+ * administración, que deja rastro en `admin_audit_event`. Toda alta por aquí
+ * también lo deja.
  */
-ltiRouter.post('/platforms', async (req, res, next) => {
+ltiRouter.post('/platforms', platformsLimiter, async (req, res, next) => {
   try {
     if (!config.lti.adminToken) return res.status(404).json({ error: 'no disponible' })
-    const auth = req.get('authorization') ?? ''
-    if (auth !== `Bearer ${config.lti.adminToken}`) return res.sendStatus(401)
+    if (!adminBearerOk(req)) return res.sendStatus(401)
 
     const required = ['name', 'issuer', 'clientId', 'authLoginUrl', 'authTokenUrl', 'jwksUrl']
     const missing = required.filter((f) => !req.body?.[f])
     if (missing.length) {
       return res.status(400).json({ error: `faltan campos: ${missing.join(', ')}` })
     }
-    const platform = await upsertPlatform(normalizePlatformInput({
+    const platform = await createPlatform({
       ...req.body,
       deploymentIds: [].concat(req.body.deploymentIds ?? []).filter(Boolean)
-    }))
+    }, { audit: { ip: req.ip } })
     res.status(201).json({ id: platform.id, issuer: platform.issuer, clientId: platform.client_id })
   } catch (err) {
     next(err)
   }
 })
 
-ltiRouter.get('/platforms', async (req, res, next) => {
+ltiRouter.get('/platforms', platformsLimiter, async (req, res, next) => {
   try {
     if (!config.lti.adminToken) return res.status(404).json({ error: 'no disponible' })
-    if (req.get('authorization') !== `Bearer ${config.lti.adminToken}`) return res.sendStatus(401)
+    if (!adminBearerOk(req)) return res.sendStatus(401)
     res.json(await listPlatforms())
   } catch (err) {
     next(err)

@@ -122,10 +122,11 @@ test('un token de sesión no vale como token de clave', () => {
   assert.equal(verifyKeyToken(session, 'video-a'), null)
 })
 
-test('readSessionToken acepta cabecera Bearer y query string', () => {
+test('readSessionToken acepta SÓLO la cabecera Bearer, nunca ?st= (T23)', () => {
   assert.equal(readSessionToken({ headers: { authorization: 'Bearer abc' }, query: {} }), 'abc')
-  assert.equal(readSessionToken({ headers: {}, query: { st: 'xyz' } }), 'xyz')
+  // El token en la URL ya no se acepta: copiar la URL no da acceso.
+  assert.equal(readSessionToken({ headers: {}, query: { st: 'xyz' } }), null)
   assert.equal(readSessionToken({ headers: {}, query: {} }), null)
-  // La cabecera manda sobre el query string.
+  // La cabecera manda; un ?st= presente se ignora por completo.
   assert.equal(readSessionToken({ headers: { authorization: 'Bearer abc' }, query: { st: 'xyz' } }), 'abc')
 })

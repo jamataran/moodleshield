@@ -112,12 +112,23 @@ export function clearLoginCsrf (res) {
 }
 
 export async function loginAdmin ({ username, password, ip, userAgent }) {
+  // El bloqueo cuenta por DIRECCIÓN, no por usuario (V-34). Contar por
+  // `username` permitía a cualquiera bloquear al administrador legítimo 15
+  // minutos con 5 intentos usando su usuario desde direcciones distintas: un
+  // secreto de baja entropía convertido en palanca de denegación de servicio.
+  // El `username` se sigue registrando (en el INSERT de abajo) para auditoría,
+  // pero no entra en el conteo.
+  //
+  // Aviso: la efectividad depende de que `req.ip` sea la IP real del cliente.
+  // Con un túnel delante mal configurado (ver V-13/T29) `req.ip` puede ser la
+  // del túnel, compartida: entonces este freno pasa a ser global. Fijar
+  // `TRUST_PROXY` al número exacto de saltos es requisito para que sea por IP.
   const recent = await one(
     `SELECT count(*)::int AS failures
        FROM admin_login_attempt
       WHERE succeeded=false AND created_at > now() - interval '15 minutes'
-        AND (username=$1 OR ($2::inet IS NOT NULL AND ip=$2::inet))`,
-    [String(username ?? ''), ip ?? null]
+        AND $1::inet IS NOT NULL AND ip=$1::inet`,
+    [ip ?? null]
   )
   if ((recent?.failures ?? 0) >= 5) return { ok: false, limited: true }
 

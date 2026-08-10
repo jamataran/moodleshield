@@ -163,7 +163,7 @@ npm run test:integration:local
 - El GOP fijo (`keyint`, `scenecut=0`) es lo que hace intercambiables A y B. Si
   `assertVariantsAligned` falla, la culpa casi siempre es del GOP.
 - `frame-ancestors` se calcula de las plataformas registradas; sin ninguna dada
-  de alta queda en `'self' https:`.
+  de alta queda en `'self'` (ver `src/security/frame-ancestors.js`).
 - **Nada de `alert`/`confirm`/`prompt` en `src/ui/`.** Chrome y Edge los
   retiraron de los iframes cross-origin: dentro de Moodle no abren nada y el
   botón que dependa de ellos no hace nada. Usa `<dialog>` y ábrelo siempre por

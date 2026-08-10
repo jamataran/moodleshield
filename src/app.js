@@ -3,7 +3,7 @@ import pinoHttp from 'pino-http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import config from './config.js'
-import logger from './logger.js'
+import logger, { httpSerializers } from './logger.js'
 import { ltiRouter, ltiErrorHandler } from './lti/routes.js'
 import { videosRouter } from './routes/videos.js'
 import { documentsRouter } from './routes/documents.js'
@@ -37,6 +37,7 @@ export async function createApp () {
   app.use(
     pinoHttp({
       logger,
+      serializers: httpSerializers,
       autoLogging: { ignore: (req) => req.url === '/healthz' || req.url === '/readyz' },
       customLogLevel: (_req, res, err) => {
         if (err || res.statusCode >= 500) return 'error'
@@ -94,10 +95,13 @@ export async function createApp () {
   app.use('/documents', documentsRouter)
   app.use('/hls', hlsRouter)
   app.use('/progress', progressRouter)
-  // En producción los segmentos los sirve nginx y esta ruta no existe. Fuera de
-  // producción se monta siempre, incluso con delivery='signed', para poder
-  // probar la firma secure_link sin levantar el proxy: la valida el propio Node.
-  if (config.media.delivery === 'app' || !config.isProduction) {
+  // En producción los segmentos los sirve nginx y esta ruta NO existe: la
+  // aplicación no depende de que el proxy esté delante para no servir segmentos
+  // sin firma (V-11). Fuera de producción se monta siempre, incluso con
+  // delivery='signed', para poder probar la firma secure_link sin levantar el
+  // proxy: la valida el propio Node. `assertConfigValid` garantiza que en
+  // producción delivery siempre es 'signed'.
+  if (!config.isProduction) {
     app.use(config.media.publicPrefix, mediaRouter)
   }
 

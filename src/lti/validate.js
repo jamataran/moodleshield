@@ -103,14 +103,21 @@ export async function validateLaunch ({ idToken, state }) {
     })
   }
 
-  // Con varios `aud`, el spec exige que `azp` identifique a nuestro client_id.
-  if (Array.isArray(claims.aud) && claims.aud.length > 1) {
-    if (claims.azp !== platform.client_id) {
-      throw new LtiError('azp no coincide con el client_id registrado', {
-        status: 401,
-        code: 'invalid_azp'
-      })
-    }
+  // OIDC Core §3.1.3.7 pide validar `azp` SIEMPRE que esté presente, no sólo con
+  // varios `aud` (V-29): un token con `azp` de otro cliente no debe colarse
+  // aunque `aud` sea una cadena.
+  if (claims.azp != null && claims.azp !== platform.client_id) {
+    throw new LtiError('azp no coincide con el client_id registrado', {
+      status: 401,
+      code: 'invalid_azp'
+    })
+  }
+  // Con varios `aud`, además, `azp` es obligatorio.
+  if (Array.isArray(claims.aud) && claims.aud.length > 1 && claims.azp == null) {
+    throw new LtiError('Con varios aud, el id_token debe incluir azp', {
+      status: 401,
+      code: 'missing_azp'
+    })
   }
 
   if (claims.nonce !== stateRow.nonce) {
@@ -130,6 +137,18 @@ export async function validateLaunch ({ idToken, state }) {
   if (messageType !== MESSAGE_TYPE.resourceLink && messageType !== MESSAGE_TYPE.deepLinking) {
     throw new LtiError(`message_type no soportado: ${messageType}`, {
       code: 'unsupported_message_type'
+    })
+  }
+
+  // El `target_link_uri` del id_token debe coincidir con el que la plataforma
+  // envió en el initiation login (V-29). Login y token salen del mismo Moodle,
+  // así que el spec garantiza que son iguales; si no lo son, el token no se
+  // acuñó para este launch. Sólo se comprueba cuando el login trajo el valor.
+  const tokenTargetLink = claims[CLAIM.targetLinkUri]
+  if (stateRow.target_link_uri && tokenTargetLink && tokenTargetLink !== stateRow.target_link_uri) {
+    throw new LtiError('target_link_uri del id_token no coincide con el del login', {
+      status: 401,
+      code: 'target_link_mismatch'
     })
   }
 

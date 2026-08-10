@@ -19,6 +19,7 @@ import { authorizeResource } from '../services/authorization.js'
 import {
   assertVideoId,
   exists,
+  isUuid,
   posterPath,
   removeMaterialFiles,
   revisionDir
@@ -29,8 +30,8 @@ import { displayOwnerName } from '../services/sharing.js'
 export const videosRouter = Router()
 
 /** Lo que puede salir del servidor: nada de rutas de disco ni de propietario. */
-function publicVideo (video) {
-  return toMaterialDto({ ...video, kind: 'video' })
+function publicVideo (video, { owner = true } = {}) {
+  return toMaterialDto({ ...video, kind: 'video' }, { owner })
 }
 
 videosRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
@@ -57,7 +58,7 @@ videosRouter.get('/:id', requireSession, async (req, res, next) => {
     const id = assertVideoId(req.params.id)
     const scope = await authorizeResource(req.session, 'video', id)
     if (!scope.ok) return res.status(404).json({ error: 'Vídeo no encontrado' })
-    res.json({ video: publicVideo(scope.material) })
+    res.json({ video: publicVideo(scope.material, { owner: scope.viaOwner }) })
   } catch (err) {
     next(err)
   }
@@ -233,9 +234,14 @@ videosRouter.get('/:id/viewers', requireCatalogInstructor, async (req, res, next
     // La lista de espectadores lleva nombres e identificadores de alumnos:
     // fuera del propio inquilino es una fuga de datos personales.
     const id = assertVideoId(req.params.id)
+    const revisionId = req.query.revisionId
+    // Un `revisionId` que no sea UUID daría 22P02 → 500 (V-25); se filtra a 400.
+    if (revisionId != null && revisionId !== '' && !isUuid(revisionId)) {
+      return res.status(400).json({ error: 'revisionId no es un identificador válido' })
+    }
     const video = await getVideoForOwner(id, req.session.platformId, req.session.sub)
     if (!video) return res.status(404).json({ error: 'Vídeo no encontrado' })
-    res.json({ viewers: await listViewers(id, { revisionId: req.query.revisionId ?? null }) })
+    res.json({ viewers: await listViewers(id, { revisionId: revisionId || null }) })
   } catch (err) {
     next(err)
   }

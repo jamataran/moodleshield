@@ -1,7 +1,7 @@
 import { many, one, query, transaction } from '../db/index.js'
 import logger from '../logger.js'
 import { assertFolderInTransaction } from './folders.js'
-import { listMaterials, listCollectionsUsing } from './materials.js'
+import { listMaterials, listCollectionsUsing, VIEWERS_LIMIT } from './materials.js'
 import { insertRevision, syncMaterialStatus } from './revisions.js'
 import { normalizeName } from './folders.js'
 import { visibleClause } from './sharing.js'
@@ -353,7 +353,8 @@ export function listViewers (videoId, { revisionId = null } = {}) {
        FROM view_event
       WHERE video_id = $1 AND ($2::uuid IS NULL OR revision_id = $2)
       GROUP BY user_sub
-      ORDER BY last_seen DESC`,
-    [videoId, revisionId]
+      ORDER BY last_seen DESC
+      LIMIT $3`,
+    [videoId, revisionId, VIEWERS_LIMIT]
   )
 }
