@@ -5,6 +5,14 @@
 > **Código auditado:** `main` en `1db4a89` (`Merge branch 'codex/t19-admin-console'`).<br>
 > **Worktree:** `moodleshield-security-audit`; rama `codex/security-content-audit`.
 
+> [!IMPORTANT]
+> **Este documento es la foto del 7 de agosto de 2026 y no se actualiza.** Dos
+> iteraciones posteriores cerraron la mayoría de los hallazgos. Para saber en qué
+> estado está cada F- **hoy**, mira la tabla de
+> [`docs/README.md`](README.md#auditoría-de-seguridad--7-de-agosto-de-2026); el
+> detalle de qué se implementó y qué se difirió, con sus porqués, está en
+> [`auditoria-seguridad.md` §8](auditoria-seguridad.md#8-notas-de-implementación--claude-fable-5).
+
 ## 1. Veredicto ejecutivo
 
 El enlace de vídeo se puede copiar y reutilizar porque el reproductor coloca en la URL un **token bearer de sesión válido durante cuatro horas**. Quien tenga esa URL puede usarla desde otro cliente hasta que caduque. Además, una petición hecha justo antes de la caducidad genera claves y enlaces de segmentos con otras cuatro horas de vida, por lo que el acceso efectivo puede acercarse a **ocho horas**.
