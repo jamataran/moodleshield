@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { contentItemFor } from '../src/lti/deeplink.js'
+import { contentItemFor, deepLinkingForm } from '../src/lti/deeplink.js'
 import { displayIp, insertableCollectionItems, resourceFromCustom, safeReturnUrl } from '../src/lti/routes.js'
 
 // ---------------------------------------------------------------------------
@@ -115,6 +115,13 @@ test('la IP visible elimina el prefijo IPv4-mapeado', () => {
   assert.equal(displayIp('::ffff:192.0.2.10'), '192.0.2.10')
   assert.equal(displayIp('2001:db8::10'), '2001:db8::10')
   assert.equal(displayIp(null), '')
+})
+
+test('el formulario de Deep Linking no usa manejadores en línea (CSP sin unsafe-inline)', () => {
+  const html = deepLinkingForm('https://moodle.example.org/return', 'JWT')
+  assert.doesNotMatch(html, /on(load|click|submit)=/,
+    'un manejador en línea quedaría bloqueado por la CSP y Moodle se quedaría esperando')
+  assert.match(html, /src="\/assets\/autosubmit\.js"/)
 })
 
 test('una colección se puede insertar con material en cola, pero no sólo con fallidos', () => {

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import config from '../config.js'
 import { getActiveKey } from './keys.js'
 import { CLAIM } from './claims.js'
+import { resourceSignature } from './resource-signature.js'
 
 /**
  * Construye la respuesta firmada de Deep Linking que devuelve el catálogo a
@@ -78,7 +79,22 @@ export async function buildDeepLinkingResponse ({ platform, deploymentId, data, 
   // `videos` es la forma anterior a T20; se acepta para no romper llamadas
   // internas que aún la usen.
   const items = (materials ?? (videos ?? []).map((v) => ({ ...v, kind: 'video' })))
-    .map((material) => contentItemFor(material, origin ?? config.publicUrl))
+    .map((material) => {
+      const item = contentItemFor(material, origin ?? config.publicUrl)
+      // Referencia firmada (T24): demuestra en cada launch que esta inserción
+      // la emitimos nosotros para el propietario del material. Sin owner_sub
+      // (llamadas legacy) no se firma: el launch lo tratará como actividad
+      // anterior a la firma.
+      if (material.owner_sub) {
+        item.custom.resourcesig = resourceSignature({
+          platformId: platform.id,
+          kind: material.kind,
+          id: material.id,
+          ownerSub: material.owner_sub
+        })
+      }
+      return item
+    })
 
   const payload = {
     iss: platform.client_id,
@@ -104,15 +120,22 @@ function escapeHtml (value) {
   })[c])
 }
 
-/** Formulario de auto-envío hacia `deep_link_return_url`. */
+/**
+ * Formulario de auto-envío hacia `deep_link_return_url`.
+ *
+ * El envío vive en /assets/autosubmit.js, no en un `onload=` en línea: la CSP
+ * ya no lleva 'unsafe-inline' en script-src (T32) y un manejador en línea se
+ * quedaría bloqueado con Moodle esperando.
+ */
 export function deepLinkingForm (returnUrl, jwt) {
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>Insertando material…</title></head>
-<body onload="document.forms[0].submit()">
+<body>
   <form method="post" action="${escapeHtml(returnUrl)}">
     <input type="hidden" name="JWT" value="${escapeHtml(jwt)}">
     <noscript><button type="submit">Continuar</button></noscript>
   </form>
   <p>Insertando el material en el curso…</p>
+  <script src="/assets/autosubmit.js" defer></script>
 </body></html>`
 }

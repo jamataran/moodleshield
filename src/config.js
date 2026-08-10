@@ -281,7 +281,15 @@ export const config = {
     /** Minutos que vive un `state` OIDC antes de caducar. */
     stateTtlSeconds: integer('LTI_STATE_TTL_SECONDS', 600),
     /** Permite dar de alta plataformas vía API con este bearer token. */
-    adminToken: optional('LTI_ADMIN_TOKEN', '')
+    adminToken: optional('LTI_ADMIN_TOKEN', ''),
+    /**
+     * Verificación de la referencia firmada del material (T24, V-02):
+     * `off` no comprueba nada; `warn` (por defecto) sirve el launch sin firma
+     * válida pero deja un aviso estructurado; `enforce` responde 404. Se pasa
+     * a `enforce` cuando el aviso deje de aparecer: significa que ya no queda
+     * ninguna actividad anterior a la firma en uso.
+     */
+    launchResourceSignature: optional('LAUNCH_RESOURCE_SIGNATURE', 'warn')
   },
 
   contentApi: {
@@ -372,6 +380,9 @@ export function assertConfigValid () {
   }
   if (!['auto', 'always', 'never'].includes(config.network.trustCloudflareClientIp)) {
     errors.push("TRUST_CLOUDFLARE_CLIENT_IP debe ser 'auto', 'always' o 'never'")
+  }
+  if (!['off', 'warn', 'enforce'].includes(config.lti.launchResourceSignature)) {
+    errors.push("LAUNCH_RESOURCE_SIGNATURE debe ser 'off', 'warn' o 'enforce'")
   }
   if (!['auto', 'manual'].includes(config.revisions.activation)) {
     errors.push("MATERIAL_REVISION_ACTIVATION debe ser 'auto' o 'manual'")

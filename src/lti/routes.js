@@ -11,6 +11,8 @@ import { MESSAGE_TYPE } from './claims.js'
 import { issueSession, issueToken, verifySession, verifyToken } from '../session.js'
 import { renderPage } from '../ui/render.js'
 import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
+import { checkResourceSignature } from './resource-signature.js'
+import { recordDeepLinkGrants } from '../services/deep-link-grants.js'
 import { getVideoForPlatform, listInsertableVideosForDeepLink } from '../services/videos.js'
 import { getDocumentForPlatform, listInsertableDocumentsForDeepLink } from '../services/documents.js'
 import { getCollectionForPlatform, loadItems, publicItem } from '../services/collections.js'
@@ -274,6 +276,53 @@ export function displayIp (ip) {
 }
 
 /**
+ * Verificación de la referencia firmada (T24, V-02/F-05).
+ *
+ * `custom.resourcesig` demuestra que la referencia al material la emitió esta
+ * herramienta para el propietario que consta en la fila. Sin firma válida:
+ * en `warn` (por defecto) se sirve y queda un aviso estructurado con material,
+ * curso, actividad y quién lanzó — la lista de actividades pendientes de
+ * regenerar; en `enforce`, 404 indistinguible del material inexistente. La
+ * comprobación usa el owner_sub de la BASE DE DATOS, nunca el del token: el
+ * launch de un alumno no es del propietario y no debe serlo.
+ */
+function enforceResourceReference ({ context, platform, kind, id, ownerSub }) {
+  const mode = config.lti.launchResourceSignature
+  if (mode === 'off') return
+  const status = checkResourceSignature({
+    custom: context.custom ?? {},
+    platformId: platform.id,
+    kind,
+    id,
+    ownerSub
+  })
+  if (status === 'valid') return
+  if (mode === 'enforce') {
+    logger.warn(
+      { platformId: platform.id, kind, resourceId: id, status, contextId: context.contextId, resourceLinkId: context.resourceLinkId },
+      'Launch rechazado: referencia de material sin firma válida (T24 enforce)'
+    )
+    throw new LtiError('El material asociado a esta actividad ya no existe', {
+      status: 404,
+      code: 'resource_missing'
+    })
+  }
+  logger.warn(
+    {
+      platformId: platform.id,
+      kind,
+      resourceId: id,
+      signature: status,
+      contextId: context.contextId,
+      resourceLinkId: context.resourceLinkId,
+      launchedBy: context.sub,
+      isInstructor: context.isInstructor
+    },
+    'Launch sin referencia firmada (T24 fase de aviso): actividad anterior a la firma o custom manipulado'
+  )
+}
+
+/**
  * Datos de la sesión que el visor enseña al alumno en el aviso legal.
  *
  * `reference` es el `jti`, el mismo identificador que se escribe en
@@ -301,6 +350,13 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
       code: 'resource_missing'
     })
   }
+  enforceResourceReference({
+    context,
+    platform,
+    kind: resource.kind,
+    id: material.id,
+    ownerSub: material.owner_sub
+  })
 
   // La revisión se resuelve UNA vez, aquí, y viaja en la sesión: si se
   // resolviera en cada petición, una activación a mitad de reproducción
@@ -402,6 +458,13 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
       code: 'resource_missing'
     })
   }
+  enforceResourceReference({
+    context,
+    platform,
+    kind: 'collection',
+    id: collection.id,
+    ownerSub: collection.owner_sub
+  })
   const items = await loadItems(collection.id)
   if (items.length === 0) {
     throw new LtiError(
@@ -531,15 +594,22 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
       throw new LtiError('Ninguno de los materiales seleccionados se puede insertar', { code: 'not_insertable' })
     }
 
+    const inserted = kind === 'collection' || !payload.multi ? materials.slice(0, 1) : materials
     const jwt = await buildDeepLinkingResponse({
       platform,
       deploymentId: payload.dep,
       data: payload.dat,
-      materials: kind === 'collection' || !payload.multi ? materials.slice(0, 1) : materials,
+      materials: inserted,
       // La actividad guardará esta URL para siempre: la que corresponde es
       // aquella por la que el profesor abrió el selector desde Moodle.
       origin: publicOriginFor(req)
     })
+
+    // Auditoría de la emisión (T24, migración 011): un fallo aquí no tumba la
+    // inserción — la verificación real es la firma; esto responde «¿quién
+    // insertó este material y cuándo?».
+    await recordDeepLinkGrants({ platformId: platform.id, materials: inserted })
+      .catch((err) => req.log?.warn({ err }, 'No se pudo registrar la emisión de Deep Linking'))
 
     res.type('html').send(deepLinkingForm(payload.ret, jwt))
   } catch (err) {

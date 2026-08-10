@@ -68,8 +68,11 @@ export function listReadyVideosForDeepLink ({ ids, platformId, ownerSub }) {
  */
 export function listInsertableVideosForDeepLink ({ ids, platformId, ownerSub }) {
   if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
+  // `owner_sub` viaja para la referencia firmada (T24): la firma se calcula
+  // con el propietario del material, no con el profesor que inserta — un
+  // material compartido lo inserta otro, pero la fila sigue siendo del autor.
   return many(
-    `SELECT m.id, m.title, m.description
+    `SELECT m.id, m.title, m.description, m.owner_sub
        FROM video m
       WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}
         AND m.archived_at IS NULL

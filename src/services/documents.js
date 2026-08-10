@@ -44,8 +44,9 @@ export function listReadyDocumentsForDeepLink ({ ids, platformId, ownerSub }) {
 
 export function listInsertableDocumentsForDeepLink ({ ids, platformId, ownerSub }) {
   if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
+  // `owner_sub` viaja para la referencia firmada (T24), como en los vídeos.
   return many(
-    `SELECT m.id, m.title, m.description
+    `SELECT m.id, m.title, m.description, m.owner_sub
        FROM pdf_document m
       WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}
         AND m.archived_at IS NULL
