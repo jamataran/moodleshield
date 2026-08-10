@@ -95,6 +95,19 @@ export function materialDir (kind, materialId) {
     : path.join(documentsRoot, materialId)
 }
 
+/**
+ * Lápida forense de una revisión purgada (F-14). Vive FUERA del directorio de
+ * la revisión —la purga borra aquél entero— y guarda lo mínimo para que una
+ * filtración que aparezca después de purgar siga siendo trazable: ámbito del
+ * patrón, geometría de la marca y la lista de quién la vio. El prefijo con
+ * punto la deja fuera de las locations de nginx, como `.staging`.
+ */
+export function tombstonePath (kind, materialId, revisionId) {
+  assertUuid(materialId, 'Identificador de material')
+  assertUuid(revisionId, 'Identificador de revisión')
+  return path.join(mediaRoot, '.tombstones', kind, materialId, `${revisionId}.json`)
+}
+
 export function variantDir (dir, variant) {
   if (variant !== 'A' && variant !== 'B') throw new Error(`Variante inválida: ${variant}`)
   return path.join(dir, variant)

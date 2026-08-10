@@ -21,8 +21,10 @@
 
 import { parseArgs } from 'node:util'
 import { spawn } from 'node:child_process'
+import { readdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
 import config from '../src/config.js'
-import { readMediaMeta, revisionDir, keyPath, variantPlaylistPath, exists } from '../src/media/storage.js'
+import { readMediaMeta, revisionDir, keyPath, variantPlaylistPath, exists, tombstonePath } from '../src/media/storage.js'
 import { MARK_GEOMETRY } from '../src/media/transcode.js'
 import {
   classifySelf,
@@ -79,16 +81,75 @@ if (!['auto', 'reference', 'self'].includes(values.mode)) {
 }
 
 /**
+ * Lápidas forenses del vídeo (F-14): revisiones ya purgadas cuyo sobre
+ * autocontenido —ámbito del patrón, geometría y lista de espectadores—
+ * permite seguir trazando en modo autocontenido.
+ */
+async function listTombstones () {
+  const dir = path.dirname(tombstonePath('video', values.video, values.video))
+  let files
+  try {
+    files = await readdir(dir)
+  } catch {
+    return []
+  }
+  const tombstones = []
+  for (const file of files.filter((f) => f.endsWith('.json'))) {
+    try {
+      tombstones.push(JSON.parse(await readFile(path.join(dir, file), 'utf8')))
+    } catch { /* una lápida corrupta no invalida las demás */ }
+  }
+  return tombstones
+}
+
+/**
  * Resuelve contra qué revisión hay que comparar.
  *
  * Desde T21 un material puede tener varias revisiones con artefactos, y cada
  * una produce un patrón distinto (`pattern_scope`). Comparar contra la que no
  * es da un resultado no concluyente sin decir por qué, así que si hay ambigüedad
  * se exige elegir en vez de adivinar.
+ *
+ * Una revisión purgada ya no tiene fila: se busca su lápida (F-14) y se traza
+ * en modo autocontenido con la lista de espectadores que la lápida conserva.
  */
 async function resolveRevision () {
   const revisions = await listRevisions({ kind: 'video', materialId: values.video })
+  if (values.revision) {
+    const purged = (await listTombstones()).find((t) => t.revisionId === values.revision)
+    if (purged && !revisions.some((r) => r.id === values.revision)) {
+      console.error('La revisión está purgada: se traza desde su lápida forense (modo autocontenido).')
+      return {
+        id: purged.revisionId,
+        revision_number: purged.revisionNumber,
+        status: 'purged',
+        pattern_scope: purged.patternScope,
+        storage_layout: 'revision',
+        tombstone: purged
+      }
+    }
+  }
   if (revisions.length === 0) {
+    const tombstones = await listTombstones()
+    if (tombstones.length === 1) {
+      const purged = tombstones[0]
+      console.error('Sólo queda la lápida forense de una revisión purgada: se usa (modo autocontenido).')
+      return {
+        id: purged.revisionId,
+        revision_number: purged.revisionNumber,
+        status: 'purged',
+        pattern_scope: purged.patternScope,
+        storage_layout: 'revision',
+        tombstone: purged
+      }
+    }
+    if (tombstones.length > 1) {
+      console.error('Este vídeo sólo conserva lápidas de revisiones purgadas. Indica cuál con --revision:\n')
+      for (const t of tombstones) {
+        console.error(`  ${t.revisionId}  revisión ${t.revisionNumber ?? '?'}  purgada ${String(t.purgedAt).slice(0, 10)}`)
+      }
+      process.exit(1)
+    }
     console.error(`El vídeo ${values.video} no tiene ninguna revisión registrada.`)
     process.exit(1)
   }
@@ -122,11 +183,16 @@ async function resolveRevision () {
 
 const revision = await resolveRevision()
 const dir = revisionDir('video', values.video, revision.id, revision.storage_layout)
-const meta = await readMediaMeta(dir)
+// De una revisión purgada, la lápida es el meta (F-14).
+const meta = revision.tombstone ?? await readMediaMeta(dir)
 if (!meta) {
   console.error(
-    `No hay meta.json para la revisión ${revision.id}. ¿Se purgaron sus artefactos?`
+    `No hay meta.json ni lápida forense para la revisión ${revision.id}. ¿Se purgó antes de F-14?`
   )
+  process.exit(1)
+}
+if (!meta.segmentCount || !meta.segmentSeconds) {
+  console.error(`La información de la revisión ${revision.id} no trae segmentos: no se puede trazar.`)
   process.exit(1)
 }
 
@@ -171,7 +237,8 @@ const framesPerSegment = Math.max(1, Number.parseInt(values['frames-per-segment'
 const minSeparation = Number.parseFloat(values.threshold)
 const minMargin = Number.parseFloat(values['min-margin'])
 
-const hasArtifacts = (await exists(variantPlaylistPath(dir, 'A'))) &&
+const hasArtifacts = !revision.tombstone &&
+  (await exists(variantPlaylistPath(dir, 'A'))) &&
   (await exists(variantPlaylistPath(dir, 'B'))) &&
   (await exists(keyPath(dir)))
 let mode = values.mode
@@ -257,8 +324,12 @@ for (const [region, info] of Object.entries(regionsReport)) {
 console.error('')
 
 // Sólo los alumnos que cargaron ESTA revisión: incluir a los de otra produciría
-// candidatos que, por construcción, no pueden coincidir.
-const viewers = await listViewers(values.video, { revisionId: revision.id })
+// candidatos que, por construcción, no pueden coincidir. Si la revisión está
+// purgada, la lista viene de su lápida: la FK dejó los view_event sin
+// revision_id al borrar la fila, y la lápida es quien la conserva.
+const viewers = revision.tombstone
+  ? revision.tombstone.viewers ?? []
+  : await listViewers(values.video, { revisionId: revision.id })
 if (viewers.length === 0) {
   console.error(
     `No hay visionados registrados para la revisión ${revision.id}: no hay candidatos que comparar.`

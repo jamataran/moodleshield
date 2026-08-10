@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFile, rm } from 'node:fs/promises'
 import { closeDatabase, many, one, query } from '../../src/db/index.js'
 import { runMigrations } from '../../src/db/migrate.js'
 import config from '../../src/config.js'
@@ -49,9 +50,12 @@ import {
   getActiveRevision,
   listPurgeCandidates,
   listRevisions,
+  purgeRetiredRevisions,
   restoreMaterial,
+  setRevisionLegalHold,
   RevisionError
 } from '../../src/services/revisions.js'
+import { tombstonePath } from '../../src/media/storage.js'
 import { videoQueue, pdfQueue } from '../../src/queue/postgres.js'
 
 const PLATFORM_A = randomUUID()
@@ -1116,9 +1120,65 @@ test('T21: la purga nunca toca la activa ni se salta la ventana de gracia', asyn
   const candidates = await listPurgeCandidates('video')
   assert.deepEqual(candidates.map((c) => c.id), [primera.id])
 
-  // Una retención legal la vuelve intocable.
-  await query('UPDATE video_revision SET legal_hold = true WHERE id = $1', [primera.id])
+  // Una retención legal la vuelve intocable — y ahora se activa por API, no
+  // editando la base de datos (F-14).
+  const held = await setRevisionLegalHold({
+    kind: 'video', materialId: videoId, revisionId: primera.id, ...scopeA, hold: true
+  })
+  assert.equal(held.legalHold, true)
   assert.deepEqual(await listPurgeCandidates('video'), [])
+  const released = await setRevisionLegalHold({
+    kind: 'video', materialId: videoId, revisionId: primera.id, ...scopeA, hold: false
+  })
+  assert.equal(released.legalHold, false)
+  // Otro profesor no puede tocar la retención de un material ajeno.
+  assert.equal((await setRevisionLegalHold({
+    kind: 'video', materialId: videoId, revisionId: primera.id, ...scopeLuis, hold: true
+  })).status, 'material_not_found')
+})
+
+test('F-14: purgar deja una lápida forense con el patrón y los espectadores', async () => {
+  const videoId = await readyVideo()
+  const primera = await getActiveRevision({ kind: 'video', materialId: videoId })
+
+  // Un visionado real de la primera revisión: es lo que la lápida conserva.
+  await recordView({
+    videoId,
+    revisionId: primera.id,
+    platformId: PLATFORM_A,
+    sessionJti: randomUUID(),
+    context: { sub: 'alumno-lapida', name: 'Alumna Lápida', contextId: 'c1', resourceLinkId: 'rl1' },
+    identity: '12345678Z'
+  })
+
+  // Dos sustituciones para que la primera sea purgable con KEEP_MIN=2.
+  for (let i = 0; i < 2; i++) {
+    await createVideoRevisionAndJob({ videoId, ...scopeA, sourcePath: `/tmp/${randomUUID()}.mp4` })
+    await finishJob(videoQueue, videoId)
+  }
+  await query(
+    "UPDATE video_revision SET retired_at = now() - interval '400 days' WHERE id = $1",
+    [primera.id]
+  )
+
+  const outcome = await purgeRetiredRevisions()
+  assert.ok(outcome.video >= 1, 'la primera revisión debía purgarse')
+  assert.equal(await one('SELECT id FROM video_revision WHERE id = $1', [primera.id]), null)
+
+  // La lápida sobrevive a la purga y es autocontenida: patrón + espectadores.
+  const file = tombstonePath('video', videoId, primera.id)
+  const tombstone = JSON.parse(await readFile(file, 'utf8'))
+  try {
+    assert.equal(tombstone.patternScope, primera.pattern_scope)
+    assert.equal(tombstone.revisionId, primera.id)
+    assert.ok(tombstone.segmentCount > 0)
+    assert.deepEqual(
+      tombstone.viewers.map((v) => [v.user_sub, v.user_identity, v.views]),
+      [['alumno-lapida', '12345678Z', 1]]
+    )
+  } finally {
+    await rm(file, { force: true })
+  }
 })
 
 test('T21: cada revisión tiene su propio ámbito de patrón forense', async () => {
