@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { contentItemFor } from '../src/lti/deeplink.js'
-import { displayIp, resourceFromCustom, safeReturnUrl } from '../src/lti/routes.js'
+import { displayIp, insertableCollectionItems, resourceFromCustom, safeReturnUrl } from '../src/lti/routes.js'
 
 // ---------------------------------------------------------------------------
 // Qué se le manda a Moodle al insertar (T18/T20)
@@ -115,4 +115,19 @@ test('la IP visible elimina el prefijo IPv4-mapeado', () => {
   assert.equal(displayIp('::ffff:192.0.2.10'), '192.0.2.10')
   assert.equal(displayIp('2001:db8::10'), '2001:db8::10')
   assert.equal(displayIp(null), '')
+})
+
+test('una colección se puede insertar con material en cola, pero no sólo con fallidos', () => {
+  const published = { status: 'ready', active_revision_id: randomUUID() }
+  const queued = { status: 'queued', active_revision_id: null }
+  const processing = { status: 'processing', active_revision_id: null }
+  const failed = { status: 'failed', active_revision_id: null }
+  const cancelled = { status: 'cancelled', active_revision_id: null }
+
+  assert.deepEqual(insertableCollectionItems([published, queued, processing]),
+    [published, queued, processing])
+  // Un fallido entre vivos no bloquea la inserción: se descarta en silencio y
+  // el visor lo enseña como no disponible.
+  assert.deepEqual(insertableCollectionItems([published, failed]), [published])
+  assert.deepEqual(insertableCollectionItems([failed, cancelled]), [])
 })

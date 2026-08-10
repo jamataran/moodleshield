@@ -1519,7 +1519,7 @@ async function loadPicker ({ append = false } = {}) {
   const cursor = append ? state.pickerNextCursor : null
   if (append && !cursor) return
   const generation = ++pickerGeneration
-  const params = new URLSearchParams({ limit: '60', ready: '1' })
+  const params = new URLSearchParams({ limit: '60' })
   const query = el('collection-search').value.trim()
   if (query) params.set('q', query)
   if (cursor) params.set('cursor', cursor)
@@ -1528,10 +1528,11 @@ async function loadPicker ({ append = false } = {}) {
   try {
     const data = await apiJson(`/materials?${params}`)
     if (generation !== pickerGeneration) return
-    // Sólo lo insertable: listo, con revisión publicada y sin archivar.
-    const ready = data.materials.filter((m) =>
-      m.status === 'ready' && !m.archived && m.hasActiveRevision)
-    const combined = append ? [...state.pickerResults, ...ready] : ready
+    // Lo insertable: publicado o aún en cola (el alumno lo verá al procesarse),
+    // sin archivar. Misma regla que la inserción de material suelto.
+    const insertable = data.materials.filter((m) =>
+      !m.archived && (m.hasActiveRevision || INSERTABLE_STATUSES.has(m.status)))
+    const combined = append ? [...state.pickerResults, ...insertable] : insertable
     state.pickerResults = [...new Map(combined.map((item) => [`${item.kind}:${item.id}`, item])).values()]
     state.pickerNextCursor = data.nextCursor
     renderPicker()
@@ -1553,8 +1554,10 @@ function renderPicker () {
     name.textContent = `${material.kind === 'pdf' ? 'PDF' : 'Vídeo'} · ${material.title}`
     const where = document.createElement('span')
     where.className = 'muted'
+    // La insignia de estado avisa de que se añade algo aún en preparación.
     where.textContent = ` — en ${pathName(material.folderId)}` +
-      (isShared(material) ? ` · de ${ownerLabel(material)}` : '')
+      (isShared(material) ? ` · de ${ownerLabel(material)}` : '') +
+      (material.status !== 'ready' ? ` · ${STATUS_LABEL[material.status] ?? material.status}` : '')
     label.append(name, where)
 
     const toggle = document.createElement('button')

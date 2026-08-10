@@ -189,6 +189,24 @@ test('el catálogo permite componer y EDITAR colecciones, no sólo crearlas', as
   assert.ok(html.includes('id="collection-folder"'), 'falta el selector de carpeta de la colección')
 })
 
+test('la colección admite material aún en cola, con espera visible para el alumno', async () => {
+  // El picker no puede volver a pedir sólo lo listo: componer una colección con
+  // material recién subido es el caso de uso que cierra esta regresión.
+  const catalog = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.doesNotMatch(catalog, /ready:\s*'1'/,
+    'el picker de colecciones debe listar también el material en preparación')
+
+  // El visor sondea el manifest mientras haya material preparándose, y deja de
+  // hacerlo al salir de la página: sin el clearTimeout, la pestaña enterrada
+  // seguiría consultando el manifest para siempre.
+  const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
+  assert.match(collection, /manifestTimer/, 'falta el sondeo del manifest')
+  assert.match(collection, /pagehide[\s\S]{0,200}clearTimeout\(manifestTimer\)/,
+    'el sondeo debe cancelarse en pagehide')
+  assert.match(collection, /se está preparando/i,
+    'el alumno debe distinguir la espera legítima de un material no disponible')
+})
+
 test('el catálogo separa colecciones y materiales y permite volver atrás', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
   for (const id of ['back', 'help-open', 'all-content', 'tab-collections', 'tab-materials',

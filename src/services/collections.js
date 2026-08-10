@@ -70,40 +70,52 @@ export function normalizeItems (raw) {
 
 /**
  * Comprueba que todos los materiales existen, el profesor los ve (suyos o
- * compartidos), están listos y tienen revisión activa. Un material archivado
- * sólo se admite si YA estaba en la colección: archivar bloquea inserciones
- * nuevas, no rompe las existentes.
+ * compartidos) y son insertables: con revisión publicada o todavía en cola de
+ * procesado. Admitir material en cola permite componer la colección sin
+ * esperar al worker; el visor del alumno lo enseña como «preparándose» y lo
+ * abre solo cuando se publica (la autorización resuelve la revisión activa en
+ * cada petición, así que no sirve bytes antes de tiempo).
+ *
+ * Un material archivado o fallido sólo se admite si YA estaba en la colección:
+ * bloquea inserciones nuevas sin romper las existentes — si no, re-guardar una
+ * colección cuyo ítem falló después de añadirse tumbaría todo el PATCH.
  */
 async function assertItemsUsable (client, items, { platformId, ownerSub, alreadyPresent = new Set() }) {
   const byKind = { video: [], pdf: [] }
   for (const item of items) byKind[item.kind].push(item.id)
 
-  const usable = new Set()
-  const archived = new Set()
+  const insertable = new Set()
+  const present = new Set()
   for (const [kind, ids] of Object.entries(byKind)) {
     if (ids.length === 0) continue
     const table = kind === 'pdf' ? 'pdf_document' : 'video'
     const { rows } = await client.query(
-      `SELECT m.id, m.archived_at FROM ${table} m
-        WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}
-          AND m.status = 'ready' AND m.active_revision_id IS NOT NULL`,
+      `SELECT m.id, m.archived_at, m.status, m.active_revision_id FROM ${table} m
+        WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}`,
       [platformId, ownerSub, ids]
     )
     for (const row of rows) {
-      usable.add(`${kind}:${row.id}`)
-      if (row.archived_at) archived.add(`${kind}:${row.id}`)
+      const key = `${kind}:${row.id}`
+      present.add(key)
+      // Misma condición que listInsertable*ForDeepLink: publicado o en cola.
+      // «uploaded» queda fuera a propósito: es transitorio y, si envejece, lo
+      // recoge reconcileStorage como subida abandonada.
+      const alive = row.active_revision_id !== null ||
+        ['queued', 'processing'].includes(row.status)
+      if (alive && !row.archived_at) insertable.add(key)
     }
   }
 
   const rejected = items
     .map((item) => ({ item, key: `${item.kind}:${item.id}` }))
-    .filter(({ key }) => !usable.has(key) || (archived.has(key) && !alreadyPresent.has(key)))
+    .filter(({ key }) =>
+      !present.has(key) || (!insertable.has(key) && !alreadyPresent.has(key)))
     .map(({ item }) => item)
 
   if (rejected.length > 0) {
     throw new CollectionError(
       'Algunos materiales no están disponibles: deben ser tuyos o estar compartidos contigo, ' +
-        'estar listos y no archivados',
+        'estar listos o en preparación, y no archivados ni fallidos',
       { status: 409, code: 'items_unavailable', details: { items: rejected } }
     )
   }
@@ -531,6 +543,9 @@ export function publicItem (row) {
     title: row.title,
     status: row.status,
     available: row.status === 'ready' && Boolean(row.active_revision_id),
+    // «Preparándose»: el visor lo usa para distinguir la espera legítima (con
+    // sondeo del manifest hasta que se publique) de un ítem fallido o retirado.
+    processing: !row.active_revision_id && ['queued', 'processing'].includes(row.status),
     archived: Boolean(row.archived_at),
     durationSeconds: row.duration_seconds === null || row.duration_seconds === undefined
       ? null

@@ -410,6 +410,24 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
     )
   }
 
+  // Una colección puede insertarse con material aún en cola. Si NADA está
+  // publicado todavía, no hay visor que enseñar: la página de espera se
+  // recarga sola, igual que el material suelto sin revisión activa. En cuanto
+  // haya al menos un ítem disponible se entra al visor, que enseña el resto
+  // como «preparándose» y los abre al publicarse.
+  const publicItems = items.map(publicItem)
+  if (!publicItems.some((item) => item.available)) {
+    if (publicItems.some((item) => item.processing)) {
+      return res.status(202).type('html').send(
+        await renderPage('processing.html', { TITLE: collection.title, STATUS: 'processing' })
+      )
+    }
+    throw new LtiError(
+      'Ningún material de esta colección está disponible. Avisa a tu profesor.',
+      { status: 409, code: 'items_unavailable' }
+    )
+  }
+
   const sessionToken = issueSession({
     ...context,
     identity,
@@ -437,7 +455,7 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
           title: collection.title,
           description: collection.description
         },
-        items: items.map(publicItem),
+        items: publicItems,
         user: { name: context.name, identity, ip: clientIp },
         session: sessionAudit(sessionToken),
         returnUrl: safeReturnUrl(context.returnUrl, platform.issuer),
@@ -530,9 +548,22 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
 })
 
 /**
- * Una colección sólo se inserta si es del profesor, tiene contenido y todos sus
- * elementos siguen listos. Firmar una colección rota produciría una actividad
- * que falla al abrirse, y el profesor se enteraría por un alumno.
+ * Elementos de una colección que la hacen insertable en Moodle: publicados o
+ * todavía en cola de procesado (misma semántica que `listInsertable*`: el
+ * launch no sirve bytes hasta que exista revisión activa, y el visor enseña la
+ * espera). Un elemento fallido o archivado no bloquea la inserción — la
+ * colección se resuelve en cada launch y el visor lo marca como no disponible.
+ */
+export function insertableCollectionItems (items) {
+  return items.filter((item) =>
+    item.active_revision_id !== null || ['queued', 'processing'].includes(item.status))
+}
+
+/**
+ * Una colección sólo se inserta si es del profesor (o compartida), tiene
+ * contenido y al menos un elemento vivo. Firmar una colección sin nada que
+ * enseñar ni preparar produciría una actividad que falla al abrirse, y el
+ * profesor se enteraría por un alumno.
  */
 async function resolveCollectionsForDeepLink ({ ids, platformId, ownerSub }) {
   const out = []
@@ -547,10 +578,10 @@ async function resolveCollectionsForDeepLink ({ ids, platformId, ownerSub }) {
         code: 'empty_collection'
       })
     }
-    const broken = items.filter((item) => item.status !== 'ready' || !item.active_revision_id)
-    if (broken.length > 0) {
+    if (insertableCollectionItems(items).length === 0) {
       throw new LtiError(
-        `La colección contiene ${broken.length} material(es) que todavía no están listos`,
+        'Ningún material de esta colección está disponible todavía; espera a que termine ' +
+          'el procesado o revisa los que fallaron',
         { code: 'items_not_ready' }
       )
     }

@@ -556,14 +556,15 @@ test('T18: una edición concurrente no sobrescribe el trabajo de la otra', async
   assert.equal(actual.title, 'Renombrada por la pestaña 1')
 })
 
-test('T18: no se admite material de otro profesor ni material no listo', async () => {
+test('T18: no se admite material de otro profesor sin compartir', async () => {
   const ajeno = await readyVideo({ scope: scopeLuis })
   await assert.rejects(
     createCollection({ ...scopeA, title: 'Robada', items: [{ kind: 'video', id: ajeno }] }),
     (err) => err instanceof CollectionError && err.code === 'items_unavailable'
   )
+})
 
-  // Un vídeo en cola tampoco entra.
+test('T18: una colección admite material aún en cola y lo expone como en preparación', async () => {
   const enCola = randomUUID()
   await createVideoAndJob({
     id: enCola,
@@ -572,8 +573,95 @@ test('T18: no se admite material de otro profesor ni material no listo', async (
     ownerSub: ANA,
     sourcePath: `/tmp/${randomUUID()}.mp4`
   })
+
+  // Componer con el vídeo todavía en cola YA no es un error: el profesor no
+  // tiene que esperar al worker para montar la actividad.
+  const collection = await createCollection({
+    ...scopeA, title: 'Con material en cola', items: [{ kind: 'video', id: enCola }]
+  })
+
+  let [item] = (await loadItems(collection.id)).map(publicItem)
+  assert.equal(item.available, false)
+  assert.equal(item.processing, true)
+
+  // El alumno con sesión de colección todavía no puede abrir bytes del vídeo.
+  const sesion = session({ resource: { kind: 'collection', id: collection.id } })
+  const denied = await authorizeResource(sesion, 'video', enCola)
+  assert.equal(denied.ok, false)
+
+  // Cuando el worker publica, el mismo manifest pasa a disponible y la sesión
+  // abierta autoriza sin relanzar nada.
+  await finishJob(videoQueue, enCola)
+  ;[item] = (await loadItems(collection.id)).map(publicItem)
+  assert.equal(item.available, true)
+  assert.equal(item.processing, false)
+  const granted = await authorizeResource(sesion, 'video', enCola)
+  assert.equal(granted.ok, true)
+})
+
+test('T18: re-guardar con un material fallido ya presente no tumba la colección', async () => {
+  const vivo = await readyVideo({ title: 'Vivo' })
+  const fragil = randomUUID()
+  await createVideoAndJob({
+    id: fragil,
+    title: 'Frágil',
+    platformId: PLATFORM_A,
+    ownerSub: ANA,
+    sourcePath: `/tmp/${randomUUID()}.mp4`
+  })
+  const items = [{ kind: 'video', id: vivo }, { kind: 'video', id: fragil }]
+  const collection = await createCollection({ ...scopeA, title: 'Temario', items })
+
+  /** Reclama el trabajo del material y lo marca fallido sin reintentos. */
+  async function failJobOf (materialId) {
+    const workerId = randomUUID()
+    for (;;) {
+      const job = await videoQueue.claimJob({ workerId, leaseSeconds: 90 })
+      assert.ok(job, `debía quedar el trabajo de ${materialId}`)
+      if (job.material_id === materialId) {
+        return videoQueue.failJob({
+          jobId: job.id,
+          materialId,
+          revisionId: job.revision_id,
+          workerId,
+          error: 'fichero corrupto',
+          maxAttempts: 1,
+          permanent: true
+        })
+      }
+      await videoQueue.releaseJob({
+        jobId: job.id, materialId: job.material_id, revisionId: job.revision_id, workerId, reason: 'test'
+      })
+    }
+  }
+
+  // El segundo material falla definitivamente después de estar en la colección.
+  await failJobOf(fragil)
+
+  // Renombrar la colección conservando sus elementos NO puede fallar por el
+  // material fallido que ya estaba dentro…
+  const renamed = await updateCollection({
+    id: collection.id, ...scopeA, title: 'Temario 2024', items
+  })
+  assert.equal(renamed.status, 'updated')
+
+  // …pero añadir un fallido NUEVO sí se rechaza.
+  const otroFallido = randomUUID()
+  await createVideoAndJob({
+    id: otroFallido,
+    title: 'Otro fallido',
+    platformId: PLATFORM_A,
+    ownerSub: ANA,
+    sourcePath: `/tmp/${randomUUID()}.mp4`
+  })
+  await failJobOf(otroFallido)
   await assert.rejects(
-    createCollection({ ...scopeA, title: 'Prematura', items: [{ kind: 'video', id: enCola }] }),
+    updateCollection({
+      id: collection.id,
+      ...scopeA,
+      title: 'Temario 2025',
+      items: [...items, { kind: 'video', id: otroFallido }]
+    }),
     (err) => err instanceof CollectionError && err.code === 'items_unavailable'
   )
 })

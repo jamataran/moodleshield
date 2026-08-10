@@ -70,7 +70,9 @@ function renderIndex () {
     title.textContent = item.title
     const meta = document.createElement('span')
     meta.className = 'muted'
-    meta.textContent = item.available ? describe(item) : 'No disponible ahora mismo'
+    meta.textContent = item.available
+      ? describe(item)
+      : (item.processing ? 'Preparándose…' : 'No disponible ahora mismo')
     label.append(title, meta)
 
     button.append(icon, label)
@@ -82,7 +84,8 @@ function renderIndex () {
   selectEl.replaceChildren(...items.map((item, i) => {
     const option = document.createElement('option')
     option.value = String(i)
-    option.textContent = `${i + 1}. ${item.title}${item.available ? '' : ' (no disponible)'}`
+    option.textContent = `${i + 1}. ${item.title}` +
+      (item.available ? '' : (item.processing ? ' (en preparación)' : ' (no disponible)'))
     option.disabled = !item.available
     option.selected = i === index
     return option
@@ -113,6 +116,22 @@ async function show (nextIndex, { focus = true } = {}) {
   shell.setMaterial({ title: item.title, id: item.id })
 
   if (!item.available) {
+    // La espera legítima (material aún en el worker) no es un error: el sondeo
+    // del manifest lo abrirá solo cuando se publique.
+    if (item.processing) {
+      shell.setDownload({
+        available: false,
+        label: 'En preparación',
+        help: 'Este material se está preparando.'
+      })
+      const message = document.createElement('p')
+      message.className = 'notice'
+      message.textContent =
+        'Este material se está preparando. Se abrirá automáticamente en cuanto esté disponible.'
+      contentEl.replaceChildren(message)
+      setStatus('Material en preparación')
+      return
+    }
     shell.setDownload({
       available: false,
       label: 'No disponible',
@@ -210,11 +229,47 @@ async function refreshManifest () {
     if (!res.ok) return
     const manifest = await res.json()
     if (Array.isArray(manifest.items) && manifest.items.length > 0) {
+      const before = items.map((item) => `${item.id}:${item.available}:${item.processing}`).join('|')
+      const wasWaiting = items[index] && !items[index].available
       items = manifest.items
       shell.setTitle(manifest.title, manifest.description)
       renderIndex()
+      const after = items.map((item) => `${item.id}:${item.available}:${item.processing}`).join('|')
+      if (before !== after) pollDelay = POLL_BASE_MS
+      // El material que el alumno tenía delante acaba de publicarse: se abre
+      // solo, que es la promesa del cartel de «preparándose».
+      if (wasWaiting && items[index]?.available) void show(index, { focus: false })
     }
   } catch { /* se sigue con lo que trajo el launch */ }
+}
+
+/**
+ * Sondeo mientras haya material en preparación: el manifest es barato y ya
+ * viaja con `no-store`. Retardo creciente (5 s → 30 s) para no martillear, con
+ * tope de sesión de 30 minutos — pasado ése, recargar la actividad es lo sano.
+ * En pestaña oculta no se consulta: sólo se replanifica.
+ */
+const POLL_BASE_MS = 5000
+const POLL_MAX_MS = 30000
+const POLL_DEADLINE_MS = 30 * 60 * 1000
+let pollDelay = POLL_BASE_MS
+let manifestTimer = null
+const pollStart = Date.now()
+
+function scheduleManifestPoll () {
+  clearTimeout(manifestTimer)
+  manifestTimer = null
+  if (!items.some((item) => item.processing)) return
+  if (Date.now() - pollStart > POLL_DEADLINE_MS) return
+  manifestTimer = setTimeout(async () => {
+    if (document.hidden) {
+      pollDelay = POLL_BASE_MS
+    } else {
+      await refreshManifest()
+      pollDelay = Math.min(Math.round(pollDelay * 1.5), POLL_MAX_MS)
+    }
+    scheduleManifestPoll()
+  }, pollDelay)
 }
 
 prevBtn.addEventListener('click', () => { void show(index - 1) })
@@ -253,23 +308,32 @@ if ('progress' in boot) {
   })
 }
 
-window.addEventListener('pagehide', destroyView)
+window.addEventListener('pagehide', () => {
+  clearTimeout(manifestTimer)
+  destroyView()
+})
 
 /**
  * Con qué elemento arrancar: el guardado si sigue en la colección y
  * disponible; si el material salió de ella, su antigua posición; si nada de
- * eso vale, el primero.
+ * eso vale, el primer disponible — y con todo aún en preparación, el primero,
+ * cuyo cartel explica la espera.
  */
 function initialIndex () {
-  if (!saved) return 0
+  const firstUsable = () => {
+    const available = items.findIndex((item) => item.available)
+    return available >= 0 ? available : 0
+  }
+  if (!saved) return firstUsable()
   const byId = items.findIndex((item) => item.id === saved.itemId && item.available)
   if (byId >= 0) return byId
   const position = Number(saved.itemPosition)
   if (Number.isInteger(position) && position >= 0 && position < items.length && items[position].available) {
     return position
   }
-  return 0
+  return firstUsable()
 }
 
 await refreshManifest()
 await show(initialIndex(), { focus: false })
+scheduleManifestPoll()
