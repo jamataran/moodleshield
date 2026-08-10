@@ -131,7 +131,17 @@ export async function createApp () {
   )
   // hls.js y PDF.js se sirven desde node_modules: sin CDN, el despliegue es
   // autónomo y la CSP no necesita abrirse a ningún origen externo.
-  const vendorOptions = { maxAge: '7d', index: false, immutable: true }
+  //
+  // SIN `immutable` (V-08/F-09): estas URLs no llevan `?v=` —PDF.js las importa
+  // desde el propio módulo y fija `workerSrc` a una ruta fija—, así que con
+  // `immutable` un navegador que hubiera cacheado una versión vulnerable seguiría
+  // usándola hasta una semana DESPUÉS de desplegar la corregida. Actualizar la
+  // dependencia no puede depender de que caduque una caché ajena. `no-cache` no
+  // es «no cachees», es «pregunta antes de usarlo»: con ETag son 304 vacíos.
+  const vendorOptions = {
+    index: false,
+    setHeaders: (res) => res.set('Cache-Control', 'no-cache')
+  }
   app.use(
     '/vendor/pdfjs',
     express.static(path.join(rootDir, 'node_modules/pdfjs-dist/build'), vendorOptions)

@@ -108,8 +108,12 @@ services:
       retries: 10
       start_period: 30s
     mem_limit: 512m
+    pids_limit: 256
+    security_opt: [ "no-new-privileges:true" ]
     logging: *logging
-    networks: [internal]
+    # Sólo `backend`: la base de datos no tiene ninguna razón para alcanzar
+    # Internet, y `backend` es una red interna (V-33/F-10).
+    networks: [backend]
 
   # ---------------------------------------------------------------------------
   app:
@@ -130,8 +134,13 @@ services:
       retries: 3
       start_period: 40s
     mem_limit: 512m
+    pids_limit: 256
+    security_opt: [ "no-new-privileges:true" ]
     logging: *logging
-    networks: [internal]
+    # En las dos: `backend` para hablar con la base de datos y `edge` porque es
+    # el ÚNICO servicio que necesita salida a Internet — descarga el JWKS de
+    # cada Moodle registrado para validar los launches.
+    networks: [backend, edge]
 
   # ---------------------------------------------------------------------------
   # El transcodificador. Va aparte del `app` para que un pico de ffmpeg no
@@ -156,8 +165,15 @@ services:
     # quieras cederle; el resto del host sigue respondiendo gracias al `nice`.
     cpus: ${WORKER_CPUS:-2}
     mem_limit: ${WORKER_MEMORY:-1536m}
+    # ffmpeg y x264 abren hilos, y los hilos cuentan en este límite: 1024 deja
+    # margen de sobra a la transcodificación y sigue frenando un fork bomb.
+    pids_limit: 1024
+    security_opt: [ "no-new-privileges:true" ]
     logging: *logging
-    networks: [internal]
+    # Sólo `backend` (V-33/F-10): el worker es quien abre ficheros hostiles con
+    # ffmpeg, qpdf y Ghostscript, así que es justo el que no debe tener salida a
+    # Internet. Todo lo que necesita —Postgres y el árbol de medios— es local.
+    networks: [backend]
 
   # ---------------------------------------------------------------------------
   # nginx con la configuración de infra/nginx DENTRO de la imagen (misma
@@ -183,9 +199,19 @@ services:
     # El healthcheck viaja dentro de la imagen. Así una actualización del
     # Compose sigue siendo compatible durante el breve rollout de una imagen.
     mem_limit: 128m
+    pids_limit: 128
+    security_opt: [ "no-new-privileges:true" ]
     logging: *logging
-    networks: [internal]
+    # `edge` porque es donde se publica el puerto hacia el proxy del host.
+    networks: [edge]
 
 networks:
-  internal:
+  # Red interna sin salida a Internet: db y worker viven sólo aquí. Un fallo de
+  # Ghostscript o ffmpeg con un fichero preparado no puede llamar a casa desde
+  # el worker, ni la base de datos alcanzar nada de fuera (V-33/F-10).
+  backend:
+    driver: bridge
+    internal: true
+  # Con salida: sólo app (JWKS de Moodle) y proxy (publica el puerto).
+  edge:
     driver: bridge

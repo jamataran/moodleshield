@@ -100,8 +100,10 @@ services:
       retries: 10
       start_period: 20s
     mem_limit: 256m
+    pids_limit: 256
+    security_opt: [ "no-new-privileges:true" ]
     logging: *logging
-    networks: [internal]
+    networks: [backend]
 
   app:
     image: ghcr.io/jamataran/moodleshield/app:sha-2325a7e
@@ -121,8 +123,10 @@ services:
       retries: 3
       start_period: 40s
     mem_limit: 384m
+    pids_limit: 256
+    security_opt: [ "no-new-privileges:true" ]
     logging: *logging
-    networks: [internal]
+    networks: [backend, edge]
 
   worker:
     image: ghcr.io/jamataran/moodleshield/worker:sha-2325a7e
@@ -140,8 +144,10 @@ services:
       - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
     cpus: ${WORKER_CPUS:-1}
     mem_limit: ${WORKER_MEMORY:-1024m}
+    pids_limit: 1024
+    security_opt: [ "no-new-privileges:true" ]
     logging: *logging
-    networks: [internal]
+    networks: [backend]
 
   # La configuración de nginx viaja dentro de la imagen (docker/Dockerfile.proxy)
   # y se etiqueta a la vez que app y worker.
@@ -160,9 +166,16 @@ services:
       - "${HTTP_BIND_ADDRESS:-${BIND_ADDRESS:-127.0.0.1}}:${HTTP_PORT:-43128}:8080"
     # Healthcheck definido en la propia imagen `proxy`.
     mem_limit: 128m
+    pids_limit: 128
+    security_opt: [ "no-new-privileges:true" ]
     logging: *logging
-    networks: [internal]
+    networks: [edge]
 
 networks:
-  internal:
+  # Red interna sin salida a Internet: db y worker viven sólo aquí (V-33/F-10).
+  backend:
+    driver: bridge
+    internal: true
+  # Con salida: sólo app (JWKS de Moodle) y proxy (publica el puerto).
+  edge:
     driver: bridge

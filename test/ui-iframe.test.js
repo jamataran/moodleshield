@@ -422,4 +422,11 @@ test('los imports transitivos de JavaScript se revalidan tras un despliegue', as
   const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
   assert.match(pdf, /from '\.\/pdf-download\.js\?v=[^']+'/)
   assert.match(collection, /from '\.\/pdf-download\.js\?v=[^']+'/)
+
+  // V-08/F-09: las URLs de /vendor no llevan `?v=` —PDF.js importa su propio
+  // módulo y fija workerSrc a una ruta fija—, así que NO pueden servirse como
+  // `immutable`: una versión vulnerable cacheada sobreviviría al despliegue de
+  // la corregida hasta que caducara la caché del navegador.
+  assert.doesNotMatch(app, /vendorOptions\s*=\s*\{[^}]*immutable/,
+    'los ficheros de /vendor deben revalidarse para que un parche de seguridad llegue el mismo día')
 })

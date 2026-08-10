@@ -87,8 +87,9 @@ export async function createPdfView ({
       // PDF.js sí puede añadir cabeceras, al contrario que hls.js).
       httpHeaders: { Authorization: `Bearer ${sessionToken}` },
       withCredentials: false,
-      // Nada de ejecutar lo que traiga el documento.
-      isEvalSupported: false,
+      // Nada de ejecutar lo que traiga el documento. `isEvalSupported` ya no se
+      // pasa: PDF.js 6 eliminó por completo el camino de `eval` que esa opción
+      // desactivaba (es parte de la corrección de GHSA-hq66-cqwq-w95j).
       enableXfa: false,
       disableAutoFetch: true,
       disableStream: false
@@ -131,7 +132,11 @@ export async function createPdfView ({
       canvas.style.width = '100%'
       canvas.style.aspectRatio = `${viewport.width} / ${viewport.height}`
       const context = canvas.getContext('2d', { alpha: false })
-      const render = page.render({ canvasContext: context, viewport })
+      // `canvas` es la forma recomendada desde PDF.js 6; `canvasContext` sigue
+      // aceptándose sólo por compatibilidad. Se pasan los dos: el contexto ya
+      // está creado con `alpha: false`, que es lo que evita el repintado del
+      // fondo en cada página.
+      const render = page.render({ canvas, canvasContext: context, viewport })
       await render.promise
       if (destroyed) return
       holder.replaceChildren(canvas, pageLegalMark(user))

@@ -80,6 +80,8 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    pids_limit: 256
+    security_opt: [ "no-new-privileges:true" ]
     environment:
       POSTGRES_DB: moodleshield
       POSTGRES_USER: moodleshield
@@ -101,6 +103,8 @@ services:
       target: app
     image: moodleshield/app:local
     restart: unless-stopped
+    pids_limit: 256
+    security_opt: [ "no-new-privileges:true" ]
     init: true
     depends_on:
       db:
@@ -123,6 +127,8 @@ services:
       target: worker
     image: moodleshield/worker:local
     restart: unless-stopped
+    pids_limit: 1024
+    security_opt: [ "no-new-privileges:true" ]
     init: true
     stop_grace_period: 45s
     depends_on:
@@ -145,6 +151,8 @@ services:
       dockerfile: docker/Dockerfile.proxy
     image: moodleshield/proxy:local
     restart: unless-stopped
+    pids_limit: 128
+    security_opt: [ "no-new-privileges:true" ]
     depends_on:
       app:
         condition: service_started
