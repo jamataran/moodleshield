@@ -29,7 +29,12 @@ import {
   recordView,
   updateVideoMetadata
 } from '../../src/services/videos.js'
-import { createDocumentAndJob, updateDocumentMetadata } from '../../src/services/documents.js'
+import {
+  createDocumentAndJob,
+  createDocumentRevisionAndJob,
+  recordDocumentView,
+  updateDocumentMetadata
+} from '../../src/services/documents.js'
 import {
   archiveCollection,
   collectionContains,
@@ -1210,6 +1215,52 @@ test('T21: las colecciones no se editan al sustituir un material', async () => {
     (await getActiveRevision({ kind: 'video', materialId: videoId })).id,
     'la colección debe resolver la revisión nueva sin haberse editado'
   )
+})
+
+test('F-14: la lápida de un PDF no falla pese a no tener columnas de vídeo', async () => {
+  // `pdf_revision` no tiene `pattern_scope`, `segment_count`, `segment_seconds`,
+  // `width` ni `height`: son columnas de vídeo. La consulta de candidatos y la
+  // lápida las proyectan como NULL para el PDF, y esto lo comprueba — un error
+  // de SQL aquí sólo aparecería al purgar en producción, meses después.
+  const documentId = await readyDocument({ title: 'Con lápida' })
+  const primera = await getActiveRevision({ kind: 'pdf', materialId: documentId })
+
+  await recordDocumentView({
+    documentId,
+    revisionId: primera.id,
+    platformId: PLATFORM_A,
+    sessionJti: randomUUID(),
+    context: { sub: 'alumno-pdf', name: 'Alumno PDF', contextId: 'c1', resourceLinkId: 'rl1' },
+    identity: '87654321X'
+  })
+
+  for (let i = 0; i < 2; i++) {
+    await createDocumentRevisionAndJob({ documentId, ...scopeA, sourcePath: `/tmp/${randomUUID()}.pdf` })
+    await finishJob(pdfQueue, documentId)
+  }
+  await query(
+    "UPDATE pdf_revision SET retired_at = now() - interval '400 days' WHERE id = $1",
+    [primera.id]
+  )
+
+  const candidatos = await listPurgeCandidates('pdf')
+  assert.ok(candidatos.some((c) => c.id === primera.id), 'la revisión debía ser purgable')
+
+  const outcome = await purgeRetiredRevisions()
+  assert.ok(outcome.pdf >= 1, 'la primera revisión del PDF debía purgarse')
+
+  const file = tombstonePath('pdf', documentId, primera.id)
+  const tombstone = JSON.parse(await readFile(file, 'utf8'))
+  try {
+    assert.equal(tombstone.kind, 'pdf')
+    assert.equal(tombstone.segmentCount, null, 'un PDF no tiene segmentos')
+    assert.deepEqual(
+      tombstone.viewers.map((v) => [v.user_sub, v.user_identity]),
+      [['alumno-pdf', '87654321X']]
+    )
+  } finally {
+    await rm(file, { force: true })
+  }
 })
 
 test('T21: un PDF sigue exactamente el mismo ciclo de revisiones', async () => {
