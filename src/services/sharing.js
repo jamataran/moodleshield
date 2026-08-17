@@ -67,15 +67,70 @@ export function sharedFolderIdsSql (platform = '$1') {
            WHERE sh.platform_id = ${platform} AND sh.shared`
 }
 
+const PLACEMENT_ITEM_COLUMN = { video: 'video_id', pdf: 'document_id' }
+
 /**
- * Condición «este profesor puede ver esta fila»: es suya, o vive en una carpeta
- * compartida. Sirve igual para `video`, `pdf_document` y `content_collection`
- * porque las tres tienen `owner_sub` y `folder_id`.
+ * Segunda puerta: el material está **desplegado en el curso** desde el que entra
+ * este profesor.
+ *
+ * El caso real que resuelve: en un aula con dos profesores, uno sube el material
+ * y lo inserta; el otro abría la biblioteca y no veía nada, porque `owner_sub`
+ * los separa y nadie había marcado nada como público. Los alumnos sí lo veían
+ * —su acceso va por el `resource_link` ya ligado—, lo que hacía el fallo más
+ * desconcertante.
+ *
+ * El permiso NO sale del UUID sino de una fila de `resource_placement`, que es
+ * la prueba de que ese material lo colocamos nosotros en ese curso. Por eso esto
+ * no abre la grieta que cerró T24: teclear un UUID ajeno sigue devolviendo 404,
+ * porque sin placement en el curso del que vienes no hay fila que encaje. Y como
+ * el acceso se deriva de esa fila, revocar el placement lo corta también.
+ *
+ * El alcance es el curso, no la instancia: entrar desde otro curso donde ese
+ * material no está desplegado sigue sin enseñarlo. Es lo que separa «los
+ * profesores de ese aula» de «todo el claustro».
+ *
+ * Una colección desplegada arrastra sus elementos: el snapshot
+ * `resource_placement_item` es el que decide, igual que para los alumnos, así
+ * que quitar un elemento de la colección también cierra esta puerta.
  */
-export function visibleClause (alias, { platform = '$1', owner = '$2', publicColumn = null } = {}) {
+export function placedInContextSql (alias, kind, { platform = '$1', context = '$3' } = {}) {
+  const scope = `p.platform_id = ${platform} AND p.context_id = ${context}
+                   AND p.revoked_at IS NULL`
+  if (kind === 'collection') {
+    return `EXISTS (SELECT 1 FROM resource_placement p
+                     WHERE ${scope}
+                       AND p.resource_kind = 'collection' AND p.resource_id = ${alias}.id)`
+  }
+  const column = PLACEMENT_ITEM_COLUMN[kind]
+  if (!column) throw new Error(`Tipo de material desconocido: ${kind}`)
+  return `EXISTS (SELECT 1 FROM resource_placement p
+                   WHERE ${scope}
+                     AND ((p.resource_kind = '${kind}' AND p.resource_id = ${alias}.id)
+                          OR EXISTS (SELECT 1 FROM resource_placement_item pi
+                                      WHERE pi.placement_id = p.id
+                                        AND pi.${column} = ${alias}.id)))`
+}
+
+/**
+ * Condición «este profesor puede ver esta fila»: es suya, vive en una carpeta
+ * compartida, o está desplegada en el curso desde el que entra. Sirve igual para
+ * `video`, `pdf_document` y `content_collection` porque las tres tienen
+ * `owner_sub` y `folder_id`.
+ *
+ * La puerta del curso sólo se abre cuando quien consulta pasa `context` **y**
+ * `kind`. Si el `contextId` llega nulo —un launch sin curso—, el parámetro vale
+ * NULL y la comparación nunca es cierta: se queda como estaba, sin puerta.
+ */
+export function visibleClause (
+  alias,
+  { platform = '$1', owner = '$2', context = null, kind = null, publicColumn = null } = {}
+) {
   const compartida = publicColumn ? ` OR ${alias}.${publicColumn}` : ''
+  const desplegada = context && kind
+    ? ` OR ${placedInContextSql(alias, kind, { platform, context })}`
+    : ''
   return `(${alias}.owner_sub = ${owner}${compartida}
-           OR ${alias}.folder_id IN (${sharedFolderIdsSql(platform)}))`
+           OR ${alias}.folder_id IN (${sharedFolderIdsSql(platform)})${desplegada})`
 }
 
 /** `true` cuando la fila es de otro profesor y se ve por estar compartida. */
@@ -89,25 +144,29 @@ const TABLE = { video: 'video', pdf: 'pdf_document' }
  * Material visible para el profesor: propio o compartido. Devuelve `null` —y la
  * ruta responde 404— para cualquier otro UUID, también el de otra instancia.
  */
-export function getVisibleMaterial ({ kind, id, platformId, ownerSub }) {
+export function getVisibleMaterial ({ kind, id, platformId, ownerSub, contextId = null }) {
   const table = TABLE[kind]
   if (!table || !platformId || !ownerSub || !isUuid(id)) return Promise.resolve(null)
   return one(
     `SELECT m.* FROM ${table} m
-      WHERE m.id = $3 AND m.platform_id = $1 AND ${visibleClause('m')}`,
-    [platformId, ownerSub, id]
+      WHERE m.id = $3 AND m.platform_id = $1
+        AND ${visibleClause('m', { context: '$4', kind })}`,
+    [platformId, ownerSub, id, contextId]
   )
 }
 
-/** Colección visible: propia, marcada pública o dentro de una carpeta compartida. */
-export function getVisibleCollection ({ id, platformId, ownerSub }) {
+/**
+ * Colección visible: propia, marcada pública, dentro de una carpeta compartida o
+ * desplegada en el curso desde el que entra este profesor.
+ */
+export function getVisibleCollection ({ id, platformId, ownerSub, contextId = null }) {
   if (!platformId || !ownerSub || !isUuid(id)) return Promise.resolve(null)
   return one(
     `SELECT c.*, (c.owner_sub IS DISTINCT FROM $2) AS shared
        FROM content_collection c
       WHERE c.id = $3 AND c.platform_id = $1
-        AND ${visibleClause('c', { publicColumn: 'is_public' })}`,
-    [platformId, ownerSub, id]
+        AND ${visibleClause('c', { context: '$4', kind: 'collection', publicColumn: 'is_public' })}`,
+    [platformId, ownerSub, id, contextId]
   )
 }
 

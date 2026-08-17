@@ -26,8 +26,30 @@ import {
 } from '../media/storage.js'
 import { receiveVideoUpload } from '../media/upload.js'
 import { displayOwnerName } from '../services/sharing.js'
+import {
+  releaseUploadReservation,
+  reserveUpload,
+  UploadLimitError
+} from '../services/upload-limits.js'
 
 export const videosRouter = Router()
+
+function declaredUploadBytes (req, maxFileBytes) {
+  const value = Number(req.get('content-length'))
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new UploadLimitError('La subida directa exige Content-Length; usa la subida por fragmentos', {
+      status: 411,
+      code: 'content_length_required'
+    })
+  }
+  if (value > maxFileBytes + 1024 * 1024) {
+    throw new UploadLimitError('El cuerpo supera el límite de subida', {
+      status: 413,
+      code: 'upload_too_large'
+    })
+  }
+  return value
+}
 
 /** Lo que puede salir del servidor: nada de rutas de disco ni de propietario. */
 function publicVideo (video, { owner = true } = {}) {
@@ -39,6 +61,7 @@ videosRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
     const page = await listMaterials({
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
       kind: 'video',
       folderId: req.query.folderId,
       q: req.query.q,
@@ -71,10 +94,20 @@ videosRouter.get('/:id', requireSession, async (req, res, next) => {
 videosRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
   const videoId = randomUUID()
   const revisionId = randomUUID()
+  const reservationId = randomUUID()
   const startedAt = Date.now()
   let destination = null
 
   try {
+    const declaredBytes = declaredUploadBytes(req, config.media.maxUploadBytes)
+    await reserveUpload({
+      id: reservationId,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      kind: 'video',
+      sizeBytes: declaredBytes,
+      expiresAt: new Date(Date.now() + config.media.uploadSessionTtlSeconds * 1000)
+    })
     const filesystem = await statfs(config.media.uploadRoot).catch(() => null)
     const freeBytes = filesystem ? Number(filesystem.bavail) * Number(filesystem.bsize) : null
     const upload = await receiveVideoUpload(req, { revisionId })
@@ -108,6 +141,8 @@ videosRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
   } catch (err) {
     if (destination) await rm(destination, { force: true }).catch(() => {})
     next(err)
+  } finally {
+    await releaseUploadReservation(reservationId).catch(() => {})
   }
 })
 
@@ -118,10 +153,21 @@ videosRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
 videosRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res, next) => {
   const videoId = assertVideoId(req.params.id)
   const revisionId = randomUUID()
+  const reservationId = randomUUID()
   let destination = null
   try {
     const owned = await getVideoForOwner(videoId, req.session.platformId, req.session.sub)
     if (!owned) return res.status(404).json({ error: 'Vídeo no encontrado' })
+
+    const declaredBytes = declaredUploadBytes(req, config.media.maxUploadBytes)
+    await reserveUpload({
+      id: reservationId,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      kind: 'video',
+      sizeBytes: declaredBytes,
+      expiresAt: new Date(Date.now() + config.media.uploadSessionTtlSeconds * 1000)
+    })
 
     const upload = await receiveVideoUpload(req, { revisionId })
     destination = upload.destination
@@ -146,6 +192,8 @@ videosRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res, n
   } catch (err) {
     if (destination) await rm(destination, { force: true }).catch(() => {})
     next(err)
+  } finally {
+    await releaseUploadReservation(reservationId).catch(() => {})
   }
 })
 
@@ -155,6 +203,7 @@ videosRouter.patch('/:id', requireCatalogInstructor, async (req, res, next) => {
       videoId: assertVideoId(req.params.id),
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
       title: req.body?.title,
       description: req.body?.description,
       folderId: req.body?.folderId

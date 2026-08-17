@@ -53,7 +53,7 @@ test('la sesión conserva rol, identidad visible y contexto del launch', () => {
     resourceLinkId: 'actividad-77',
     isInstructor: true,
     mode: 'launch',
-    resource: { kind: 'video', id: 'video-9', revisionId: 'rev-3' },
+    resource: { kind: 'video', id: 'video-9', revisionId: 'rev-3', placementId: 'placement-4' },
     deepLinkingSettings: { deep_link_return_url: 'https://moodle/x' }
   })
   const session = verifySession(token)
@@ -65,7 +65,9 @@ test('la sesión conserva rol, identidad visible y contexto del launch', () => {
   assert.equal(session.isInstructor, true)
   assert.equal(session.canDeepLink, true)
   assert.equal(session.mode, 'launch')
-  assert.deepEqual(session.resource, { kind: 'video', id: 'video-9', revisionId: 'rev-3' })
+  assert.deepEqual(session.resource, {
+    kind: 'video', id: 'video-9', revisionId: 'rev-3', placementId: 'placement-4'
+  })
 })
 
 test('la sesión fija la revisión resuelta en el launch', () => {
@@ -83,7 +85,9 @@ test('una sesión de colección no fija revisión: se resuelve al abrir cada mat
     sub: 'u', platformId: 'p', mode: 'launch',
     resource: { kind: 'collection', id: 'col-1' }
   }))
-  assert.deepEqual(session.resource, { kind: 'collection', id: 'col-1', revisionId: null })
+  assert.deepEqual(session.resource, {
+    kind: 'collection', id: 'col-1', revisionId: null, placementId: null
+  })
 })
 
 test('cada sesión lleva un jti distinto para desduplicar el registro de acceso', () => {
@@ -115,6 +119,20 @@ test('un token de clave sólo sirve para su propio vídeo', () => {
   const token = issueKeyToken({ videoId: 'video-a', sub: 'user-1' })
   assert.ok(verifyKeyToken(token, 'video-a'))
   assert.equal(verifyKeyToken(token, 'video-b'), null)
+})
+
+test('una clave HLS queda ligada al jti y nunca sobrevive a su sesión matriz', () => {
+  const parentExpiresAt = Math.floor(Date.now() / 1000) + 60
+  const token = issueKeyToken({
+    videoId: 'video-a',
+    sub: 'user-1',
+    platformId: 'platform-1',
+    sessionJti: '11111111-1111-4111-8111-111111111111',
+    parentExpiresAt
+  })
+  const payload = verifyKeyToken(token, 'video-a')
+  assert.equal(payload.sj, '11111111-1111-4111-8111-111111111111')
+  assert.ok(payload.exp <= parentExpiresAt)
 })
 
 test('un token de sesión no vale como token de clave', () => {

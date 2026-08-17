@@ -1,9 +1,19 @@
 import pg from 'pg'
+import { readFileSync } from 'node:fs'
 import config from '../config.js'
 import logger from '../logger.js'
 import { testDatabaseViolation } from './guard.js'
 
 const { Pool } = pg
+
+function databaseTls () {
+  if (config.db.sslMode === 'disable') return undefined
+  if (config.db.sslMode === 'require') return { rejectUnauthorized: false }
+  return {
+    rejectUnauthorized: true,
+    ...(config.db.sslCaFile ? { ca: readFileSync(config.db.sslCaFile, 'utf8') } : {})
+  }
+}
 
 // Se evalúa una vez: ni el nombre de la base ni NODE_TEST_CONTEXT cambian en
 // vida del proceso. Se lanza al usar el pool, no al importar, porque los
@@ -18,20 +28,34 @@ function assertSafeDatabase () {
 // un Number sin perder precisión, así que los convertimos.
 pg.types.setTypeParser(20, (v) => Number.parseInt(v, 10))
 
-export const pool = new Pool({
-  host: config.db.host,
-  port: config.db.port,
-  database: config.db.database,
-  user: config.db.user,
-  password: config.db.password,
-  max: config.db.poolMax,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000,
-  ssl: config.db.ssl ? { rejectUnauthorized: false } : undefined
-})
+function poolConfig ({ user, password }) {
+  return {
+    host: config.db.host,
+    port: config.db.port,
+    database: config.db.database,
+    user,
+    password,
+    max: config.db.poolMax,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+    ssl: databaseTls()
+  }
+}
+
+/** Pool de ejecución: nunca es propietario del esquema en producción. */
+export const pool = new Pool(poolConfig({ user: config.db.user, password: config.db.password }))
+
+/** Sólo migraciones/provisión; el worker no recibe la contraseña propietaria. */
+export const migrationPool = new Pool(poolConfig({
+  user: config.db.ownerUser,
+  password: config.db.ownerPassword
+}))
 
 pool.on('error', (err) => {
   logger.error({ err }, 'Error inesperado en un cliente ocioso del pool')
+})
+migrationPool.on('error', (err) => {
+  logger.error({ err }, 'Error inesperado en un cliente ocioso del pool de migración')
 })
 
 export function query (text, params) {
@@ -74,11 +98,11 @@ export async function transaction (fn) {
 }
 
 /** Espera a que Postgres acepte conexiones. Útil al arrancar en Docker. */
-export async function waitForDatabase ({ attempts = 30, delayMs = 2000 } = {}) {
+export async function waitForDatabase ({ attempts = 30, delayMs = 2000, databasePool = pool } = {}) {
   assertSafeDatabase()
   for (let i = 1; i <= attempts; i++) {
     try {
-      await pool.query('SELECT 1')
+      await databasePool.query('SELECT 1')
       return
     } catch (err) {
       // Estas condiciones no se arreglan esperando. En particular, reintentar
@@ -99,5 +123,5 @@ export async function waitForDatabase ({ attempts = 30, delayMs = 2000 } = {}) {
 }
 
 export async function closeDatabase () {
-  await pool.end()
+  await Promise.all([pool.end(), migrationPool.end()])
 }

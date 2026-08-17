@@ -236,6 +236,10 @@ body.catalog-page {
   background: none;
   text-align: left;
 }
+/* `display: grid` de autor gana al `[hidden] { display: none }` del navegador:
+   sin esto, «Material de este curso» se ve incluso cuando el launch no trae
+   curso y su botón no lleva a ninguna parte. */
+.library-view[hidden] { display: none; }
 .library-view:hover:not(:disabled),
 .library-view.current { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .library-view.current { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); }
@@ -1055,6 +1059,38 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   box-shadow: 0 1px 4px rgb(0 0 0 / .35);
 }
 .pdf-page canvas { display: block; border-radius: 4px; }
+/*
+ * Marca de fondo con la identidad, repetida sobre toda la hoja.
+ *
+ * El equilibrio que se busca: invisible de facto al leer, presente en una foto
+ * del monitor. Se calibra con --pdf-mark-alpha y nada más; por debajo de .10 la
+ * compresión de una cámara de móvil se la puede comer, y por encima de .18
+ * empieza a estorbar sobre texto pequeño.
+ *
+ * Negro a baja opacidad en vez de un gris fijo: así el tono lo pone la propia
+ * página y la marca funciona igual sobre blanco que sobre un PDF de fondo claro
+ * con color.
+ */
+.pdf-page-mark {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  color: #000;
+  opacity: var(--pdf-mark-alpha, .13);
+  pointer-events: none;
+  user-select: none;
+}
+.pdf-page-mark text {
+  font: 700 15px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+/* Si el usuario pide más contraste, la marca no debe ser la que se lo quite. */
+@media (prefers-contrast: more) {
+  .pdf-page-mark { opacity: .09; }
+}
 .pdf-page-legal {
   position: absolute;
   z-index: 3;

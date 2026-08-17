@@ -46,10 +46,11 @@ sueltos. Antes de tocar nada:
 | Documento | Qué resuelve |
 |---|---|
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
+| [`docs/revision-seguridad-2026-08-10.md`](docs/revision-seguridad-2026-08-10.md) | Estado de seguridad vigente: rama frente a producción, riesgos y gates de despliegue |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…022: por qué cada decisión y cómo revertirla |
+| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…024: por qué cada decisión y cómo revertirla |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
-| [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría detallada de la última entrega |
+| [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría histórica de la entrega del 6 de agosto; no usar como estado vigente |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Mapa de fases y dependencias |
 | [`docs/tasks/README.md`](docs/tasks/README.md) | Estado real de cada tarea; `done/` sólo con evidencia |
 | [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle (6 pasos) |
@@ -73,11 +74,15 @@ visionado: **cero ffmpeg**.
 No hay DRM. El sistema no impide capturar el vídeo — lo hace **atribuible**.
 
 El PDF se valida y normaliza en el worker y se entrega con control de acceso y
-overlay visible, pero **no lleva marca forense**: el documento autorizado viaja
-entero al navegador. El alumno puede descargar una copia oficial **sellada con
-su identidad y cifrada con contraseña de permisos aleatoria** (ADR-017), pero
-ese sello es removible por alguien técnico: una filtración de PDF no es
-atribuible, y eso no debe presentarse de otra forma.
+marca visible —el visor repite la identidad del alumno de fondo sobre toda la
+hoja, tenue para no estorbar la lectura pero legible al fotografiar la
+pantalla—, pero **no lleva marca forense**: esa capa vive en el navegador, no
+en el documento, y el PDF autorizado viaja entero al navegador. El alumno puede
+descargar una copia oficial **sellada con su identidad y cifrada con contraseña
+de permisos aleatoria** (ADR-017), pero ese sello es removible por alguien
+técnico: una filtración de PDF no es atribuible, y eso no debe presentarse de
+otra forma. La marca de fondo sirve para atribuir **una foto o una captura**,
+que es un caso distinto y menor.
 
 Encima de ambos: carpetas personales **anidadas** por profesor (ADR-016),
 colecciones que agrupan varios materiales en una sola actividad Moodle, y
@@ -90,19 +95,33 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
 - **El UUID lógico de un material es la identidad que conoce Moodle** (viaja en
   `custom.resourceid` / `custom.videoId`). Mover, renombrar o sustituir el
   fichero **nunca** lo cambia. Cambiarlo rompe todas las actividades desplegadas.
+- **Junto al UUID viaja su firma, `custom.resourcesig`** (T24): demuestra que la
+  referencia la emitimos nosotros para el propietario que consta en la fila, y es
+  lo que impide que un profesor abra material ajeno escribiendo un UUID a mano.
+  Se firma con `SESSION_SECRET`, que por tanto es **permanente** también por este
+  motivo: rotarlo invalidaría la firma de todas las actividades ya insertadas, no
+  sólo las sesiones. `LAUNCH_RESOURCE_SIGNATURE` controla si falta firma se avisa
+  (`warn` en desarrollo) o se rechaza (`enforce`, por defecto en producción).
 - **`platform_id` separa instancias Moodle; `owner_sub` separa profesores.** Las
   dos condiciones salen siempre de la sesión LTI, nunca del body ni de la query.
-  Un UUID ajeno responde **404**, no 403. `owner_sub` tiene **una** puerta:
-  `is_public` en carpeta o colección (ADR-018), con el filtro en un único sitio,
-  `src/services/sharing.js`. `platform_id` no tiene ninguna.
+  Un UUID ajeno responde **404**, no 403. `owner_sub` tiene **dos** puertas, las
+  dos en un único sitio, `src/services/sharing.js`: `is_public` en carpeta o
+  colección (ADR-018), y el material **desplegado en el curso** desde el que
+  entra ese profesor (ADR-023). La segunda no sale del UUID sino de una fila de
+  `resource_placement`, así que revocarla la cierra y T24 sigue en pie.
+  `platform_id` no tiene ninguna.
 - **La autorización va en la sesión, no en el UUID.** Un token de un recurso no
   abre otro. El helper es `authorizeResource(session, kind, id)`.
 - **Ambas variantes llevan marca.** Ninguna es "la limpia" (ADR-005).
 - **`WATERMARK_SECRET` es permanente.** Cambiarlo invalida todas las trazas.
 - **Publicación atómica.** El worker escribe en `.staging/` y publica con un
   único `rename`. Un directorio publicado es inmutable.
-- **Nada de cookies.** Sesiones por token HMAC en `Authorization: Bearer` o
-  `?st=` (ADR-003).
+- **Nada de cookies, y ningún token de sesión en la URL.** Las sesiones son
+  tokens HMAC que viajan **sólo** en `Authorization: Bearer` (ADR-003 + T23). El
+  antiguo `?st=` se retiró: lo único que puede ir en una URL es el ticket de
+  reproducción `?pt=` del HLS nativo de Safari/iOS —90 segundos, un solo vídeo y
+  una sola revisión, porque ese camino no puede poner cabeceras— y la firma de
+  segmento que valida nginx.
 
 ## Mapa del código
 
@@ -158,7 +177,8 @@ npm run test:integration:local
 
 - `custom` de Moodle puede llegar **normalizado a minúsculas**: acepta siempre
   `videoId` y `videoid`, `resourceKind` y `resourcekind`.
-- `hls.js` **no puede añadir cabeceras** a playlist ni segmentos: de ahí `?st=`.
+- `hls.js` **sí** puede añadir cabeceras (por `xhrSetup`), y es lo que usa. Quien
+  no puede es el **HLS nativo** de Safari/iOS: de ahí el ticket `?pt=`, y sólo ahí.
 - Moodle **nunca avisa** de que se borró una actividad. No existe callback.
 - El GOP fijo (`keyint`, `scenecut=0`) es lo que hace intercambiables A y B. Si
   `assertVariantsAligned` falla, la culpa casi siempre es del GOP.

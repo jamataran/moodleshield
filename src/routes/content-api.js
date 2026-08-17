@@ -53,6 +53,13 @@ export async function requireContentApi (req, res, next) {
           error: 'Faltan o no son válidas las cabeceras X-MoodleShield-Platform-Id y X-MoodleShield-Owner-Sub'
         })
       }
+      if (config.contentApi.allowedPlatformIds.length > 0 &&
+          !config.contentApi.allowedPlatformIds.includes(identity.platformId)) {
+        return res.status(403).json({
+          error: 'El token de migración no está autorizado para esta plataforma',
+          code: 'content_api_platform_not_allowed'
+        })
+      }
       const platform = await one(
         'SELECT id FROM lti_platform WHERE id = $1 AND enabled = true',
         [identity.platformId]
@@ -78,10 +85,13 @@ export async function requireContentApi (req, res, next) {
 
 contentApiRouter.get('/platforms', requireContentApiToken, async (_req, res, next) => {
   try {
+    const allowed = config.contentApi.allowedPlatformIds
     const platforms = await many(
       `SELECT id, name, issuer, client_id, enabled
          FROM lti_platform
-        ORDER BY lower(name), created_at`
+        WHERE ($1::uuid[] IS NULL OR id = ANY($1))
+        ORDER BY lower(name), created_at`,
+      [allowed.length > 0 ? allowed : null]
     )
     res.set('Cache-Control', 'private, no-store')
     res.json({

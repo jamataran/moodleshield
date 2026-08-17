@@ -405,6 +405,8 @@ function renderCrumbs () {
     parts = [{ name: 'Archivados' }]
   } else if (state.view === 'all') {
     parts = [{ name: 'Todo el contenido' }]
+  } else if (state.view === 'course') {
+    parts = [{ name: 'Material de este curso' }]
   } else if (state.folderId === null) {
     parts = [{ id: 'all', name: 'Todo el contenido' }, { name: 'Sin carpeta' }]
   } else {
@@ -1538,7 +1540,7 @@ async function loadPicker ({ append = false } = {}) {
   const cursor = append ? state.pickerNextCursor : null
   if (append && !cursor) return
   const generation = ++pickerGeneration
-  const params = new URLSearchParams({ limit: '60', ready: '1' })
+  const params = new URLSearchParams({ limit: '60' })
   const query = el('collection-search').value.trim()
   if (query) params.set('q', query)
   if (cursor) params.set('cursor', cursor)
@@ -1547,10 +1549,11 @@ async function loadPicker ({ append = false } = {}) {
   try {
     const data = await apiJson(`/materials?${params}`)
     if (generation !== pickerGeneration) return
-    // Sólo lo insertable: listo, con revisión publicada y sin archivar.
-    const ready = data.materials.filter((m) =>
-      m.status === 'ready' && !m.archived && m.hasActiveRevision)
-    const combined = append ? [...state.pickerResults, ...ready] : ready
+    // Lo insertable: publicado o aún en cola (el alumno lo verá al procesarse),
+    // sin archivar. Misma regla que la inserción de material suelto.
+    const insertable = data.materials.filter((m) =>
+      !m.archived && (m.hasActiveRevision || INSERTABLE_STATUSES.has(m.status)))
+    const combined = append ? [...state.pickerResults, ...insertable] : insertable
     state.pickerResults = [...new Map(combined.map((item) => [`${item.kind}:${item.id}`, item])).values()]
     state.pickerNextCursor = data.nextCursor
     renderPicker()
@@ -1572,8 +1575,10 @@ function renderPicker () {
     name.textContent = `${material.kind === 'pdf' ? 'PDF' : 'Vídeo'} · ${material.title}`
     const where = document.createElement('span')
     where.className = 'muted'
+    // La insignia de estado avisa de que se añade algo aún en preparación.
     where.textContent = ` — en ${pathName(material.folderId)}` +
-      (isShared(material) ? ` · de ${ownerLabel(material)}` : '')
+      (isShared(material) ? ` · de ${ownerLabel(material)}` : '') +
+      (material.status !== 'ready' ? ` · ${STATUS_LABEL[material.status] ?? material.status}` : '')
     label.append(name, where)
 
     const toggle = document.createElement('button')
@@ -1745,6 +1750,11 @@ function render () {
   el('all-content').classList.toggle('current', state.view === 'all')
   el('root-content').classList.toggle('current', state.view === 'browse' && state.folderId === null)
   el('archived-toggle').classList.toggle('current', state.view === 'archived')
+  const courseToggle = el('course-toggle')
+  if (courseToggle) {
+    courseToggle.hidden = !boot.hasCourse
+    courseToggle.classList.toggle('current', state.view === 'course')
+  }
 
   // Las subcarpetas del nivel abierto son parte del contenido de ese nivel, como
   // en cualquier explorador. El lateral las repite como atajo, pero quien navega
@@ -1757,13 +1767,13 @@ function render () {
 
   el('collections-heading').textContent = state.view === 'archived'
     ? 'Colecciones archivadas'
-    : 'Colecciones'
+    : state.view === 'course' ? 'Colecciones usadas en este curso' : 'Colecciones'
   el('section-collections').hidden = state.collections.length === 0
   el('collection-grid').replaceChildren(...state.collections.map(collectionCard))
 
   el('materials-heading').textContent = state.view === 'archived'
     ? 'Materiales archivados'
-    : 'Materiales'
+    : state.view === 'course' ? 'Materiales usados en este curso' : 'Materiales'
   el('section-materials').hidden = state.materials.length === 0
   el('material-grid').replaceChildren(...state.materials.map(materialCard))
 
@@ -1782,6 +1792,10 @@ function render () {
     } else if (state.view === 'archived') {
       title = 'No hay contenido archivado'
       description = 'Lo que archives aparecerá aquí y podrás restaurarlo.'
+    } else if (state.view === 'course') {
+      title = 'Este curso todavía no usa ningún material'
+      description = 'Aquí aparece lo que cualquier profesor haya insertado en este ' +
+        'curso, también si es de otro. Inserta material con «Seleccionar contenido».'
     } else if (state.folderId !== null) {
       title = 'Esta ubicación está vacía'
       description = 'Sube un material aquí o mueve contenido desde otra carpeta.'
@@ -1790,7 +1804,7 @@ function render () {
     }
     emptyTitleEl.textContent = title
     emptyDescriptionEl.textContent = description
-    el('empty-upload').hidden = state.view === 'archived' || state.view === 'search'
+    el('empty-upload').hidden = ['archived', 'search', 'course'].includes(state.view)
   }
 
   renderCrumbs()
@@ -1866,6 +1880,11 @@ async function load ({ appendMaterials = false, appendCollections = false, refre
   } else if (state.view === 'browse') {
     params.set('folderId', state.folderId ?? 'root')
     collectionParams.set('folderId', state.folderId ?? 'root')
+  } else if (state.view === 'course') {
+    // Plano y sin carpeta: este material vive en la biblioteca de su autor y
+    // esas carpetas no se enseñan (services/materials.js).
+    params.set('scope', 'course')
+    collectionParams.set('scope', 'course')
   }
   if (appendMaterials && state.nextCursor) params.set('cursor', state.nextCursor)
   if (appendCollections && state.nextCollectionCursor) {
@@ -1988,6 +2007,11 @@ searchEl.addEventListener('input', () => {
 el('archived-toggle').addEventListener('click', () => {
   if (state.view === 'archived') return goBack()
   navigate({ view: 'archived' })
+})
+
+el('course-toggle')?.addEventListener('click', () => {
+  if (state.view === 'course') return goBack()
+  navigate({ view: 'course' })
 })
 
 el('all-content').addEventListener('click', openAll)

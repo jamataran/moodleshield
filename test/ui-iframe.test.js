@@ -189,6 +189,24 @@ test('el catálogo permite componer y EDITAR colecciones, no sólo crearlas', as
   assert.ok(html.includes('id="collection-folder"'), 'falta el selector de carpeta de la colección')
 })
 
+test('la colección admite material aún en cola, con espera visible para el alumno', async () => {
+  // El picker no puede volver a pedir sólo lo listo: componer una colección con
+  // material recién subido es el caso de uso que cierra esta regresión.
+  const catalog = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.doesNotMatch(catalog, /ready:\s*'1'/,
+    'el picker de colecciones debe listar también el material en preparación')
+
+  // El visor sondea el manifest mientras haya material preparándose, y deja de
+  // hacerlo al salir de la página: sin el clearTimeout, la pestaña enterrada
+  // seguiría consultando el manifest para siempre.
+  const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
+  assert.match(collection, /manifestTimer/, 'falta el sondeo del manifest')
+  assert.match(collection, /pagehide[\s\S]{0,200}clearTimeout\(manifestTimer\)/,
+    'el sondeo debe cancelarse en pagehide')
+  assert.match(collection, /se está preparando/i,
+    'el alumno debe distinguir la espera legítima de un material no disponible')
+})
+
 test('el catálogo separa carpetas, colecciones y materiales sin gastar una franja en pestañas', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
   for (const id of ['back', 'help-open', 'all-content', 'section-subfolders',
@@ -456,4 +474,11 @@ test('los imports transitivos de JavaScript se revalidan tras un despliegue', as
   const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
   assert.match(pdf, /from '\.\/pdf-download\.js\?v=[^']+'/)
   assert.match(collection, /from '\.\/pdf-download\.js\?v=[^']+'/)
+
+  // V-08/F-09: las URLs de /vendor no llevan `?v=` —PDF.js importa su propio
+  // módulo y fija workerSrc a una ruta fija—, así que NO pueden servirse como
+  // `immutable`: una versión vulnerable cacheada sobreviviría al despliegue de
+  // la corregida hasta que caducara la caché del navegador.
+  assert.doesNotMatch(app, /vendorOptions\s*=\s*\{[^}]*immutable/,
+    'los ficheros de /vendor deben revalidarse para que un parche de seguridad llegue el mismo día')
 })

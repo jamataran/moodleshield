@@ -74,9 +74,35 @@ test('la API rechaza token o contexto ausentes', async () => {
   assert.equal(noContext.response.status, 400)
 })
 
+test('la lista de plataformas respeta la allowlist del token de migración', async () => {
+  const hiddenPlatformId = randomUUID()
+  await query(
+    `INSERT INTO lti_platform
+       (id, name, issuer, client_id, auth_login_url, auth_token_url, jwks_url)
+     VALUES ($1,'Moodle oculto','https://hidden.example.test','hidden-client',
+             'https://hidden.example.test/auth','https://hidden.example.test/token',
+             'https://hidden.example.test/keys')`,
+    [hiddenPlatformId]
+  )
+  const previous = config.contentApi.allowedPlatformIds
+  config.contentApi.allowedPlatformIds = [PLATFORM_ID]
+  try {
+    const listed = await json('/api/v1/platforms', {
+      headers: { Authorization: `Bearer ${TOKEN}` }
+    })
+    assert.equal(listed.response.status, 200)
+    assert.deepEqual(listed.body.platforms.map((platform) => platform.id), [PLATFORM_ID])
+  } finally {
+    config.contentApi.allowedPlatformIds = previous
+  }
+})
+
 test('sube por fragmentos y deja muchos ficheros pendientes sin procesarlos en la app web', async () => {
   const created = []
-  for (const [filename, content] of [['uno.mp4', 'abcdefgh'], ['dos.mp4', 'ijklmnop']]) {
+  for (const [filename, content] of [
+    ['uno.mp4', '\x00\x00\x00\x18ftypisomvideo-uno'],
+    ['dos.mp4', '\x00\x00\x00\x18ftypisomvideo-dos']
+  ]) {
     const reserved = await json('/api/v1/uploads', {
       method: 'POST',
       headers: headers({ 'Content-Type': 'application/json' }),
@@ -114,4 +140,33 @@ test('sube por fragmentos y deja muchos ficheros pendientes sin procesarlos en l
   assert.equal(status.body.material.latestRevisionPublished, false)
   assert.equal(status.body.revision.status, 'queued')
   assert.equal(status.body.job.status, 'pending')
+})
+
+test('la reserva transaccional impide eludir la cuota con subidas paralelas', async () => {
+  const previous = config.uploads.maxActivePerOwner
+  config.uploads.maxActivePerOwner = 1
+  try {
+    const first = await json('/api/v1/uploads', {
+      method: 'POST',
+      headers: headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ kind: 'video', filename: 'reserva.mp4', size: 12 })
+    })
+    assert.equal(first.response.status, 201)
+
+    const second = await json('/api/v1/uploads', {
+      method: 'POST',
+      headers: headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ kind: 'video', filename: 'otra.mp4', size: 12 })
+    })
+    assert.equal(second.response.status, 429)
+    assert.equal(second.body.code, 'too_many_active_uploads')
+
+    const cancelled = await fetch(`${baseUrl}/api/v1/uploads/${first.body.uploadId}`, {
+      method: 'DELETE',
+      headers: headers()
+    })
+    assert.equal(cancelled.status, 204)
+  } finally {
+    config.uploads.maxActivePerOwner = previous
+  }
 })

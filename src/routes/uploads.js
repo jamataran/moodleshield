@@ -23,6 +23,7 @@ import {
   createDocumentRevisionAndJob,
   getDocumentForOwner
 } from '../services/documents.js'
+import { releaseUploadReservation, reserveUpload } from '../services/upload-limits.js'
 
 function ownerFrom (req) {
   return { platformId: req.session.platformId, ownerSub: req.session.sub }
@@ -49,6 +50,7 @@ export function createUploadsRouter (requireUploadAuth = requireCatalogInstructo
   const uploadsRouter = Router()
 
 uploadsRouter.post('/', requireUploadAuth, async (req, res, next) => {
+  let upload = null
   try {
     const requestedMaterialId = req.body?.materialId || null
     let materialId = randomUUID()
@@ -56,7 +58,7 @@ uploadsRouter.post('/', requireUploadAuth, async (req, res, next) => {
       materialId = await assertOwnedMaterial(req.body?.kind, requestedMaterialId, req)
       if (!materialId) return res.status(404).json({ error: 'Material no encontrado' })
     }
-    const upload = await createChunkedUpload({
+    upload = await createChunkedUpload({
       kind: req.body?.kind,
       originalFilename: req.body?.filename,
       sizeBytes: req.body?.size,
@@ -68,6 +70,14 @@ uploadsRouter.post('/', requireUploadAuth, async (req, res, next) => {
       platformId: req.session.platformId,
       ownerSub: req.session.sub
     })
+    await reserveUpload({
+      id: upload.id,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      kind: upload.kind,
+      sizeBytes: upload.sizeBytes,
+      expiresAt: upload.expiresAt
+    })
     res.status(201).json({
       uploadId: upload.id,
       materialId: upload.materialId,
@@ -77,6 +87,7 @@ uploadsRouter.post('/', requireUploadAuth, async (req, res, next) => {
       received: []
     })
   } catch (err) {
+    if (upload?.id) await finishChunkedUpload(upload.id).catch(() => {})
     next(err)
   }
 })
@@ -194,6 +205,9 @@ uploadsRouter.post('/:uploadId/complete', requireUploadAuth, async (req, res, ne
       // fragmentos sobrantes cuando caduque la sesión.
       logger.warn({ err, uploadId }, 'Material encolado; no se retiraron sus fragmentos')
     })
+    await releaseUploadReservation(uploadId).catch((err) => {
+      logger.warn({ err, uploadId }, 'Trabajo encolado; la reserva caducará automáticamente')
+    })
     logger.info({
       uploadId,
       materialId: assembled.materialId,
@@ -219,6 +233,9 @@ uploadsRouter.delete('/:uploadId', requireUploadAuth, async (req, res, next) => 
   try {
     const uploadId = assertUuid(req.params.uploadId, 'Identificador de subida')
     await cancelChunkedUpload(uploadId, ownerFrom(req))
+    await releaseUploadReservation(uploadId).catch((err) => {
+      logger.warn({ err, uploadId }, 'Subida cancelada; la reserva caducará automáticamente')
+    })
     res.sendStatus(204)
   } catch (err) {
     next(err)

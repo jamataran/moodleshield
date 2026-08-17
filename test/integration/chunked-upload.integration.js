@@ -6,7 +6,8 @@ import { createApp } from '../../src/app.js'
 import config from '../../src/config.js'
 import { closeDatabase, many, one, query } from '../../src/db/index.js'
 import { runMigrations } from '../../src/db/migrate.js'
-import { issueSession } from '../../src/session.js'
+import { issueSession, verifySession } from '../../src/session.js'
+import { registerPlaybackGrant } from '../../src/services/playback-grants.js'
 
 const PLATFORM_ID = randomUUID()
 const OWNER_SUB = 'teacher-chunked-upload'
@@ -85,6 +86,7 @@ test.before(async () => {
     isInstructor: true,
     mode: 'catalog'
   })
+  await registerPlaybackGrant(verifySession(token))
   const app = await createApp()
   server = app.listen(0, '127.0.0.1')
   await new Promise((resolve, reject) => {
@@ -107,7 +109,7 @@ test.after(async () => {
 })
 
 test('HTTP: alta y sustitución se reintegran sin cambiar el UUID lógico', async () => {
-  const firstContent = Buffer.from('abcdefghijkl')
+  const firstContent = Buffer.from('\x00\x00\x00\x18ftypisomfirst-video')
   const first = await upload(firstContent)
   const video = await one('SELECT id, title FROM video WHERE id = $1', [first.id])
   assert.equal(video.title, 'Cálculo por fragmentos')
@@ -128,7 +130,7 @@ test('HTTP: alta y sustitución se reintegran sin cambiar el UUID lógico', asyn
   await query("UPDATE video SET status = 'ready', active_revision_id = $1 WHERE id = $2",
     [firstJob.revision_id, first.id])
 
-  const secondContent = Buffer.from('mnopqrstuvwxy')
+  const secondContent = Buffer.from('\x00\x00\x00\x18ftypisomsecond-video')
   const second = await upload(secondContent, { materialId: first.id })
   assert.equal(second.id, first.id)
   assert.notEqual(second.revisionId, first.revisionId)

@@ -2,7 +2,7 @@
 
 # 🛡️ MoodleShield
 
-### Per-student forensic watermarking for video and PDF in Moodle
+### Per-student forensic video watermarking and visible PDF protection for Moodle
 
 **Self-hosted, open-source content protection for Moodle, over LTI 1.3.**
 Every student gets the video as a **different mix of segments**, designed so a leak can be
@@ -12,7 +12,7 @@ No proprietary DRM, no per-view licensing, no shipping your videos to someone el
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
-[![Tests](https://img.shields.io/badge/tests-333-success)](docs/desarrollo.md#tests)
+[![Tests](https://img.shields.io/badge/tests-426-success)](docs/desarrollo.md#tests)
 [![No frontend frameworks](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
@@ -24,14 +24,20 @@ No proprietary DRM, no per-view licensing, no shipping your videos to someone el
 > **Version 0.x — read this before deploying it to real students.** The video pipeline, the
 > LTI integration and the library work and are tested. An
 > [internal security audit](docs/auditoria-seguridad-contenido-y-plan.md) from August 2026
-> found 16 findings; a later hardening pass closed the bulk of the application, session and
-> log risk (session token out of the URL, logs without tokens, signed delivery mandatory in
-> production — [detail](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)). But
-> **two findings still hit what this README promises directly**:
+> found 16 findings, and two hardening passes closed most of them
+> ([finding-by-finding detail](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)).
+> What **still affects what this README promises**:
 >
-> - **The forensic tracer is not reliable yet** (F-07). The A/B mechanism is built, but the
->   pattern reader misclassifies and the mark is removed by cropping the edges. **It must
->   not be used today to attribute a leak to a specific person.**
+> - **`feature/seguridad-auditoria` is the security candidate for test.** Its unit,
+>   integration, native-tooling and real-stack tests, lint, dependency audit and Compose
+>   validation pass. Build the exact commit and complete the image CI and Moodle/browser
+>   gates before promotion. See the
+>   [current security review](docs/revision-seguridad-2026-08-10.md).
+> - **Attribution cannot be promised yet.** The A/B pattern reader was broken and is now
+>   fixed and tested, but the mark only lives in two corners of the frame: **cropping the
+>   edges removes it**, and two students comparing copies can forge a third that points at
+>   nobody (F-07). Use it to deter and to investigate; **not to sustain disciplinary
+>   proceedings**.
 > - **The development profile (`infra/local`) ships known secrets**, and they are now public
 >   (F-01). It's fine for `localhost` development; **never** expose it to the internet.
 >
@@ -94,13 +100,17 @@ Most likely source: Ana García Pérez (12345678Z) — 100.0% match.
 ```
 
 > [!CAUTION]
-> **That last part is not trustworthy yet.** The pipeline that produces the variants and
-> the divergent playlists is built and tested; the **reader** that interprets the pattern
-> back out is not — it misclassifies, and the mark disappears if the edges are cropped
-> ([T13](docs/README.md#hoja-de-ruta) and [F-07](docs/auditoria-seguridad-contenido-y-plan.md)).
-> Fixing it properly means collusion-resistant codes (Tardos), marks distributed across the
-> frame, and a fail-closed decode test battery. It's the single most valuable contribution
-> anyone could make right now.
+> **Read that last part carefully.** The pipeline that produces the variants and the
+> divergent playlists is built and tested, and the **reader** that interprets the pattern
+> back out — which until August 2026 misclassified and could point at an innocent student —
+> is now fixed and covered by tests, including an end-to-end one with real ffmpeg
+> ([T13](docs/tasks/done/T13-trazado-forense.md)).
+>
+> What has **not** changed is where the mark lives: two boxes in the lower corners.
+> Cropping the edges still removes it, collusion still works, and an audio-only extract
+> carries no pattern at all. Closing that means marks distributed across the frame and
+> collusion-resistant codes (Tardos): it is the single most valuable contribution anyone
+> could make right now, and until then attribution cannot be promised.
 
 **CPU cost per view: zero ffmpeg.** Playback is rewriting a text file (microseconds) and
 serving static files with nginx. It makes no difference whether you have 10 students or
@@ -138,17 +148,20 @@ the contract:
 | | Video | PDF |
 |---|---|---|
 | Per-student access control | ✅ | ✅ |
-| Encryption in transit and at rest | ✅ AES-128 per revision | ✅ (never exposed as a static file) |
+| HTTPS in transit | ✅ Required in production | ✅ Required in production |
+| Format encryption | AES-128 HLS; the key reaches the authorised client and does not replace disk encryption | Removable download permissions; no application-level encryption at rest |
 | Visible deterrent | ✅ Overlay | ✅ Overlay + stamped download |
-| **Attributing a leak** | 🚧 **A/B pattern built, reader not reliable yet** | ❌ **No** — the stamp is removable |
+| **Attributing a leak** | 🚧 **Works if the video arrives intact**: A/B pattern and reader are tested, but cropping the edges or collusion defeat it | ❌ **No** — the stamp is removable |
 | Preventing the copy | ❌ Not DRM | ❌ Not DRM |
 
-**Protects against:** forwarding a video link · downloading a loose `.ts` · pulling an
+**Protects against:** forwarding an ordinary URL without credentials · downloading an
+unsigned loose `.ts` · pulling an
 entire variant to escape the trace · screen-recording and redistributing (the ID is
 visible and the pattern is in the pixels) · deleting the overlay from the DOM (the pattern
 is still there) · opening a material with another activity's token.
 
-**Does not protect against:** cropping the video edges, which removes the marks · collusion
+**Does not protect against:** theft of a bearer or ticket while it remains valid · cropping
+the video edges, which removes the marks · collusion
 (two students comparing copies to build a third) · capture itself.
 
 The first two have known solutions — marks in multiple positions, Tardos codes — and are on
@@ -168,7 +181,7 @@ self-hosted, auditable foundation with no per-student cost to build that on, thi
 | Model | Self-hosted, AGPL-3.0 | Paid SaaS | SaaS / on-prem, licensed | SaaS |
 | Where your videos live | **Your server** | Their cloud | Their cloud | Their cloud |
 | Cost per view | **€0** | Per GB / plan | Per licence | Plan |
-| Per-student forensic watermark | 🚧 **A/B in pixels, in development** | ✅ (dynamic, plan-dependent) | Product-dependent | ❌ |
+| Per-student forensic watermark | 🚧 **A/B in pixels; no crop or collusion resistance** | ✅ (dynamic, plan-dependent) | Product-dependent | ❌ |
 | DRM (Widevine / FairPlay) | ❌ | ✅ | Product-dependent | Partial |
 | Moodle integration | **Native LTI 1.3** | Plugin / embed | Plugin | Embed |
 | Auditable source | ✅ **All of it** | ❌ | Partial | ❌ |
@@ -288,8 +301,8 @@ Redirection URI"): [`docs/moodle-setup.md`](docs/moodle-setup.md) (Spanish).**
 
 **Stack**: Node 22 · Express 5 · PostgreSQL 16 · nginx · ffmpeg · `jose` for LTI ·
 PDF.js and Ghostscript for PDF. **Zero frontend frameworks**: direct DOM. **No ORM**:
-plain `pg`. **No cookies**: HMAC token sessions, because all of this lives inside a Moodle
-iframe.
+plain `pg`. Learner LTI launches use HMAC bearer tokens rather than cookies; the admin
+console does use a `Secure`/`HttpOnly` cookie with CSRF protection.
 
 Full detail — flows, data model, endpoint table, the security model layer by layer — in
 [`docs/arquitectura.md`](docs/arquitectura.md) (Spanish).
@@ -380,17 +393,28 @@ attributable**, and this project isn't going to claim otherwise.
 <details>
 <summary><b>Is it production-ready?</b></summary>
 
-Depends what for. The core — LTI, A/B pipeline, playlists, signed delivery, library, PDF,
-revisions — is implemented and verified, and does serve material to real students with
-access control.
+**The `feature/seguridad-auditoria` branch is approved as the test candidate.** The core —
+LTI, A/B pipeline, playlists, signed delivery, library, PDF and revisions — and the audit's
+technical controls are implemented and verified.
 
-What is **not** ready is the forensic promise: the tracer still misclassifies (F-07). The
-application, session and infrastructure hardening the audit flagged — session token out of
-the URL (F-02), logs without tokens (F-03) and signed delivery mandatory in production
-(F-04) — is now applied. What remains are lower-impact open findings and cross-teacher
-material isolation (F-05: another teacher's UUID pasted into the URL still opens). The
-finding-by-finding state is in
+On that branch, the hardening the audit flagged is applied: the session token no longer
+travels in the URL (F-02), logs carry no tokens (F-03), signed delivery is mandatory in production (F-04),
+`pdfjs` is current (F-09), the CSP no longer needs `unsafe-inline` (F-13), purging a
+revision no longer destroys the forensic evidence (F-14), sessions are revocable, upload
+quotas and rate limits are enforced, and the worker runs without Internet access using a
+least-privilege database role.
+
+The branch is technically approved as a test candidate. It must be built into immutable
+images, tested there and promoted before claiming production has those protections. The
+**forensic promise** is still not closed — the
+reader works, but cropping the edges removes the mark (F-07). **Cross-teacher isolation**
+(F-05) is mandatory in production; every activity predating migration `014` must be
+reinserted so Moodle stores its server-side placement. An older signed reference alone is
+not sufficient. The finding-by-finding state is in
 [`docs/README.md`](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
+
+The exact separation between production, branch and open work is in the
+[`10 August security review`](docs/revision-seguridad-2026-08-10.md).
 
 In practice: use it to impose order and deter, not to sustain disciplinary proceedings
 against a student. And deploy it behind the reverse proxy with `MEDIA_DELIVERY=signed`,

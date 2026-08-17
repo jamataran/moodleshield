@@ -16,6 +16,7 @@ import {
   setCollectionVisibility,
   updateCollection
 } from '../services/collections.js'
+import { loadPlacementCollectionItems } from '../services/resource-placements.js'
 
 export const collectionsRouter = Router()
 
@@ -24,6 +25,8 @@ collectionsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
     const page = await listCollectionPage({
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
+      scope: req.query.scope === 'course' ? 'course' : null,
       folderId: req.query.folderId,
       q: req.query.q,
       archived: req.query.archived === '1',
@@ -45,6 +48,7 @@ collectionsRouter.post('/', requireCatalogInstructor, async (req, res, next) => 
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
       ownerName: displayOwnerName(req.session),
+      contextId: req.session.contextId,
       title: req.body?.title,
       description: req.body?.description,
       folderId: req.body?.folderId,
@@ -63,7 +67,8 @@ collectionsRouter.get('/:id', requireCatalogInstructor, async (req, res, next) =
     const collection = await getVisibleCollection({
       id,
       platformId: req.session.platformId,
-      ownerSub: req.session.sub
+      ownerSub: req.session.sub,
+      contextId: req.session.contextId
     })
     if (!collection) return res.status(404).json({ error: 'Colección no encontrada' })
     res.json({ collection: publicCollection(collection, await loadItems(id)) })
@@ -100,6 +105,7 @@ collectionsRouter.patch('/:id', requireCatalogInstructor, async (req, res, next)
       id,
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
       title: req.body?.title,
       description: req.body?.description,
       folderId: req.body?.folderId,
@@ -126,7 +132,8 @@ collectionsRouter.post('/:id/duplicate', requireCatalogInstructor, async (req, r
       id: assertUuid(req.params.id, 'Identificador de colección'),
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
-      ownerName: displayOwnerName(req.session)
+      ownerName: displayOwnerName(req.session),
+      contextId: req.session.contextId
     })
     if (result.status === 'not_found') return res.status(404).json({ error: 'Colección no encontrada' })
     const items = await loadItems(result.collection.id)
@@ -179,11 +186,18 @@ collectionsRouter.get('/:id/manifest', requireSession, async (req, res, next) =>
     if (!scope.ok) return res.status(404).json({ error: 'Colección no encontrada' })
 
     const collection = scope.viaOwner
-      ? await getVisibleCollection({ id, platformId: req.session.platformId, ownerSub: req.session.sub })
+      ? await getVisibleCollection({
+          id,
+          platformId: req.session.platformId,
+          ownerSub: req.session.sub,
+          contextId: req.session.contextId
+        })
       : await getCollectionForPlatform(id, req.session.platformId)
     if (!collection) return res.status(404).json({ error: 'Colección no encontrada' })
 
-    const items = await loadItems(id)
+    const items = !scope.viaOwner && req.session.resource?.placementId
+      ? await loadPlacementCollectionItems(req.session.resource.placementId, id)
+      : await loadItems(id)
     res.set('Cache-Control', 'private, no-store')
     res.json({
       id: collection.id,

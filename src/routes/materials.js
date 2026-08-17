@@ -10,7 +10,8 @@ import {
   listRevisions,
   publicRevision,
   purgeRevisionManually,
-  restoreMaterial
+  restoreMaterial,
+  setRevisionLegalHold
 } from '../services/revisions.js'
 
 export const materialsRouter = Router()
@@ -30,6 +31,10 @@ materialsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
     const page = await listMaterials({
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
+      // `?scope=course` lista, en plano, el material desplegado en este curso
+      // aunque sea de otro profesor. Es lo que ve un coprofesor del aula.
+      scope: req.query.scope === 'course' ? 'course' : null,
       folderId: req.query.folderId,
       kind: req.query.kind === 'video' || req.query.kind === 'pdf' ? req.query.kind : undefined,
       q: req.query.q,
@@ -159,6 +164,33 @@ materialsRouter.delete('/:kind/:id/revisions/:rid', requireCatalogInstructor, as
       default:
         return res.sendStatus(204)
     }
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * Retiene (o libera) una revisión para investigación (F-14): una revisión con
+ * `legal_hold` no la toca ni la purga automática ni la manual. Es lo que se
+ * activa al analizar una filtración, para que la evidencia no caduque sola.
+ */
+materialsRouter.post('/:kind/:id/revisions/:rid/hold', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const kind = assertKind(req.params.kind)
+    if (typeof req.body?.hold !== 'boolean') {
+      return res.status(400).json({ error: 'Falta el campo hold (true o false)' })
+    }
+    const result = await setRevisionLegalHold({
+      kind,
+      materialId: assertUuid(req.params.id, 'Identificador de material'),
+      revisionId: assertUuid(req.params.rid, 'Identificador de revisión'),
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      hold: req.body.hold
+    })
+    if (result.status === 'material_not_found') return res.status(404).json({ error: 'Material no encontrado' })
+    if (result.status === 'revision_not_found') return res.status(404).json({ error: 'Revisión no encontrada' })
+    res.json({ legalHold: result.legalHold })
   } catch (err) {
     next(err)
   }

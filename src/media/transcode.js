@@ -39,22 +39,50 @@ export function markFilter (variant, alpha = config.transcode.markAlpha) {
 export async function probe (input, { signal } = {}) {
   const { stdout } = await runProcess(config.transcode.ffprobePath, [
     '-v', 'error',
+    '-protocol_whitelist', 'file,pipe,crypto,data',
     '-print_format', 'json',
     '-show_format',
     '-show_streams',
     input
-  ], { signal })
-  const data = JSON.parse(stdout)
+  ], { signal, timeoutMs: config.transcode.probeTimeoutSeconds * 1000 })
+  return validateProbeData(JSON.parse(stdout))
+}
+
+/** Rechaza bombas de decodificación antes de ceder el fichero a ffmpeg. */
+export function validateProbeData (data, limits = config.transcode) {
+  const streams = Array.isArray(data.streams) ? data.streams : []
   const video = data.streams?.find((s) => s.codec_type === 'video')
   if (!video) throw new Error('El fichero no contiene ninguna pista de vídeo')
+  const durationSeconds = Number.parseFloat(data.format?.duration ?? video.duration ?? '0')
+  const width = Number(video.width)
+  const height = Number(video.height)
+  const fps = parseFrameRate(video.avg_frame_rate) ?? parseFrameRate(video.r_frame_rate)
+  const audio = streams.filter((stream) => stream.codec_type === 'audio')
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 ||
+      durationSeconds > limits.maxDurationSeconds) {
+    throw new Error(`La duración del vídeo no es válida o supera ${limits.maxDurationSeconds} segundos`)
+  }
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 ||
+      width > limits.maxDimension || height > limits.maxDimension || width * height > limits.maxPixels) {
+    throw new Error(`La resolución del vídeo supera el límite de ${limits.maxPixels} píxeles`)
+  }
+  if (streams.length > limits.maxStreams) {
+    throw new Error(`El contenedor supera el límite de ${limits.maxStreams} pistas`)
+  }
+  if (!Number.isFinite(fps) || fps <= 0 || fps > limits.maxSourceFps) {
+    throw new Error(`La tasa de fotogramas no es válida o supera ${limits.maxSourceFps} fps`)
+  }
+  if (audio.some((stream) => Number(stream.channels ?? 0) > limits.maxAudioChannels)) {
+    throw new Error(`Una pista de audio supera ${limits.maxAudioChannels} canales`)
+  }
   return {
-    durationSeconds: Number.parseFloat(data.format?.duration ?? '0') || null,
-    width: video.width ?? null,
-    height: video.height ?? null,
-    fps: parseFrameRate(video.avg_frame_rate) ?? parseFrameRate(video.r_frame_rate),
+    durationSeconds,
+    width,
+    height,
+    fps,
     colorTransfer: video.color_transfer ?? null,
     colorSpace: video.color_space ?? null,
-    hasAudio: Boolean(data.streams?.some((s) => s.codec_type === 'audio'))
+    hasAudio: audio.length > 0
   }
 }
 
@@ -78,6 +106,16 @@ export function chooseOutputFps (sourceFps, fallback = config.transcode.fps) {
   let fps = sourceFps
   while (fps > 30) fps /= 2
   return Math.max(1, Math.round(fps))
+}
+
+/** Cota conservadora para las dos variantes, audio y sobrecarga HLS. */
+export function estimateVideoArtifactBytes (durationSeconds, maxOutputBitrateKbps) {
+  const duration = Number(durationSeconds)
+  const bitrate = Number(maxOutputBitrateKbps)
+  if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(bitrate) || bitrate < 128) {
+    throw new Error('No se pudo estimar el tamaño máximo del artefacto de vídeo')
+  }
+  return Math.ceil(duration * ((bitrate + 128) * 1000 / 8) * 2 * 1.15)
 }
 
 const HDR_TRANSFERS = new Set(['smpte2084', 'arib-std-b67'])
@@ -111,16 +149,20 @@ export function colorFilters ({ colorTransfer, colorSpace } = {}) {
 }
 
 function encodeArgs ({ input, variant, outDir, keyInfo, hasAudio, fps, preFilters = [] }) {
-  const { segmentSeconds, crf, preset } = config.transcode
+  const { segmentSeconds, crf, preset, maxOutputBitrateKbps } = config.transcode
   const gop = Math.round(segmentSeconds * fps)
 
   const args = [
     '-hide_banner', '-nostdin', '-y',
+    '-protocol_whitelist', 'file,pipe,crypto,data',
     '-i', input,
+    '-map', '0:v:0',
     '-vf', [...preFilters, markFilter(variant)].join(','),
     '-c:v', 'libx264',
     '-preset', preset,
     '-crf', String(crf),
+    '-maxrate', `${maxOutputBitrateKbps}k`,
+    '-bufsize', `${maxOutputBitrateKbps * 2}k`,
     '-profile:v', 'high',
     '-pix_fmt', 'yuv420p',
     '-r', String(fps),
@@ -134,10 +176,11 @@ function encodeArgs ({ input, variant, outDir, keyInfo, hasAudio, fps, preFilter
   ]
 
   if (hasAudio) {
-    args.push('-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000')
+    args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000')
   } else {
     args.push('-an')
   }
+  args.push('-sn', '-dn')
 
   args.push(
     '-f', 'hls',
@@ -163,6 +206,7 @@ function encodeArgs ({ input, variant, outDir, keyInfo, hasAudio, fps, preFilter
  * @param {string} [opts.revisionId]
  */
 export async function transcodeVideo (videoId, inputPath, {
+  assertCapacity,
   onProgress,
   signal,
   revisionId = null,
@@ -180,6 +224,12 @@ export async function transcodeVideo (videoId, inputPath, {
   await mkdir(variantDir('B'), { recursive: true })
 
   const info = await probe(inputPath, { signal })
+  // Dos variantes, vídeo al maxrate + audio y 15 % de margen para HLS/mux.
+  const estimatedArtifactBytes = estimateVideoArtifactBytes(
+    info.durationSeconds,
+    config.transcode.maxOutputBitrateKbps
+  )
+  await assertCapacity?.({ videoId, revisionId, estimatedBytes: estimatedArtifactBytes })
   const outputFps = chooseOutputFps(info.fps)
   const preFilters = colorFilters(info)
   log.info({ ...info, outputFps, tonemap: preFilters.length > 0 }, 'Vídeo analizado')
@@ -193,8 +243,11 @@ export async function transcodeVideo (videoId, inputPath, {
   // rompería la intercambiabilidad de las variantes sin previo aviso.
   const key = randomBytes(16)
   const iv = randomBytes(16).toString('hex')
-  await writeFile(keyFile, key)
-  await writeFile(keyInfoFile, `key\n${keyFile}\n${iv}\n`)
+  // Sólo el dueño (el usuario node de app y worker) lee la clave (V-16): los
+  // segmentos los sirve nginx, pero key.bin sale únicamente por /hls/:id/key
+  // tras validar el token, y no hay motivo para que otro uid del host la vea.
+  await writeFile(keyFile, key, { mode: 0o600 })
+  await writeFile(keyInfoFile, `key\n${keyFile}\n${iv}\n`, { mode: 0o600 })
 
   for (const variant of ['A', 'B']) {
     const started = Date.now()
@@ -210,7 +263,11 @@ export async function transcodeVideo (videoId, inputPath, {
         fps: outputFps,
         preFilters
       }),
-      { onLine: onProgress, signal }
+      {
+        onLine: onProgress,
+        signal,
+        timeoutMs: config.transcode.processTimeoutSeconds * 1000
+      }
     )
     log.info({ variant, seconds: Math.round((Date.now() - started) / 1000) }, 'Variante lista')
   }
@@ -243,7 +300,12 @@ export async function transcodeVideo (videoId, inputPath, {
     markGeometry: MARK_GEOMETRY,
     variants: ['A', 'B']
   }
-  meta.artifactHash = (await mediaFingerprint(dir)).artifactHash
+  const fingerprint = await mediaFingerprint(dir)
+  if (fingerprint.artifactSizeBytes > estimatedArtifactBytes) {
+    throw new Error('La salida de ffmpeg superó la capacidad reservada para este trabajo')
+  }
+  meta.artifactHash = fingerprint.artifactHash
+  meta.artifactSizeBytes = fingerprint.artifactSizeBytes
   await writeFile(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2))
 
   log.info({ segments: meta.segmentCount, dir }, 'Transcodificación completada')
@@ -256,12 +318,13 @@ async function generatePoster (input, outputPath, durationSeconds, signal, preFi
     await runProcess(config.transcode.ffmpegPath, [
       '-hide_banner', '-nostdin', '-y',
       '-ss', at.toFixed(2),
+      '-protocol_whitelist', 'file,pipe,crypto,data',
       '-i', input,
       '-frames:v', '1',
       '-vf', [...preFilters, 'scale=640:-2'].join(','),
       '-q:v', '4',
       outputPath
-    ], { signal })
+    ], { signal, timeoutMs: config.transcode.probeTimeoutSeconds * 1000 })
   } catch (err) {
     if (signal?.aborted) throw err
     logger.warn({ err }, 'No se pudo generar la miniatura; se seguirá sin ella')

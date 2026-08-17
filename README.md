@@ -2,7 +2,7 @@
 
 # 🛡️ MoodleShield
 
-### Marca de agua forense por alumno para vídeo y PDF en Moodle
+### Marca de agua forense por alumno para vídeo y protección visible de PDF en Moodle
 
 **Protección de contenido autohospedada y de código abierto para Moodle, vía LTI 1.3.**
 Cada alumno recibe el vídeo con una **mezcla de segmentos distinta**, diseñada para que una
@@ -12,7 +12,7 @@ Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de t
 [![Licencia: AGPL v3](https://img.shields.io/badge/licencia-AGPL--3.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
-[![Tests](https://img.shields.io/badge/tests-333-success)](docs/desarrollo.md#tests)
+[![Tests](https://img.shields.io/badge/tests-426-success)](docs/desarrollo.md#tests)
 [![Sin dependencias de frontend](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
 [![Autohospedado](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
@@ -24,14 +24,20 @@ Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de t
 > **Versión 0.x — léelo antes de desplegarlo con alumnos reales.** El pipeline de vídeo, la
 > integración LTI y la biblioteca funcionan y están probados. Una
 > [auditoría de seguridad interna](docs/auditoria-seguridad-contenido-y-plan.md) de agosto
-> de 2026 encontró 16 hallazgos; una iteración de endurecimiento posterior cerró el grueso
-> del riesgo de aplicación, sesión y logs (token de sesión fuera de la URL, logs sin tokens,
-> entrega firmada obligatoria en producción — [detalle](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)).
-> Pero **dos hallazgos siguen afectando directamente a lo que promete este README**:
+> de 2026 encontró 16 hallazgos, y dos iteraciones de endurecimiento cerraron la mayoría
+> ([detalle hallazgo a hallazgo](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)).
+> Lo que **sigue afectando a lo que promete este README**:
 >
-> - **El trazador forense no es fiable todavía** (F-07). El mecanismo A/B está construido,
->   pero el lector de patrones clasifica mal y la marca se elimina recortando los bordes.
->   **Hoy no debe usarse para atribuir una filtración a una persona concreta.**
+> - **`feature/seguridad-auditoria` es la candidata de seguridad para test.** Sus pruebas
+>   unitarias, de integración, herramientas nativas, stack real, lint, auditoría de
+>   dependencias y configuración pasan. Debe construirse desde el commit exacto y superar
+>   el CI de imágenes y el recorrido Moodle/navegadores antes de promoverse. Véase la
+>   [revisión de estado actual](docs/revision-seguridad-2026-08-10.md).
+> - **La atribución todavía no se puede prometer.** El lector del patrón A/B estaba roto y
+>   ya está corregido y probado, pero la marca vive sólo en dos esquinas del fotograma:
+>   **recortar los bordes la elimina**, y dos alumnos que comparen copias pueden fabricar
+>   una tercera que no señala a nadie (F-07). Sirve para disuadir e investigar; **no para
+>   sostener un expediente disciplinario**.
 > - **El perfil de desarrollo (`infra/local`) lleva secretos conocidos** y ahora son
 >   públicos (F-01). Vale para desarrollo en `localhost`; **nunca** lo expongas a Internet.
 >
@@ -86,13 +92,17 @@ Origen más probable: Ana García Pérez (12345678Z) — 100.0% de coincidencia.
 ```
 
 > [!CAUTION]
-> **Esa última parte todavía no es de fiar.** El pipeline que genera las variantes y las
-> playlists divergentes está construido y probado; el **lector** que interpreta el patrón de
-> vuelta, no: clasifica incorrectamente y la marca desaparece si se recortan los bordes
-> ([T13](docs/README.md#hoja-de-ruta) y [F-07](docs/auditoria-seguridad-contenido-y-plan.md)).
-> Arreglarlo bien implica códigos resistentes a colusión (Tardos), marcas repartidas por el
-> fotograma y una batería de decodificación que falle cerrada. Es la contribución más
-> valiosa que puede hacer alguien ahora mismo.
+> **Esa última parte hay que leerla con cuidado.** El pipeline que genera las variantes y
+> las playlists divergentes está construido y probado, y el **lector** que interpreta el
+> patrón de vuelta —que hasta agosto de 2026 clasificaba mal y podía señalar a un
+> inocente— está corregido y cubierto por pruebas, incluida una de extremo a extremo con
+> ffmpeg real ([T13](docs/tasks/done/T13-trazado-forense.md)).
+>
+> Lo que **no** ha cambiado es dónde vive la marca: dos recuadros en las esquinas
+> inferiores. Recortar los bordes sigue eliminándola, la colusión sigue funcionando y un
+> extracto de audio no lleva patrón. Cerrar eso implica marcas repartidas por el fotograma
+> y códigos resistentes a colusión (Tardos): es la contribución más valiosa que puede
+> hacer alguien ahora mismo, y hasta entonces la atribución no se puede prometer.
 
 **Coste en CPU por visionado: cero ffmpeg.** Reproducir es reescribir un fichero de texto
 (microsegundos) y servir estáticos con nginx. Da igual que tengas 10 alumnos o 10.000.
@@ -119,7 +129,7 @@ Origen más probable: Ana García Pérez (12345678Z) — 100.0% de coincidencia.
 | ♻️ **Revisiones** | Sustituye un fichero sin cambiar el UUID que Moodle lleva incrustado; rollback incluido |
 | 🏢 **Multiinstancia** | Varios Moodle y varios profesores aislados por `platform_id` + `owner_sub` |
 | 🪶 **Ligero** | El servicio web consume ~45 MB de RSS. Cabe en un NAS |
-| 🔍 **Trazado forense** | CLI que compara el patrón contra quien vio el vídeo y **se niega a concluir** si la muestra no da. 🚧 El lector aún no es fiable ([T13](docs/README.md#hoja-de-ruta)) |
+| 🔍 **Trazado forense** | CLI que compara el patrón contra quien vio el vídeo y **se niega a concluir** si la muestra no da. El lector está corregido y probado; la marca sigue viviendo en las esquinas ([T13](docs/tasks/done/T13-trazado-forense.md)) |
 
 ## Qué protege y qué no
 
@@ -129,17 +139,20 @@ Esta tabla es el contrato:
 | | Vídeo | PDF |
 |---|---|---|
 | Control de acceso por alumno | ✅ | ✅ |
-| Cifrado en tránsito y en reposo | ✅ AES-128 por revisión | ✅ (no expuesto como estático) |
+| HTTPS en tránsito | ✅ Requerido en producción | ✅ Requerido en producción |
+| Cifrado de formato | AES-128 HLS; la clave llega al cliente autorizado y no sustituye al cifrado del disco | Permisos de descarga removibles; no cifra el original en reposo |
 | Disuasión visible | ✅ Overlay | ✅ Overlay + sello en la descarga |
-| **Atribuir una filtración** | 🚧 **Patrón A/B construido, lector no fiable aún** | ❌ **No** — el sello es removible |
+| **Atribuir una filtración** | 🚧 **Funciona si el vídeo llega entero**: patrón A/B y lector probados, pero un recorte de bordes o la colusión lo anulan | ❌ **No** — el sello es removible |
 | Impedir la copia | ❌ No es DRM | ❌ No es DRM |
 
-**Protege de:** reenviar el enlace de un vídeo · descargar un `.ts` suelto · bajarse una
+**Protege de:** reenviar una URL normal sin credenciales · descargar un `.ts` suelto sin
+firma · bajarse una
 variante entera para escapar de la traza · grabar la pantalla y redistribuir (queda el DNI
 a la vista y el patrón en los píxeles) · borrar el overlay del DOM (el patrón sigue ahí) ·
 abrir un material con el token de otra actividad.
 
-**No protege de:** recortar los bordes del vídeo, que elimina las marcas · colusión (dos
+**No protege de:** robar un bearer o ticket mientras siga vigente · recortar los bordes
+del vídeo, que elimina las marcas · colusión (dos
 alumnos comparando copias para fabricar una tercera) · la captura en sí.
 
 Las dos primeras tienen solución conocida —marcas en varias posiciones, códigos de
@@ -160,7 +173,7 @@ que construir eso, esto sí.
 | Modelo | Autohospedado, AGPL-3.0 | SaaS de pago | SaaS / on-prem, licencia | SaaS |
 | Dónde viven tus vídeos | **En tu servidor** | Su nube | Su nube | Su nube |
 | Coste por reproducción | **0 €** | Por GB / plan | Por licencia | Plan |
-| Marca de agua forense por alumno | 🚧 **A/B en píxeles, en desarrollo** | ✅ (dinámica, según plan) | Según producto | ❌ |
+| Marca de agua forense por alumno | 🚧 **A/B en píxeles; sin resistencia a recorte ni colusión** | ✅ (dinámica, según plan) | Según producto | ❌ |
 | DRM (Widevine / FairPlay) | ❌ | ✅ | Según producto | Parcial |
 | Integración con Moodle | **LTI 1.3 nativo** | Plugin / embed | Plugin | Embed |
 | Código auditable | ✅ **Todo** | ❌ | Parcial | ❌ |
@@ -283,8 +296,8 @@ Con la herramienta ya accesible por HTTPS, el resumen es:
 
 **Stack**: Node 22 · Express 5 · PostgreSQL 16 · nginx · ffmpeg · `jose` para LTI ·
 PDF.js y Ghostscript para PDF. **Cero frameworks de frontend**: DOM directo.
-**Sin ORM**: `pg` a secas. **Sin cookies**: sesiones por token HMAC, porque todo esto
-vive dentro de un iframe de Moodle.
+**Sin ORM**: `pg` a secas. Los launches LTI de alumnos usan bearer HMAC y no cookies; la
+consola de administración sí usa una cookie `Secure`/`HttpOnly` con protección CSRF.
 
 Detalle completo —flujos, modelo de datos, la tabla de endpoints, el modelo de seguridad
 capa por capa— en [`docs/arquitectura.md`](docs/arquitectura.md).
@@ -344,10 +357,12 @@ del DOM.
 <details>
 <summary><b>¿Y si el alumno recorta los bordes del vídeo?</b></summary>
 
-Elimina las marcas y la traza deja de funcionar. Es una limitación real y conocida. La
-solución —marcas en varias posiciones del fotograma— está en la hoja de ruta. Igual pasa
-con la colusión: dos alumnos que comparen sus copias pueden fabricar una tercera que no
-señale a ninguno, y ahí la respuesta son los códigos de Tardos.
+Elimina las marcas y la traza deja de funcionar. Es una limitación real y conocida, y no
+la arregla el lector: la marca vive en dos recuadros de las esquinas inferiores, así que
+si esas esquinas no llegan, no hay nada que leer. La solución —marcas en varias posiciones
+del fotograma— está en la hoja de ruta. Igual pasa con la colusión: dos alumnos que
+comparen sus copias pueden fabricar una tercera que no señale a ninguno, y ahí la
+respuesta son los códigos de Tardos.
 </details>
 
 <details>
@@ -373,17 +388,30 @@ atribuible**, y este proyecto no va a decir lo contrario.
 <details>
 <summary><b>¿Está listo para producción?</b></summary>
 
-Depende de contra qué. El núcleo —LTI, pipeline A/B, playlists, entrega firmada,
-biblioteca, PDF, revisiones— está implementado y verificado, y sirve material a alumnos
-reales con control de acceso.
+**La rama `feature/seguridad-auditoria` sí está autorizada como candidata para test.** El
+núcleo —LTI, pipeline A/B, playlists, entrega firmada, biblioteca, PDF y revisiones— y los
+controles técnicos de las auditorías están implementados y verificados.
 
-Lo que **no** está listo es la promesa forense: el trazador aún clasifica mal (F-07). El
-endurecimiento de aplicación, sesión e infraestructura que señalaba la auditoría —token de
-sesión fuera de la URL (F-02), logs sin tokens (F-03) y entrega firmada obligatoria en
-producción (F-04)— ya está aplicado. Quedan hallazgos abiertos de menor calado y el
-aislamiento de material entre profesores (F-05, un UUID ajeno pegado en la URL aún se abre).
-El estado hallazgo a hallazgo está en
+En esa rama, el endurecimiento que señalaba la auditoría está aplicado: el token de sesión
+ya no viaja en la URL (F-02), los logs no llevan tokens (F-03), la entrega firmada es obligatoria en
+producción (F-04), `pdfjs` está al día (F-09), la CSP ya no necesita `unsafe-inline`
+(F-13), purgar una revisión ya no destruye la evidencia forense (F-14), las sesiones se
+pueden revocar, hay cuotas y rate limits, y el worker —que es quien abre los ficheros que
+suben los profesores— corre aislado, sin salida a Internet y con un rol de BD mínimo.
+
+Debe construirse en imágenes inmutables, superar el CI y validarse con Moodle/navegadores
+antes de promoverse. No está
+cerrada la **promesa forense**
+—el lector funciona, pero recortar los bordes elimina la marca (F-07)— y el último paso
+del sistema: el lector funciona, pero las limitaciones de recorte y colusión permanecen.
+El **aislamiento entre profesores** (F-05) sí se exige por defecto en producción; al
+migrar hay que reinsertar todas las actividades anteriores a la migración `014` para que
+reciban un placement server-side; una firma antigua por sí sola ya no basta. El estado
+hallazgo a hallazgo está en
 [`docs/README.md`](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
+
+La separación exacta entre producción, rama y pendientes está en la
+[`revisión de seguridad del 10 de agosto`](docs/revision-seguridad-2026-08-10.md).
 
 Traducción práctica: úsalo para poner orden y disuadir, no para sostener un expediente
 disciplinario contra un alumno. Y despliégalo detrás del reverse proxy con
@@ -409,8 +437,9 @@ Se agradece cualquier ayuda, y hay trabajo claramente delimitado esperando.
 2. **Cómo montar el entorno y qué convenciones seguir**: [`docs/desarrollo.md`](docs/desarrollo.md).
 3. **Cómo abrir un PR**: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Buenos primeros temas: la matriz de navegadores del player, el algoritmo de lectura del
-trazado forense (T13, hoy incorrecto), y probar el conjunto contra un Moodle real.
+Buenos primeros temas: la matriz de navegadores del player, probar el conjunto contra un
+Moodle real, y —el de más valor— hacer la marca resistente al recorte y a la colusión
+(marcas repartidas por el fotograma, códigos de Tardos).
 
 ¿Encontraste un fallo de seguridad? No abras una issue pública: [`SECURITY.md`](SECURITY.md).
 
