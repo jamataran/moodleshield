@@ -686,3 +686,83 @@ la sesión ni en ningún endpoint. El helper que limpia `returnValue` antes de
 `showModal()` se extrae a `src/ui/assets/dialog.js` para que el visor no arrastre
 el catálogo del profesor. Revertirlo es restaurar `.legal-warning` como tercera
 fila de `body.viewer`; el diálogo puede quedarse donde está.
+
+---
+
+## ADR-024 · El selector de contenido gasta una sola franja de cromo, y la explicación vive en un diálogo
+
+**Contexto.** La biblioteca del profesor se abre dentro de un iframe de Moodle
+—el modal de «Seleccionar contenido»—, y **el alto de ese iframe lo decide
+Moodle**: el navegador impide que la herramienta cargada dentro modifique la
+ventana padre, porque están en orígenes distintos. Lo único que existe es el
+SCSS opcional del lado de Moodle que documenta `docs/moodle-setup.md`, y depende
+de que el administrador quiera aplicarlo.
+
+Sobre ese presupuesto ajeno, el catálogo gastaba cuatro franjas antes de enseñar
+nada: cabecera con eyebrow, `h1` y subtítulo; fila de buscador; fila de migas;
+fila de pestañas Todo/Colecciones/Materiales; y encima una cabecera de sección
+por grupo («Una actividad con varios recursos / Colecciones»).
+
+Medido conduciendo Chrome sobre un iframe cross-origin de 1140×513 —el que deja
+el modal por defecto de Moodle en la pantalla de un portátil—:
+
+| | Antes | Después |
+|---|---|---|
+| Cromo hasta el primer elemento | **326 px** | **82 px** |
+| Alto de una fila | 96 px | 44 px |
+| Elementos completamente visibles | **1** | **9** |
+
+Además, el `100dvh` de la página no cabía en el marco y aparecía una segunda
+barra de desplazamiento, la del propio modal.
+
+Dos detalles agravaban el desperdicio. El `h1` decía «Seleccionar contenido»,
+que es **literalmente el título que Moodle ya pone al modal**. Y el eyebrow
+«Configurando una actividad de Moodle» describía algo que el profesor acababa de
+hacer con sus propias manos.
+
+**Decisión.** La misma operación que ADR-022 hizo con el visor del alumno,
+aplicada al catálogo:
+
+- **Fuera la cabecera y la barra de herramientas.** `body.catalog-page` pasa de
+  `grid-template-rows: auto auto minmax(0, 1fr)` a **una sola fila**.
+- **Una única franja de cromo** dentro del panel principal: ubicaciones (sólo en
+  pantalla estrecha), atrás, migas, buscador, conmutador lista/cuadrícula,
+  actualizar, ayuda y un menú **＋ Nuevo** que agrupa las tres formas de crear
+  contenido —subir material, nueva carpeta, nueva colección— que antes eran tres
+  botones repartidos por dos filas y el lateral.
+- **Fuera las pestañas.** No filtraban nada en el servidor: eran un `hidden`
+  sobre dos listas ya cargadas. Los tres tipos conviven ahora en una sola lista
+  separada por etiquetas de grupo pegajosas de una línea, y **las subcarpetas
+  del nivel abierto entran en esa lista**, que es lo que hace un explorador de
+  archivos: enseñar el contenido de la carpeta, subcarpetas incluidas.
+- **Filas densas de 2,75 rem** en lugar de tarjetas de 5 rem, con conmutador a
+  cuadrícula para cuando se busca por póster. La elección se recuerda en
+  `sessionStorage`.
+- **El lateral se pliega** por debajo de 720 px: era una banda horizontal de
+  10,5 rem —168 px de alto en la pantalla donde menos hay— y pasa a ser un cajón
+  superpuesto. La barra de comandos queda por encima del cajón para que el botón
+  que lo abre siga sirviendo para cerrarlo.
+- **Toda explicación va al diálogo de ayuda**, a un clic desde el icono `?`.
+
+Presupuesto resultante: **82 px** frente a 326 px, y nueve elementos completos en
+lugar de uno.
+
+**Alternativas descartadas.** *Encoger la tipografía y los paddings* daba unos
+40 px y dejaba la misma estructura de cuatro franjas. *Mover los botones al
+lateral* (estilo Drive) los perdía justo cuando el lateral se pliega, que es
+cuando más falta hacen. *Mantener las pestañas como filtro compacto en la barra*
+conservaba un control que sólo servía para esconder contenido ya descargado.
+
+**Consecuencias.** La ayuda deja de abrirse sola en modo `deeplink`: el profesor
+acaba de pulsar «Seleccionar contenido» y sabe a qué viene, así que abrirle un
+modal encima es el mismo peaje que ADR-022 rechazó. En modo `manage` sí se
+mantiene, porque ahí ha abierto una actividad sin material y necesita que le
+expliquen qué hacer. Las acciones secundarias de cada fila (`Editar`, `⋯`)
+aparecen al apuntar o al tabular; `Insertar` no, porque en el selector es la
+tarea. Ordenar por nombre o fecha sigue sin ser posible: `/materials` y
+`/collections` paginan con cursor keyset sobre `created_at DESC` y no aceptan
+parámetro de ordenación, así que ordenar en cliente rompería la paginación.
+Revertirlo es devolver `.catalog-header`, `.catalog-toolbar` y `.content-tabs` a
+`catalog.html` y las tres filas a `body.catalog-page`; lo vigila el test
+«el catálogo reserva el alto de la pantalla para la lista» en
+`test/ui-iframe.test.js`.

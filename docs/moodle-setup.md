@@ -153,6 +153,12 @@ herramienta cargada dentro del iframe— quien decide sus dimensiones. El
 navegador impide que MoodleShield modifique esa ventana padre porque están en
 orígenes distintos.
 
+**Esto ya no hace falta para trabajar con comodidad.** Desde ADR-024 el selector
+gasta una sola franja de cromo (82 px en lugar de 326 px) y usa filas densas, así
+que en el modal por defecto caben nueve elementos completos en lugar de uno. Lo
+de abajo sigue mereciendo la pena en bibliotecas grandes, pero es una mejora, no
+un remedio.
+
 En temas basados en Boost se puede aprovechar mejor la pantalla desde
 *Administración del sitio → Apariencia → Temas → Boost → Ajustes avanzados →
 SCSS sin procesar*:

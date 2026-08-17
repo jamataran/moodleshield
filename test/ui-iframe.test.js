@@ -189,16 +189,68 @@ test('el catálogo permite componer y EDITAR colecciones, no sólo crearlas', as
   assert.ok(html.includes('id="collection-folder"'), 'falta el selector de carpeta de la colección')
 })
 
-test('el catálogo separa colecciones y materiales y permite volver atrás', async () => {
+test('el catálogo separa carpetas, colecciones y materiales sin gastar una franja en pestañas', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
-  for (const id of ['back', 'help-open', 'all-content', 'tab-collections', 'tab-materials',
+  for (const id of ['back', 'help-open', 'all-content', 'section-subfolders',
     'section-collections', 'section-materials', 'load-more-collections']) {
     assert.ok(html.includes(`id="${id}"`), `falta el control de navegación ${id}`)
   }
 
+  // Las pestañas costaban una franja entera para filtrar dos listas que ya
+  // venían cargadas. Ahora los tres tipos conviven en una lista y se separan con
+  // etiquetas de grupo, que valen una línea.
+  assert.doesNotMatch(html, /role="tablist"/,
+    'el tipo de contenido no puede volver a gastar una franja de pestañas')
+  assert.doesNotMatch(html, /data-content-filter/,
+    'el filtro por pestañas se sustituyó por grupos dentro de la lista')
+  assert.equal((html.match(/class="group-label"/g) ?? []).length, 3,
+    'los tres grupos (carpetas, colecciones y materiales) necesitan su etiqueta')
+
   const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
   assert.match(code, /navigationHistory/, 'Atrás necesita conservar el historial del explorador')
   assert.match(code, /nextCollectionCursor/, 'las colecciones necesitan paginación propia')
+  // Un explorador enseña el contenido de la carpeta abierta, subcarpetas
+  // incluidas: obligar a mirar al panel lateral para entrar en una es justo lo
+  // que hacía que esto no pareciera un gestor de archivos.
+  assert.match(code, /childrenOf\(state\.folderId\)/,
+    'las subcarpetas del nivel abierto deben salir también en la lista principal')
+})
+
+test('el catálogo reserva el alto de la pantalla para la lista', async () => {
+  // Misma regla que el visor del alumno (ADR-022/024). El alto de este iframe lo
+  // decide Moodle y no se puede negociar desde dentro, así que cada franja de
+  // cromo sale de la lista: antes eran ~288 px antes del primer elemento.
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /body\.catalog-page\s*\{[^}]*grid-template-rows:\s*minmax\(0, 1fr\)/s,
+    'el catálogo sólo puede gastar UNA fila, y es la del contenido')
+  assert.match(css, /\.catalog-main\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)/s,
+    'dentro del panel principal sólo cabe una franja de cromo: la barra de comandos')
+  assert.match(css, /\.group-label\s*\{[^}]*position:\s*sticky/s,
+    'la etiqueta de grupo tiene que seguir visible al desplazar su grupo')
+
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  assert.doesNotMatch(html, /class="catalog-header"/,
+    'la cabecera repetía el título del propio modal de Moodle')
+  assert.doesNotMatch(html, /<h1/,
+    'el modal de Moodle ya se titula «Seleccionar contenido»: repetirlo cuesta una franja')
+  assert.doesNotMatch(html, /class="catalog-toolbar"/,
+    'el buscador vive en la barra de comandos, no en una fila propia')
+  // Toda explicación se paga en píxeles: va en el diálogo de ayuda.
+  assert.match(html, /id="help-open"[^>]*class="icon"/,
+    'la ayuda es un icono en la barra, no un bloque de texto permanente')
+})
+
+test('la ayuda no se abre sola encima del selector de contenido', async () => {
+  // ADR-022 ya descartó abrir el aviso automáticamente «para no cobrar peaje al
+  // entrar». En `deeplink` el profesor acaba de pulsar «Seleccionar contenido»:
+  // sabe a qué viene. En `manage` ha abierto una actividad vacía y sí necesita
+  // que le expliquen qué hacer.
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  const auto = code.slice(code.indexOf('moodleshield-help-'))
+  assert.notEqual(auto, '', 'debe seguir existiendo la apertura una vez por sesión')
+  const guarda = code.slice(0, code.indexOf('moodleshield-help-'))
+  assert.match(guarda.slice(-400), /boot\.mode === 'manage'/,
+    'la apertura automática sólo puede ocurrir en modo manage')
 })
 
 test('todos los visores muestran aviso, monitorización y descarga contextual', async () => {
