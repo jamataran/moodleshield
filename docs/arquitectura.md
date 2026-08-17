@@ -384,11 +384,26 @@ puede capturar el vídeo. El sistema no lo impide — lo hace atribuible.
 
 ### El PDF protege menos que el vídeo, y hay que decirlo
 
-Un PDF no tiene marca forense. El visor muestra un overlay con la identidad del
-alumno y el documento sólo se entrega tras comprobar el alcance de la sesión,
-pero **el PDF autorizado viaja completo al navegador** para que PDF.js lo
-renderice. Un alumno con conocimientos puede recuperar esos bytes desde las
-herramientas de desarrollo y quitar el overlay.
+Un PDF no tiene marca forense. El visor estampa la identidad del alumno de dos
+formas —una marca de fondo repetida sobre toda la hoja, tenue para no estorbar
+la lectura, y el aviso legal en vertical al margen— y el documento sólo se
+entrega tras comprobar el alcance de la sesión, pero **el PDF autorizado viaja
+completo al navegador** para que PDF.js lo renderice. Un alumno con
+conocimientos puede recuperar esos bytes desde las herramientas de desarrollo y
+quitar ambas marcas.
+
+Conviene tener claro contra qué sirve cada cosa, porque es fácil confundirlas:
+
+| Marca | Dónde vive | Qué permite atribuir |
+|---|---|---|
+| Fondo repetido del visor | Capa del navegador, no el documento | Una **foto del monitor** o una captura de pantalla |
+| Sello de la descarga (ADR-017) | Dentro del PDF generado al vuelo | Una copia descargada, hasta que alguien la reprocese |
+| Nada | — | Una filtración de los bytes originales |
+
+La marca de fondo se calibra con `--pdf-mark-alpha` en `app.css`. El criterio es
+el más bajo que todavía se lea al fotografiar la pantalla: por debajo de `.10` la
+compresión de una cámara de móvil se la come, y por encima de `.18` empieza a
+molestar sobre texto pequeño.
 
 | | Vídeo | PDF |
 |---|---|---|

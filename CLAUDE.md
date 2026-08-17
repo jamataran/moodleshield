@@ -74,11 +74,15 @@ visionado: **cero ffmpeg**.
 No hay DRM. El sistema no impide capturar el vídeo — lo hace **atribuible**.
 
 El PDF se valida y normaliza en el worker y se entrega con control de acceso y
-overlay visible, pero **no lleva marca forense**: el documento autorizado viaja
-entero al navegador. El alumno puede descargar una copia oficial **sellada con
-su identidad y cifrada con contraseña de permisos aleatoria** (ADR-017), pero
-ese sello es removible por alguien técnico: una filtración de PDF no es
-atribuible, y eso no debe presentarse de otra forma.
+marca visible —el visor repite la identidad del alumno de fondo sobre toda la
+hoja, tenue para no estorbar la lectura pero legible al fotografiar la
+pantalla—, pero **no lleva marca forense**: esa capa vive en el navegador, no
+en el documento, y el PDF autorizado viaja entero al navegador. El alumno puede
+descargar una copia oficial **sellada con su identidad y cifrada con contraseña
+de permisos aleatoria** (ADR-017), pero ese sello es removible por alguien
+técnico: una filtración de PDF no es atribuible, y eso no debe presentarse de
+otra forma. La marca de fondo sirve para atribuir **una foto o una captura**,
+que es un caso distinto y menor.
 
 Encima de ambos: carpetas personales **anidadas** por profesor (ADR-016),
 colecciones que agrupan varios materiales en una sola actividad Moodle, y
