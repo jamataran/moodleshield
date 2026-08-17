@@ -2,7 +2,7 @@
 
 # 🛡️ MoodleShield
 
-### Marca de agua forense por alumno para vídeo y PDF en Moodle
+### Marca de agua forense por alumno para vídeo y protección visible de PDF en Moodle
 
 **Protección de contenido autohospedada y de código abierto para Moodle, vía LTI 1.3.**
 Cada alumno recibe el vídeo con una **mezcla de segmentos distinta**, diseñada para que una
@@ -12,7 +12,7 @@ Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de t
 [![Licencia: AGPL v3](https://img.shields.io/badge/licencia-AGPL--3.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
-[![Tests](https://img.shields.io/badge/tests-375-success)](docs/desarrollo.md#tests)
+[![Tests](https://img.shields.io/badge/tests-426-success)](docs/desarrollo.md#tests)
 [![Sin dependencias de frontend](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
 [![Autohospedado](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
@@ -28,6 +28,11 @@ Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de t
 > ([detalle hallazgo a hallazgo](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)).
 > Lo que **sigue afectando a lo que promete este README**:
 >
+> - **`feature/seguridad-auditoria` es la candidata de seguridad para test.** Sus pruebas
+>   unitarias, de integración, herramientas nativas, stack real, lint, auditoría de
+>   dependencias y configuración pasan. Debe construirse desde el commit exacto y superar
+>   el CI de imágenes y el recorrido Moodle/navegadores antes de promoverse. Véase la
+>   [revisión de estado actual](docs/revision-seguridad-2026-08-10.md).
 > - **La atribución todavía no se puede prometer.** El lector del patrón A/B estaba roto y
 >   ya está corregido y probado, pero la marca vive sólo en dos esquinas del fotograma:
 >   **recortar los bordes la elimina**, y dos alumnos que comparen copias pueden fabricar
@@ -134,17 +139,20 @@ Esta tabla es el contrato:
 | | Vídeo | PDF |
 |---|---|---|
 | Control de acceso por alumno | ✅ | ✅ |
-| Cifrado en tránsito y en reposo | ✅ AES-128 por revisión | ✅ (no expuesto como estático) |
+| HTTPS en tránsito | ✅ Requerido en producción | ✅ Requerido en producción |
+| Cifrado de formato | AES-128 HLS; la clave llega al cliente autorizado y no sustituye al cifrado del disco | Permisos de descarga removibles; no cifra el original en reposo |
 | Disuasión visible | ✅ Overlay | ✅ Overlay + sello en la descarga |
 | **Atribuir una filtración** | 🚧 **Funciona si el vídeo llega entero**: patrón A/B y lector probados, pero un recorte de bordes o la colusión lo anulan | ❌ **No** — el sello es removible |
 | Impedir la copia | ❌ No es DRM | ❌ No es DRM |
 
-**Protege de:** reenviar el enlace de un vídeo · descargar un `.ts` suelto · bajarse una
+**Protege de:** reenviar una URL normal sin credenciales · descargar un `.ts` suelto sin
+firma · bajarse una
 variante entera para escapar de la traza · grabar la pantalla y redistribuir (queda el DNI
 a la vista y el patrón en los píxeles) · borrar el overlay del DOM (el patrón sigue ahí) ·
 abrir un material con el token de otra actividad.
 
-**No protege de:** recortar los bordes del vídeo, que elimina las marcas · colusión (dos
+**No protege de:** robar un bearer o ticket mientras siga vigente · recortar los bordes
+del vídeo, que elimina las marcas · colusión (dos
 alumnos comparando copias para fabricar una tercera) · la captura en sí.
 
 Las dos primeras tienen solución conocida —marcas en varias posiciones, códigos de
@@ -288,8 +296,8 @@ Con la herramienta ya accesible por HTTPS, el resumen es:
 
 **Stack**: Node 22 · Express 5 · PostgreSQL 16 · nginx · ffmpeg · `jose` para LTI ·
 PDF.js y Ghostscript para PDF. **Cero frameworks de frontend**: DOM directo.
-**Sin ORM**: `pg` a secas. **Sin cookies**: sesiones por token HMAC, porque todo esto
-vive dentro de un iframe de Moodle.
+**Sin ORM**: `pg` a secas. Los launches LTI de alumnos usan bearer HMAC y no cookies; la
+consola de administración sí usa una cookie `Secure`/`HttpOnly` con protección CSRF.
 
 Detalle completo —flujos, modelo de datos, la tabla de endpoints, el modelo de seguridad
 capa por capa— en [`docs/arquitectura.md`](docs/arquitectura.md).
@@ -380,22 +388,30 @@ atribuible**, y este proyecto no va a decir lo contrario.
 <details>
 <summary><b>¿Está listo para producción?</b></summary>
 
-Depende de contra qué. El núcleo —LTI, pipeline A/B, playlists, entrega firmada,
-biblioteca, PDF, revisiones— está implementado y verificado, y sirve material a alumnos
-reales con control de acceso.
+**La rama `feature/seguridad-auditoria` sí está autorizada como candidata para test.** El
+núcleo —LTI, pipeline A/B, playlists, entrega firmada, biblioteca, PDF y revisiones— y los
+controles técnicos de las auditorías están implementados y verificados.
 
-El endurecimiento que señalaba la auditoría está aplicado: el token de sesión ya no viaja
-en la URL (F-02), los logs no llevan tokens (F-03), la entrega firmada es obligatoria en
+En esa rama, el endurecimiento que señalaba la auditoría está aplicado: el token de sesión
+ya no viaja en la URL (F-02), los logs no llevan tokens (F-03), la entrega firmada es obligatoria en
 producción (F-04), `pdfjs` está al día (F-09), la CSP ya no necesita `unsafe-inline`
-(F-13), purgar una revisión ya no destruye la evidencia forense (F-14) y el worker —que es
-quien abre los ficheros que suben los profesores— corre sin salida a Internet (F-10).
+(F-13), purgar una revisión ya no destruye la evidencia forense (F-14), las sesiones se
+pueden revocar, hay cuotas y rate limits, y el worker —que es quien abre los ficheros que
+suben los profesores— corre aislado, sin salida a Internet y con un rol de BD mínimo.
 
-Lo que **no** está cerrado: la **promesa forense** —el lector funciona, pero recortar los
-bordes elimina la marca (F-07)— y el último paso del **aislamiento entre profesores**
-(F-05): la referencia firmada ya se emite y se verifica, pero en modo aviso, porque
-exigirla hoy rompería las actividades insertadas antes de que existiera. El estado
+Debe construirse en imágenes inmutables, superar el CI y validarse con Moodle/navegadores
+antes de promoverse. No está
+cerrada la **promesa forense**
+—el lector funciona, pero recortar los bordes elimina la marca (F-07)— y el último paso
+del sistema: el lector funciona, pero las limitaciones de recorte y colusión permanecen.
+El **aislamiento entre profesores** (F-05) sí se exige por defecto en producción; al
+migrar hay que reinsertar todas las actividades anteriores a la migración `014` para que
+reciban un placement server-side; una firma antigua por sí sola ya no basta. El estado
 hallazgo a hallazgo está en
 [`docs/README.md`](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
+
+La separación exacta entre producción, rama y pendientes está en la
+[`revisión de seguridad del 10 de agosto`](docs/revision-seguridad-2026-08-10.md).
 
 Traducción práctica: úsalo para poner orden y disuadir, no para sostener un expediente
 disciplinario contra un alumno. Y despliégalo detrás del reverse proxy con

@@ -5,8 +5,8 @@
 | **Fase** | 9 · Seguridad |
 | **Depende de** | T12 (Deep Linking), T04 (handshake) |
 | **Bloquea a** | El cierre de T22 |
-| **Estado** | 🟡 parcial · fase de **aviso** desplegada; falta activar `enforce` |
-| **Esfuerzo** | 1 día la fase de aviso (hecha) · 0,5 día el cambio a `enforce` |
+| **Estado** | ✅ código cerrado en candidata · placement server-side obligatorio; falta prueba Moodle y reinsertar actividades anteriores a `014` |
+| **Esfuerzo** | Implementación terminada; queda validación operacional |
 
 Escindida de [T22](T22-fiabilidad-pipeline-aislamiento.md) el 10 de agosto de
 2026. Corresponde a los hallazgos **V-02** de
@@ -43,22 +43,27 @@ Porque **quien abre la actividad no es el propietario**. El caso normal es un
 alumno, y el caso legítimo de un profesor abriendo material compartido por otro
 también existe (ADR-018). Filtrar por `owner_sub` en el launch rompería los dos.
 
-Lo que falta demostrar no es «este material es tuyo», sino **«esta referencia al
-material la emitimos nosotros para su propietario»**.
+Lo que falta demostrar no es «este material es tuyo», sino **«esta colocación concreta
+del curso fue autorizada por un Deep Linking válido»**.
 
-## Diseño: referencia firmada
+## Diseño definitivo: placement server-side
 
-Al responder al Deep Linking, junto a `custom.resourcekind` y `custom.resourceid`
-se añade una tercera clave:
+La firma HMAC de la primera iteración se conserva como defensa de integridad, pero no es
+la autoridad. Copiar `resourceid` y `resourcesig` juntos seguía copiando el acceso. La
+migración `014_resource_placement.sql` añade una colocación opaca por cada selección:
 
 ```
-custom.resourcesig = HMAC-SHA256(SESSION_SECRET, "platform_id|kind|id|owner_sub")
+custom.placementid = UUID aleatorio
 ```
 
-Moodle guarda los parámetros personalizados dentro de la actividad y los reenvía
-tal cual en cada launch. Al recibirlos, el launch recalcula la firma con el
-`owner_sub` **que consta en la fila del material** y compara. Quien escriba un
-UUID a mano no tiene forma de producir la firma.
+El servidor guarda plataforma, deployment, curso (`context.id`), recurso, propietario y
+profesor que hizo la inserción. El token que permite enviar la respuesta Deep Linking se
+consume una sola vez, de modo que no puede emitir dos grupos de placements.
+
+El primer Resource Link launch debe proceder del mismo profesor, deployment y curso. En
+ese momento se liga atómicamente al `resource_link.id`; desde entonces otro enlace —aunque
+copie todos los `custom`— falla. En colecciones se guarda además un snapshot: quitar un
+material cierra el acceso y añadir uno no amplía actividades antiguas.
 
 Decisiones y sus porqués:
 
@@ -67,28 +72,26 @@ Decisiones y sus porqués:
   de Moodle tiene que seguir valiendo dentro de tres cursos académicos.
 - **Se firma el propietario de la FILA, no quien inserta.** Un material
   compartido lo inserta otro profesor y la firma tiene que seguir cuadrando.
-- **Es apátrida.** No hace falta consultar ninguna tabla para verificar, que es
-  lo que permite que funcione igual con varias réplicas.
+- **La autorización es server-side y revocable.** Se consulta en cada launch y los grants
+  de reproducción referencian el placement.
 - **La comparación es en tiempo constante** (`timingSafeEqual`).
 - **La clave viaja en minúscula** (`resourcesig`), porque Moodle puede
   normalizar el `custom`; el lector acepta las dos cajas, como el resto.
 
-### El modo de gracia, que es lo que evita romper producción
+### Compatibilidad sólo fuera de producción
 
-**Las actividades que ya están desplegadas en los cursos no llevan firma.** Si el
-launch exigiera la firma desde el primer despliegue, todas ellas dejarían de
-funcionar a la vez. De ahí `LAUNCH_RESOURCE_SIGNATURE`:
+Las actividades anteriores pueden no llevar firma y ninguna anterior a `014` lleva
+placement. `LAUNCH_RESOURCE_SIGNATURE` permite diagnosticarlas en desarrollo/test local;
+en producción la validación de arranque exige `enforce`:
 
 | Valor | Comportamiento |
 |---|---|
-| `off` | No se comprueba nada. Escotilla de emergencia. |
-| `warn` | **Por defecto.** Un launch sin firma válida se sirve, pero deja un aviso estructurado en el log con material, curso, actividad, quién lanzó y si la firma falta o está manipulada. |
+| `off` | No se comprueba nada. Sólo desarrollo; producción no arranca. |
+| `warn` | Por defecto sólo fuera de producción. Un launch sin firma válida se sirve, pero deja un aviso estructurado en el log con material, curso, actividad, quién lanzó y si la firma falta o está manipulada. |
 | `enforce` | Sin firma válida, **404** — indistinguible del material inexistente, que es la respuesta correcta para no confirmar que el UUID existe. |
 
-La tabla `deep_link_grant` (migración `011`) registra cada emisión de Deep
-Linking. No participa en la verificación: sirve para responder «¿quién insertó
-este material y cuándo?» y para medir cuántas actividades anteriores a la firma
-siguen en uso antes de dar el paso a `enforce`.
+`deep_link_grant` (`011`) conserva auditoría histórica. `deep_link_response_use`,
+`resource_placement` y `resource_placement_item` (`014`) sostienen la autorización.
 
 ## Estado
 
@@ -102,16 +105,18 @@ siguen en uso antes de dar el paso a `enforce`.
 | Verificación en el launch de material y de colección | `src/lti/routes.js` (`enforceResourceReference`) |
 | Configuración y validación del valor | `src/config.js` (`lti.launchResourceSignature`) |
 | Registro de emisiones | `migrations/011_deep_link_grant.sql`, `src/services/deep-link-grants.js` |
-| Pruebas | `test/security/material-ajeno.test.js` |
+| Placement y snapshot de colección | `migrations/014_resource_placement.sql`, `src/services/resource-placements.js` |
+| Revocación de tokens hijos | `src/services/playback-grants.js`, `src/services/authorization.js` |
+| Pruebas | `test/signing.test.js`, `test/integration/resource-placement.integration.js` |
 
-### Pendiente
+### Pendiente operacional
 
-- [ ] Observar los avisos de `warn` en producción hasta que dejen de aparecer.
-- [ ] Cambiar `LAUNCH_RESOURCE_SIGNATURE` a `enforce` y verificar que un UUID
-      ajeno responde 404.
-- [ ] Decidir qué hacer con las actividades legacy que sigan apareciendo en el
-      aviso pasado un curso: la vía es que el profesor vuelva a insertarlas con
-      «Seleccionar contenido», que regenera la firma.
+- [ ] En test, verificar que un UUID ajeno, una copia completa de los `custom` y una
+      actividad anterior a `014` responden 404.
+- [ ] Reinsertar con «Seleccionar contenido» todas las actividades anteriores a `014`;
+      necesitan `custom.placementid`, incluso si ya llevaban `custom.resourcesig`.
+- [ ] Mantener `LAUNCH_RESOURCE_SIGNATURE=enforce` en producción. `warn` sólo
+      sirve como diagnóstico temporal en un entorno controlado.
 
 ## Criterio de aceptación
 
@@ -121,36 +126,35 @@ siguen en uso antes de dar el paso a `enforce`.
 - [x] Una firma manipulada o de otra longitud se rechaza sin reventar.
 - [x] Una actividad sin firma se distingue de una con firma inválida.
 - [x] En `warn`, una actividad anterior a la firma sigue funcionando y deja aviso.
-- [ ] En `enforce`, un UUID ajeno en el `custom` responde 404. *(implementado y
+- [x] En `enforce`, un UUID ajeno en el `custom` responde 404. *(implementado y
       probado en unitarias; falta ejercitarlo contra un Moodle real)*
-- [ ] Producción lleva un curso sin avisos y `enforce` está activo.
+- [x] Reutilizar el token de respuesta Deep Linking falla.
+- [x] Copiar una actividad completa no reutiliza el placement.
+- [x] Una colección antigua no adquiere elementos añadidos después.
+- [x] Revocar el placement invalida también tickets, claves y segmentos ya firmados.
+- [ ] Las actividades anteriores a `014` se han reinsertado y el recorrido real funciona con
+      `enforce` antes de promover la release.
 
 ## Cómo se prueba
 
 ```bash
-npm test -- test/security/material-ajeno.test.js
+npm test -- test/signing.test.js
+npm run test:integration
 
-# En producción, contar las actividades que aún no llevan firma:
-docker compose -p moodleshield logs app | grep 'referencia firmada' | wc -l
-
-# Y cuántas emisiones nuevas ya están cubiertas:
-psql $DB -c "SELECT resource_kind, count(*) FROM deep_link_grant GROUP BY 1"
+# Contar las emisiones nuevas cubiertas antes de habilitar alumnos:
+psql $DB -c "SELECT resource_kind, count(*), count(resource_link_id) FROM resource_placement GROUP BY 1"
 ```
 
 ## Riesgos y trampas
 
-- **Activar `enforce` antes de tiempo rompe cursos.** Es un 404 para el alumno,
-  en mitad de una clase, sin que el profesor entienda por qué. El aviso existe
-  precisamente para poder medir antes de decidir.
-- **`SESSION_SECRET` es ahora también la clave de estas firmas.** Rotarlo
-  invalidaría la firma de todas las actividades insertadas, no sólo las
-  sesiones. Si alguna vez hay que rotarlo, hay que hacerlo con
-  `LAUNCH_RESOURCE_SIGNATURE=warn` y volver a `enforce` después.
+- **Promover sin reinsertar actividades anteriores a `014` rompe cursos.** `enforce` responde 404 a esas
+  actividades por diseño. La migración se valida en test antes de habilitar alumnos.
+- **`SESSION_SECRET` sigue firmando `resourcesig`.** Rotarlo invalida las firmas aunque
+  el placement exista; requiere una migración coordinada y reinsertar actividades.
 - **Moodle normaliza `custom` a minúsculas** en algunas versiones. Por eso se
   emite ya en minúscula y se aceptan las dos formas al leer.
-- **La firma no protege de un alumno**, que nunca ve el `custom`: protege de un
-  profesor con permiso de edición. El aislamiento frente al alumno lo hace
-  `authorizeResource` sobre la sesión, que es otra frontera y sí estaba cerrada.
+- **La firma sola no protege de una copia completa.** La autoridad que sí la bloquea es
+  el placement server-side; `authorizeResource` mantiene después el alcance de sesión.
 - **Un material sin `owner_sub`** (datos anteriores a la columna) no se firma.
   No debería quedar ninguno; si aparece, el launch lo tratará como actividad
-  legacy y el aviso lo delatará.
+  anterior y el aviso lo delatará fuera de producción; `enforce` lo rechaza.

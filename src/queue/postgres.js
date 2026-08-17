@@ -21,10 +21,11 @@ const QUEUES = {
     revisions: 'video_revision',
     /** Campos físicos que la revisión recibe al quedar lista. */
     readyColumns: `duration_seconds = $3, segment_count = $4, segment_seconds = $5,
-                   width = $6, height = $7`,
+                   width = $6, height = $7, artifact_size_bytes = $8`,
     readyParams: (meta) => [
       meta.durationSeconds ?? null, meta.segmentCount ?? null,
-      meta.segmentSeconds ?? null, meta.width ?? null, meta.height ?? null
+      meta.segmentSeconds ?? null, meta.width ?? null, meta.height ?? null,
+      meta.artifactSizeBytes ?? null
     ]
   },
   pdf: {
@@ -32,9 +33,10 @@ const QUEUES = {
     material: 'pdf_document',
     materialFk: 'document_id',
     revisions: 'pdf_revision',
-    readyColumns: 'page_count = $3, sha256 = $4, size_bytes = $5',
+    readyColumns: 'page_count = $3, sha256 = $4, size_bytes = $5, artifact_size_bytes = $6',
     readyParams: (meta) => [
-      meta.pageCount ?? null, meta.sha256 ?? null, meta.sizeBytes ?? null
+      meta.pageCount ?? null, meta.sha256 ?? null, meta.sizeBytes ?? null,
+      meta.artifactSizeBytes ?? meta.sizeBytes ?? null
     ]
   }
 }

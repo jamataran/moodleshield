@@ -29,8 +29,16 @@ x-logging: &logging
     max-size: "10m"
     max-file: "3"
 
+x-runtime-hardening: &runtime-hardening
+  read_only: true
+  cap_drop: [ "ALL" ]
+  # El entrypoint ajusta exclusivamente los bind mounts y baja a uid 1000.
+  cap_add: [ "CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID" ]
+  security_opt: [ "no-new-privileges:true" ]
+
 x-app-env: &app-env
   NODE_ENV: production
+  SERVICE_ROLE: app
   LOG_LEVEL: ${LOG_LEVEL:-info}
   PUBLIC_URL: ${PUBLIC_URL:?falta PUBLIC_URL}
   DB_HOST: db
@@ -38,32 +46,99 @@ x-app-env: &app-env
   DB_NAME: ${DB_NAME:-moodleshield}
   DB_USER: ${DB_USER:-moodleshield}
   DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+  DB_APP_USER: ${DB_APP_USER:-moodleshield_app}
+  DB_APP_PASSWORD: ${DB_APP_PASSWORD:?falta DB_APP_PASSWORD}
+  DB_WORKER_USER: ${DB_WORKER_USER:-moodleshield_worker}
+  DB_WORKER_PASSWORD: ${DB_WORKER_PASSWORD:?falta DB_WORKER_PASSWORD}
+  DB_PROVISION_SERVICE_ROLES: "true"
   SESSION_SECRET: ${SESSION_SECRET:?falta SESSION_SECRET}
   WATERMARK_SECRET: ${WATERMARK_SECRET:?falta WATERMARK_SECRET}
   MEDIA_KEY_SECRET: ${MEDIA_KEY_SECRET:?falta MEDIA_KEY_SECRET}
   MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
   LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-}
   CONTENT_API_TOKEN: ${CONTENT_API_TOKEN:-}
+  CONTENT_API_ALLOWED_PLATFORM_IDS: ${CONTENT_API_ALLOWED_PLATFORM_IDS:-}
   ADMIN_USERNAME: ${ADMIN_USERNAME:?falta ADMIN_USERNAME}
   ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?falta ADMIN_PASSWORD_HASH}
   ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?falta ADMIN_SESSION_SECRET}
   ADMIN_SESSION_TTL_SECONDS: ${ADMIN_SESSION_TTL_SECONDS:-28800}
   ADMIN_ALLOW_PRIVATE_LTI_HOSTS: ${ADMIN_ALLOW_PRIVATE_LTI_HOSTS:-false}
   LTI_IDENTITY_CUSTOM_PARAM: ${LTI_IDENTITY_CUSTOM_PARAM:-username}
+  LTI_IDENTITY_MOODLE_SOURCE: ${LTI_IDENTITY_MOODLE_SOURCE:-$$User.username}
   # T24: verificación de la referencia firmada del material en el launch.
-  # `warn` (por defecto) sirve el launch sin firma y deja aviso en el log;
-  # pásalo a `enforce` cuando el aviso deje de aparecer.
-  LAUNCH_RESOURCE_SIGNATURE: ${LAUNCH_RESOURCE_SIGNATURE:-warn}
+  # La candidata segura falla en cerrado. Antes de desplegar, las actividades
+  # legacy deben regenerarse desde Deep Linking (ver checklist de seguridad).
+  LAUNCH_RESOURCE_SIGNATURE: ${LAUNCH_RESOURCE_SIGNATURE:-enforce}
   # IP real del alumno tras un CDN (ADR-019): auto | always | never.
   # Otros nombres por los que se alcanza la MISMA instancia. Vacío = sólo
   # PUBLIC_URL, que es el comportamiento de siempre.
   PUBLIC_URL_ALIASES: ${PUBLIC_URL_ALIASES:-}
+  TRUST_PROXY: ${TRUST_PROXY:-1}
   TRUST_CLOUDFLARE_CLIENT_IP: ${TRUST_CLOUDFLARE_CLIENT_IP:-auto}
   CDN_TRUSTED_RANGES: ${CDN_TRUSTED_RANGES:-}
   MEDIA_ROOT: /data/media
   UPLOAD_ROOT: /data/uploads
   MEDIA_DELIVERY: signed
   MEDIA_PUBLIC_PREFIX: /media
+  MEDIA_LINK_TTL_SECONDS: ${MEDIA_LINK_TTL_SECONDS:-14400}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-4294967296}
+  UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-16777216}
+  UPLOAD_SESSION_TTL_SECONDS: ${UPLOAD_SESSION_TTL_SECONDS:-86400}
+  STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-5368709120}
+  MAX_ACTIVE_UPLOADS_PER_OWNER: ${MAX_ACTIVE_UPLOADS_PER_OWNER:-5}
+  MAX_PENDING_JOBS_PER_OWNER: ${MAX_PENDING_JOBS_PER_OWNER:-10}
+  MAX_RESERVED_UPLOAD_BYTES_PER_OWNER: ${MAX_RESERVED_UPLOAD_BYTES_PER_OWNER:-8589934592}
+  MAX_STORED_BYTES_PER_OWNER: ${MAX_STORED_BYTES_PER_OWNER:-107374182400}
+  PLAYBACK_MAX_DISTINCT_IPS: ${PLAYBACK_MAX_DISTINCT_IPS:-3}
+  PLAYBACK_REVOKE_ON_SUSPICION: ${PLAYBACK_REVOKE_ON_SUSPICION:-true}
+  SEGMENT_SECONDS: ${SEGMENT_SECONDS:-4}
+  OUTPUT_FPS: ${OUTPUT_FPS:-24}
+  OUTPUT_CRF: ${OUTPUT_CRF:-21}
+  OUTPUT_PRESET: ${OUTPUT_PRESET:-veryfast}
+  MARK_ALPHA: ${MARK_ALPHA:-0.06}
+  TRANSCODE_CONCURRENCY: ${TRANSCODE_CONCURRENCY:-1}
+  TRANSCODE_LEASE_SECONDS: ${TRANSCODE_LEASE_SECONDS:-90}
+  TRANSCODE_HEARTBEAT_MS: ${TRANSCODE_HEARTBEAT_MS:-20000}
+  FFMPEG_NICE: ${FFMPEG_NICE:-10}
+  MAX_PDF_BYTES: ${MAX_PDF_BYTES:-104857600}
+  MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
+  PDF_PROCESS_TIMEOUT_SECONDS: ${PDF_PROCESS_TIMEOUT_SECONDS:-180}
+  TRANSCODE_PROBE_TIMEOUT_SECONDS: ${TRANSCODE_PROBE_TIMEOUT_SECONDS:-30}
+  TRANSCODE_PROCESS_TIMEOUT_SECONDS: ${TRANSCODE_PROCESS_TIMEOUT_SECONDS:-21600}
+  VIDEO_MAX_OUTPUT_BITRATE_KBPS: ${VIDEO_MAX_OUTPUT_BITRATE_KBPS:-8000}
+  VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-14400}
+  VIDEO_MAX_PIXELS: ${VIDEO_MAX_PIXELS:-8294400}
+  VIDEO_MAX_DIMENSION: ${VIDEO_MAX_DIMENSION:-4096}
+  VIDEO_MAX_STREAMS: ${VIDEO_MAX_STREAMS:-16}
+  VIDEO_MAX_SOURCE_FPS: ${VIDEO_MAX_SOURCE_FPS:-120}
+  VIDEO_MAX_AUDIO_CHANNELS: ${VIDEO_MAX_AUDIO_CHANNELS:-8}
+  MAX_FOLDERS_PER_OWNER: ${MAX_FOLDERS_PER_OWNER:-100}
+  MAX_COLLECTION_ITEMS: ${MAX_COLLECTION_ITEMS:-50}
+  MATERIAL_REVISION_ACTIVATION: ${MATERIAL_REVISION_ACTIVATION:-auto}
+  MATERIAL_REVISION_RETENTION_DAYS: ${MATERIAL_REVISION_RETENTION_DAYS:-30}
+  MATERIAL_REVISION_KEEP_MIN: ${MATERIAL_REVISION_KEEP_MIN:-2}
+  MATERIAL_ARCHIVE_RETENTION_DAYS: ${MATERIAL_ARCHIVE_RETENTION_DAYS:-90}
+  RATE_LIMIT_PUBLIC_AUTH_15M: ${RATE_LIMIT_PUBLIC_AUTH_15M:-120}
+  RATE_LIMIT_MIGRATION_PER_MINUTE: ${RATE_LIMIT_MIGRATION_PER_MINUTE:-300}
+  RATE_LIMIT_CATALOG_PER_MINUTE: ${RATE_LIMIT_CATALOG_PER_MINUTE:-600}
+  RATE_LIMIT_PLAYBACK_PER_MINUTE: ${RATE_LIMIT_PLAYBACK_PER_MINUTE:-1200}
+
+# El worker abre contenido hostil. Sólo recibe base de datos, la semilla de la
+# marca forense y parámetros de procesado; no puede acuñar sesiones ni acceder
+# como administrador aunque se comprometiera ffmpeg/Ghostscript.
+x-worker-env: &worker-env
+  NODE_ENV: production
+  SERVICE_ROLE: worker
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${DB_NAME:-moodleshield}
+  DB_WORKER_USER: ${DB_WORKER_USER:-moodleshield_worker}
+  DB_WORKER_PASSWORD: ${DB_WORKER_PASSWORD:?falta DB_WORKER_PASSWORD}
+  WATERMARK_SECRET: ${WATERMARK_SECRET:?falta WATERMARK_SECRET}
+  MEDIA_ROOT: /data/media
+  UPLOAD_ROOT: /data/uploads
+  SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-14400}
   MEDIA_LINK_TTL_SECONDS: ${MEDIA_LINK_TTL_SECONDS:-14400}
   MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-4294967296}
   UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-16777216}
@@ -80,9 +155,15 @@ x-app-env: &app-env
   MAX_PDF_BYTES: ${MAX_PDF_BYTES:-104857600}
   MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
   PDF_PROCESS_TIMEOUT_SECONDS: ${PDF_PROCESS_TIMEOUT_SECONDS:-180}
-  MAX_FOLDERS_PER_OWNER: ${MAX_FOLDERS_PER_OWNER:-100}
-  MAX_COLLECTION_ITEMS: ${MAX_COLLECTION_ITEMS:-50}
-  MATERIAL_REVISION_ACTIVATION: ${MATERIAL_REVISION_ACTIVATION:-auto}
+  TRANSCODE_PROBE_TIMEOUT_SECONDS: ${TRANSCODE_PROBE_TIMEOUT_SECONDS:-30}
+  TRANSCODE_PROCESS_TIMEOUT_SECONDS: ${TRANSCODE_PROCESS_TIMEOUT_SECONDS:-21600}
+  VIDEO_MAX_OUTPUT_BITRATE_KBPS: ${VIDEO_MAX_OUTPUT_BITRATE_KBPS:-8000}
+  VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-14400}
+  VIDEO_MAX_PIXELS: ${VIDEO_MAX_PIXELS:-8294400}
+  VIDEO_MAX_DIMENSION: ${VIDEO_MAX_DIMENSION:-4096}
+  VIDEO_MAX_STREAMS: ${VIDEO_MAX_STREAMS:-16}
+  VIDEO_MAX_SOURCE_FPS: ${VIDEO_MAX_SOURCE_FPS:-120}
+  VIDEO_MAX_AUDIO_CHANNELS: ${VIDEO_MAX_AUDIO_CHANNELS:-8}
   MATERIAL_REVISION_RETENTION_DAYS: ${MATERIAL_REVISION_RETENTION_DAYS:-30}
   MATERIAL_REVISION_KEEP_MIN: ${MATERIAL_REVISION_KEEP_MIN:-2}
   MATERIAL_ARCHIVE_RETENTION_DAYS: ${MATERIAL_ARCHIVE_RETENTION_DAYS:-90}
@@ -90,7 +171,8 @@ x-app-env: &app-env
 services:
   # ---------------------------------------------------------------------------
   db:
-    image: postgres:16-alpine
+    <<: *runtime-hardening
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-moodleshield}
@@ -113,7 +195,9 @@ services:
       start_period: 30s
     mem_limit: 512m
     pids_limit: 256
-    security_opt: [ "no-new-privileges:true" ]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,size=16m
     logging: *logging
     # Sólo `backend`: la base de datos no tiene ninguna razón para alcanzar
     # Internet, y `backend` es una red interna (V-33/F-10).
@@ -121,6 +205,7 @@ services:
 
   # ---------------------------------------------------------------------------
   app:
+    <<: *runtime-hardening
     image: ghcr.io/jamataran/moodleshield/app:v1.0.5
     restart: unless-stopped
     init: true
@@ -139,7 +224,8 @@ services:
       start_period: 40s
     mem_limit: 512m
     pids_limit: 256
-    security_opt: [ "no-new-privileges:true" ]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     logging: *logging
     # En las dos: `backend` para hablar con la base de datos y `edge` porque es
     # el ÚNICO servicio que necesita salida a Internet — descarga el JWKS de
@@ -150,6 +236,7 @@ services:
   # El transcodificador. Va aparte del `app` para que un pico de ffmpeg no
   # tumbe el servicio web y para poder limitarle CPU de forma independiente.
   worker:
+    <<: *runtime-hardening
     image: ghcr.io/jamataran/moodleshield/worker:v1.0.5
     restart: unless-stopped
     init: true
@@ -161,7 +248,9 @@ services:
       # que el worker empiece a reclamar trabajos.
       app:
         condition: service_healthy
-    environment: *app-env
+    # Compatibilidad de rollout: v1.0.5 aún exige *app-env. release.yml cambia
+    # este anchor en el mismo commit que apunta a la primera imagen compatible.
+    environment: *app-env # WORKER_ENV_ACTIVATION
     volumes:
       - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
       - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
@@ -172,7 +261,8 @@ services:
     # ffmpeg y x264 abren hilos, y los hilos cuentan en este límite: 1024 deja
     # margen de sobra a la transcodificación y sigue frenando un fork bomb.
     pids_limit: 1024
-    security_opt: [ "no-new-privileges:true" ]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
     logging: *logging
     # Sólo `backend` (V-33/F-10): el worker es quien abre ficheros hostiles con
     # ffmpeg, qpdf y Ghostscript, así que es justo el que no debe tener salida a
@@ -184,6 +274,7 @@ services:
   # etiqueta que app y worker: se despliegan como un trío coherente). Lo único
   # que monta son los medios que sirve con sendfile.
   proxy:
+    <<: *runtime-hardening
     image: ghcr.io/jamataran/moodleshield/proxy:v1.0.5
     restart: unless-stopped
     depends_on:
@@ -204,7 +295,11 @@ services:
     # Compose sigue siendo compatible durante el breve rollout de una imagen.
     mem_limit: 128m
     pids_limit: 128
-    security_opt: [ "no-new-privileges:true" ]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=32m
+      - /var/run:rw,noexec,nosuid,nodev,size=4m
+      - /etc/nginx/conf.d:rw,noexec,nosuid,nodev,size=4m
     logging: *logging
     # `edge` porque es donde se publica el puerto hacia el proxy del host.
     networks: [edge]

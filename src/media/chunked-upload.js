@@ -21,7 +21,12 @@ import {
   uploadPath,
   uploadTempPath
 } from './storage.js'
-import { PDF_EXTENSIONS, UploadError, VIDEO_EXTENSIONS } from './upload.js'
+import {
+  matchesVideoMagic,
+  PDF_EXTENSIONS,
+  UploadError,
+  VIDEO_EXTENSIONS
+} from './upload.js'
 
 const MANIFEST_VERSION = 1
 const PDF_MAGIC = Buffer.from('%PDF-')
@@ -266,13 +271,18 @@ export async function assembleChunkedUpload (uploadId, owner) {
     const inspector = new Transform({
       transform (chunk, _encoding, callback) {
         hash.update(chunk)
-        if (manifest.kind === 'pdf' && head.length < PDF_MAGIC.length) {
-          head = Buffer.concat([head, chunk.subarray(0, PDF_MAGIC.length - head.length)])
+        if (head.length < 12) {
+          head = Buffer.concat([head, chunk.subarray(0, 12 - head.length)])
         }
         callback(null, chunk)
       },
       flush (callback) {
-        if (manifest.kind === 'pdf' && !head.equals(PDF_MAGIC)) {
+        if (manifest.kind === 'pdf' && !head.subarray(0, PDF_MAGIC.length).equals(PDF_MAGIC)) {
+          return callback(uploadError('El contenido del fichero no corresponde al tipo declarado',
+            415, 'unsupported_media_type'))
+        }
+        if (manifest.kind === 'video' &&
+            !matchesVideoMagic(head, path.extname(manifest.originalFilename).toLowerCase())) {
           return callback(uploadError('El contenido del fichero no corresponde al tipo declarado',
             415, 'unsupported_media_type'))
         }

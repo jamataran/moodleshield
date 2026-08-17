@@ -41,6 +41,11 @@ import {
   setPlatformEnabled,
   updatePlatform
 } from '../services/platforms.js'
+import {
+  listPlaybackGrants,
+  revokePlaybackGrantByAdmin
+} from '../services/playback-grants.js'
+import { isUuid } from '../media/storage.js'
 
 export const adminRouter = Router()
 
@@ -132,6 +137,35 @@ adminRouter.post('/logout', requireAdminCsrf, async (req, res, next) => {
     await logoutAdmin(req.adminSession, req.ip)
     clearAdminCookie(res)
     res.redirect(303, '/admin/login')
+  } catch (err) {
+    next(err)
+  }
+})
+
+adminRouter.get('/playback-grants', async (req, res, next) => {
+  try {
+    const grants = await listPlaybackGrants()
+    res.type('html').send(await renderPage('admin/playback-grants.html', {
+      bootstrap: {
+        grants: grants.map((grant) => ({
+          ...grant,
+          revokeCsrf: csrfToken(req.adminSession, 'POST', `/playback-grants/${grant.jti}/revoke`)
+        })),
+        message: req.query.message === 'revoked' ? 'Sesión revocada.' : '',
+        logoutCsrf: csrfToken(req.adminSession, 'POST', '/logout')
+      }
+    }))
+  } catch (err) {
+    next(err)
+  }
+})
+
+adminRouter.post('/playback-grants/:jti/revoke', requireAdminCsrf, async (req, res, next) => {
+  try {
+    if (!isUuid(req.params.jti)) return res.sendStatus(404)
+    const row = await revokePlaybackGrantByAdmin(req.params.jti, { ip: req.ip })
+    if (!row) return res.sendStatus(404)
+    res.redirect(303, '/admin/playback-grants?message=revoked')
   } catch (err) {
     next(err)
   }

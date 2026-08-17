@@ -13,7 +13,7 @@
 # Con la configuración horneada aquí, el stack no depende de nada del host: se
 # despliega eligiendo el compose y pegando el .env, que es como se opera.
 
-FROM nginx:1.27-alpine
+FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
 
 # Lo pasa el bake para las tres imágenes; aquí sólo sirve para que la etiqueta
 # de versión de la imagen coincida con la de app y worker.

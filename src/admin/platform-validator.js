@@ -72,6 +72,12 @@ export function normalizePlatformInput (input) {
       throw new PlatformValidationError(`${field} es obligatorio`, { field })
     }
   }
+  if (normalized.deploymentIds.length > 1) {
+    throw new PlatformValidationError(
+      'Cada plataforma debe representar un único deployment; registra otro client_id por separado',
+      { field: 'deploymentIds', code: 'multiple_deployments_not_supported' }
+    )
+  }
   return normalized
 }
 
@@ -111,7 +117,12 @@ export function isPrivateOrSpecialAddress (address) {
   }
   return lower === '::' || lower === '::1' || lower.startsWith('fe8') ||
     lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb') ||
-    lower.startsWith('fc') || lower.startsWith('fd')
+    // fc00::/7 (ULA), fec0::/10 (site-local obsoleto) y ff00::/8
+    // (multicast) tampoco pueden ser destinos de una descarga JWKS.
+    lower.startsWith('fc') || lower.startsWith('fd') ||
+    lower.startsWith('fec') || lower.startsWith('fed') ||
+    lower.startsWith('fee') || lower.startsWith('fef') ||
+    lower.startsWith('ff')
 }
 
 export async function resolveSafeHost (hostname, allowPrivate) {

@@ -6,7 +6,7 @@ import logger from '../logger.js'
 import { one } from '../db/index.js'
 import { getPublicJwks } from './keys.js'
 import { findPlatform, listPlatforms } from './platform.js'
-import { saveOidcState, validateLaunch, LtiError } from './validate.js'
+import { assertLaunchTargetAllowed, saveOidcState, validateLaunch, LtiError } from './validate.js'
 import { MESSAGE_TYPE } from './claims.js'
 import { issueSession, issueToken, verifySession, verifyToken } from '../session.js'
 import { renderPage } from '../ui/render.js'
@@ -22,8 +22,42 @@ import { getActiveRevision } from '../services/revisions.js'
 import { getProgress } from '../services/progress.js'
 import { assertUuid, isUuid } from '../media/storage.js'
 import { AmbiguousPlatformError, createPlatform } from '../services/platforms.js'
+import { registerPlaybackGrant } from '../services/playback-grants.js'
+import {
+  authorizeResourcePlacement,
+  createResourcePlacements,
+  loadPlacementCollectionItems,
+  ResourcePlacementError
+} from '../services/resource-placements.js'
 
 export const ltiRouter = Router()
+
+async function issueTrackedSession (context) {
+  const token = issueSession(context)
+  const session = verifySession(token)
+  await registerPlaybackGrant(session)
+  return token
+}
+
+/** Deep Linking modifica actividades del curso: nunca es una acción de alumno. */
+export function assertDeepLinkInstructor (context) {
+  if (!context?.isInstructor) {
+    throw new LtiError('Sólo un profesor puede insertar materiales en una actividad', {
+      status: 403,
+      code: 'instructor_required'
+    })
+  }
+}
+
+/** Segunda barrera: el token intermedio conserva el rol que validó el launch. */
+export function assertDeepLinkResponseInstructor (payload) {
+  if (payload?.ins !== 1) {
+    throw new LtiError('La sesión de Deep Linking no pertenece a un profesor', {
+      status: 403,
+      code: 'instructor_required'
+    })
+  }
+}
 
 /**
  * Freno al alta de plataformas por API (V-06): sin él, el bearer de
@@ -72,6 +106,7 @@ async function handleLogin (req, res, next) {
   try {
     const params = loginParams(req)
     if (!params.iss) throw new LtiError('Falta el parámetro iss', { code: 'missing_iss' })
+    params.targetLinkUri = assertLaunchTargetAllowed(params.targetLinkUri)
 
     const platform = await findPlatform({ issuer: params.iss, clientId: params.clientId })
     if (!platform) {
@@ -156,7 +191,8 @@ ltiRouter.post('/launch', async (req, res, next) => {
     )
 
     if (context.messageType === MESSAGE_TYPE.deepLinking) {
-      const sessionToken = issueSession({ ...context, identity, mode: 'catalog' })
+      assertDeepLinkInstructor(context)
+      const sessionToken = await issueTrackedSession({ ...context, identity, mode: 'catalog' })
       // Token aparte con lo que hace falta para responder a Moodle: adónde
       // devolver la selección y el `data` opaco que hay que reflejar tal cual.
       const dlToken = issueToken(
@@ -165,9 +201,11 @@ ltiRouter.post('/launch', async (req, res, next) => {
           pid: platform.id,
           sub: context.sub,
           dep: context.deploymentId,
+          ctx: context.contextId,
           ret: context.deepLinkingSettings?.deep_link_return_url ?? null,
           dat: context.deepLinkingSettings?.data ?? null,
-          multi: context.deepLinkingSettings?.accept_multiple ? 1 : 0
+          multi: context.deepLinkingSettings?.accept_multiple ? 1 : 0,
+          ins: 1
         },
         { secret: config.secrets.session, ttlSeconds: 3600 }
       )
@@ -189,7 +227,7 @@ ltiRouter.post('/launch', async (req, res, next) => {
 
     if (!resource) {
       if (context.isInstructor) {
-        const sessionToken = issueSession({ ...context, identity, mode: 'manage' })
+        const sessionToken = await issueTrackedSession({ ...context, identity, mode: 'manage' })
         return res.type('html').send(
           await renderPage('catalog.html', {
             bootstrap: {
@@ -242,8 +280,9 @@ ltiRouter.post('/launch', async (req, res, next) => {
 export function resourceFromCustom (custom = {}) {
   const kind = custom.resourcekind ?? custom.resourceKind ?? null
   const id = custom.resourceid ?? custom.resourceId ?? null
+  const placementId = custom.placementid ?? custom.placementId ?? null
   if (kind && isUuid(id) && ['video', 'pdf', 'collection'].includes(kind)) {
-    return { kind, id }
+    return { kind, id, ...(isUuid(placementId) ? { placementId } : {}) }
   }
   const legacy = custom.videoId ?? custom.videoid ?? null
   if (isUuid(legacy)) return { kind: 'video', id: legacy }
@@ -286,9 +325,9 @@ export function displayIp (ip) {
  * comprobación usa el owner_sub de la BASE DE DATOS, nunca el del token: el
  * launch de un alumno no es del propietario y no debe serlo.
  */
-function enforceResourceReference ({ context, platform, kind, id, ownerSub }) {
+async function enforceResourceReference ({ context, platform, kind, id, ownerSub, placementId }) {
   const mode = config.lti.launchResourceSignature
-  if (mode === 'off') return
+  if (mode === 'off') return null
   const status = checkResourceSignature({
     custom: context.custom ?? {},
     platformId: platform.id,
@@ -296,8 +335,7 @@ function enforceResourceReference ({ context, platform, kind, id, ownerSub }) {
     id,
     ownerSub
   })
-  if (status === 'valid') return
-  if (mode === 'enforce') {
+  if (status !== 'valid' && mode === 'enforce') {
     logger.warn(
       { platformId: platform.id, kind, resourceId: id, status, contextId: context.contextId, resourceLinkId: context.resourceLinkId },
       'Launch rechazado: referencia de material sin firma válida (T24 enforce)'
@@ -307,19 +345,38 @@ function enforceResourceReference ({ context, platform, kind, id, ownerSub }) {
       code: 'resource_missing'
     })
   }
-  logger.warn(
-    {
-      platformId: platform.id,
+  if (status !== 'valid') {
+    logger.warn(
+      {
+        platformId: platform.id,
+        kind,
+        resourceId: id,
+        signature: status,
+        contextId: context.contextId,
+        resourceLinkId: context.resourceLinkId,
+        launchedBy: context.sub,
+        isInstructor: context.isInstructor
+      },
+      'Launch sin referencia firmada: actividad anterior a la autorización de placement'
+    )
+  }
+
+  // `off`/`warn` sólo conservan compatibilidad fuera de producción. En
+  // `enforce`, el placement server-side es la autoridad: copiar todos los
+  // custom a otro curso o actividad deja de funcionar.
+  if (!placementId && mode !== 'enforce') return null
+  try {
+    return await authorizeResourcePlacement({
+      placementId,
+      context,
       kind,
       resourceId: id,
-      signature: status,
-      contextId: context.contextId,
-      resourceLinkId: context.resourceLinkId,
-      launchedBy: context.sub,
-      isInstructor: context.isInstructor
-    },
-    'Launch sin referencia firmada (T24 fase de aviso): actividad anterior a la firma o custom manipulado'
-  )
+      ownerSub
+    })
+  } catch (err) {
+    if (!(err instanceof ResourcePlacementError)) throw err
+    throw new LtiError(err.message, { status: err.status, code: err.code })
+  }
 }
 
 /**
@@ -350,12 +407,13 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
       code: 'resource_missing'
     })
   }
-  enforceResourceReference({
+  const placement = await enforceResourceReference({
     context,
     platform,
     kind: resource.kind,
     id: material.id,
-    ownerSub: material.owner_sub
+    ownerSub: material.owner_sub,
+    placementId: resource.placementId
   })
 
   // La revisión se resuelve UNA vez, aquí, y viaja en la sesión: si se
@@ -368,11 +426,16 @@ async function renderMaterialLaunch ({ res, context, platform, identity, resourc
     )
   }
 
-  const sessionToken = issueSession({
+  const sessionToken = await issueTrackedSession({
     ...context,
     identity,
     mode: 'launch',
-    resource: { kind: resource.kind, id: material.id, revisionId: revision.id }
+    resource: {
+      kind: resource.kind,
+      id: material.id,
+      revisionId: revision.id,
+      placementId: placement?.id ?? null
+    }
   })
 
   // El registro forense ya no se hace aquí: abrir la actividad no es cargar el
@@ -458,14 +521,17 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
       code: 'resource_missing'
     })
   }
-  enforceResourceReference({
+  const placement = await enforceResourceReference({
     context,
     platform,
     kind: 'collection',
     id: collection.id,
-    ownerSub: collection.owner_sub
+    ownerSub: collection.owner_sub,
+    placementId: resource.placementId
   })
-  const items = await loadItems(collection.id)
+  const items = placement
+    ? await loadPlacementCollectionItems(placement.id, collection.id)
+    : await loadItems(collection.id)
   if (items.length === 0) {
     throw new LtiError(
       'Esta colección está vacía. Avisa a tu profesor para que añada materiales.',
@@ -491,11 +557,11 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
     )
   }
 
-  const sessionToken = issueSession({
+  const sessionToken = await issueTrackedSession({
     ...context,
     identity,
     mode: 'launch',
-    resource: { kind: 'collection', id: collection.id }
+    resource: { kind: 'collection', id: collection.id, placementId: placement?.id ?? null }
   })
 
   // Igual que en el material suelto: la clave `progress` sólo existe para
@@ -544,6 +610,7 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
 /** El catálogo llama aquí al pulsar "Insertar". */
 ltiRouter.post('/deeplink/response', async (req, res, next) => {
   try {
+    res.set('Cache-Control', 'private, no-store')
     const payload = verifyToken(req.body?.deepLinkToken, { secret: config.secrets.session })
     if (!payload || payload.typ !== 'dl') {
       throw new LtiError('Sesión de Deep Linking caducada, vuelve a abrir el selector', {
@@ -551,6 +618,7 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
         code: 'deeplink_expired'
       })
     }
+    assertDeepLinkResponseInstructor(payload)
     if (!payload.ret) {
       throw new LtiError('La plataforma no envió deep_link_return_url', {
         code: 'missing_return_url'
@@ -573,7 +641,7 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
       throw new LtiError('La selección contiene un identificador inválido', { code: 'invalid_selection' })
     }
 
-    const platform = await one('SELECT * FROM lti_platform WHERE id = $1', [payload.pid])
+    const platform = await one('SELECT * FROM lti_platform WHERE id = $1 AND enabled=true', [payload.pid])
     if (!platform) throw new LtiError('Plataforma desconocida', { status: 404 })
 
     const scope = { ids, platformId: payload.pid, ownerSub: payload.sub }
@@ -595,11 +663,19 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
     }
 
     const inserted = kind === 'collection' || !payload.multi ? materials.slice(0, 1) : materials
+    const placed = await createResourcePlacements({
+      deepLinkJti: payload.jti,
+      platformId: payload.pid,
+      deploymentId: payload.dep,
+      contextId: payload.ctx,
+      createdBySub: payload.sub,
+      materials: inserted
+    })
     const jwt = await buildDeepLinkingResponse({
       platform,
       deploymentId: payload.dep,
       data: payload.dat,
-      materials: inserted,
+      materials: placed,
       // La actividad guardará esta URL para siempre: la que corresponde es
       // aquella por la que el profesor abrió el selector desde Moodle.
       origin: publicOriginFor(req)
@@ -608,7 +684,7 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
     // Auditoría de la emisión (T24, migración 011): un fallo aquí no tumba la
     // inserción — la verificación real es la firma; esto responde «¿quién
     // insertó este material y cuándo?».
-    await recordDeepLinkGrants({ platformId: platform.id, materials: inserted })
+    await recordDeepLinkGrants({ platformId: platform.id, materials: placed })
       .catch((err) => req.log?.warn({ err }, 'No se pudo registrar la emisión de Deep Linking'))
 
     res.type('html').send(deepLinkingForm(payload.ret, jwt))

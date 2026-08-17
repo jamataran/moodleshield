@@ -1,10 +1,13 @@
 # Estado del proyecto
 
-> **Si buscas el resumen**, está en [`README.md`](README.md): índice de la documentación,
-> estado, hoja de ruta y por dónde empezar a contribuir. Este documento es la **auditoría
-> detallada** de la última entrega, con la evidencia tarea a tarea.
+> [!WARNING]
+> **Documento histórico, cerrado el 6 de agosto de 2026.** Describe la entrega T17–T21 y
+> contiene estados que ya no son actuales (por ejemplo T13). No lo uses para decidir si
+> producción es segura. La referencia vigente es
+> [`revision-seguridad-2026-08-10.md`](revision-seguridad-2026-08-10.md); el índice actual
+> está en [`README.md`](README.md).
 
-**Última actualización**: 6 de agosto de 2026  
+**Última actualización histórica**: 6 de agosto de 2026
 **Alcance de esta auditoría**: T17, T18, T20, T21 recientemente cerradas. Consulta [`docs/tasks/README.md`](tasks/README.md) para el estado completo.
 
 ---
@@ -276,4 +279,3 @@ Documentada en `.env.example`. Las que más cambian:
 | `MATERIAL_REVISION_ACTIVATION` | `auto` | `auto` o `manual` para publicar revisiones |
 
 La configuración se valida al arrancar: si falta un secreto obligatorio en producción, el proceso muere de inmediato.
-

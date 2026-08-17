@@ -16,6 +16,7 @@ import {
   setCollectionVisibility,
   updateCollection
 } from '../services/collections.js'
+import { loadPlacementCollectionItems } from '../services/resource-placements.js'
 
 export const collectionsRouter = Router()
 
@@ -183,7 +184,9 @@ collectionsRouter.get('/:id/manifest', requireSession, async (req, res, next) =>
       : await getCollectionForPlatform(id, req.session.platformId)
     if (!collection) return res.status(404).json({ error: 'Colección no encontrada' })
 
-    const items = await loadItems(id)
+    const items = !scope.viaOwner && req.session.resource?.placementId
+      ? await loadPlacementCollectionItems(req.session.resource.placementId, id)
+      : await loadItems(id)
     res.set('Cache-Control', 'private, no-store')
     res.json({
       id: collection.id,

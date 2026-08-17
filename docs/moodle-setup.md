@@ -231,9 +231,9 @@ Los endpoints de Moodle (`/mod/lti/auth.php`, `/mod/lti/token.php`,
 `/mod/lti/certs.php`) se deducen del issuer; sólo hay que pasarlos si tu
 instalación los tiene en otra ruta.
 
-> El `deployment_id` se puede omitir: se aprende en el primer launch. Lo que no
-> se puede es poner uno equivocado — todos los launches darían
-> `unknown_deployment_id`.
+> En producción el `deployment_id` **no se puede omitir ni registrar más de uno**: debe
+> quedar preconfigurado antes del primer launch. Sólo desarrollo puede aprenderlo una vez.
+> Un valor equivocado hace que todos los launches den `unknown_deployment_id`.
 
 ### Alternativa por API
 
@@ -295,7 +295,7 @@ la secuencia de `/A/` y `/B/` tiene que ser diferente entre ambos.
 | `ambiguous_platform` | Hay varios client ID activos para el issuer y Moodle omitió `client_id` | Revisar la configuración de la herramienta en Moodle |
 | `platform_disabled` | La instancia está deshabilitada en la consola | Reactivarla en `/admin` si procede |
 | `invalid_state` | `redirect_uri` mal en Moodle | Debe ser `<PUBLIC_URL>/lti/launch` exacto |
-| `unknown_deployment_id` | El deployment_id registrado no coincide | Corregirlo o borrar la plataforma y volver a registrarla sin él |
+| `unknown_deployment_id` | El deployment_id registrado no coincide | Corregirlo en la plataforma; producción exige exactamente uno |
 | Al pulsar *Insertar*: `fix_jwks_alg(): Argument #1 ($jwks) must be of type array, null given` | Moodle no consiguió descargar **nuestro** keyset: campo *Keyset URL* vacío, con una URL antigua, o su servidor sin salida a internet | Ver *Cuando Moodle no puede descargar el keyset* |
 | `Firma o claims del id_token inválidos` | Reloj desajustado, o `client_id` mal | Comprobar NTP y el `client_id` |
 | El profesor ve el player en vez del catálogo | Moodle no envía el rol de Instructor | Revisar *Compartir el nombre* y el rol en el curso |

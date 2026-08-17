@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { pool, waitForDatabase, closeDatabase } from './index.js'
+import { migrationPool, waitForDatabase, closeDatabase } from './index.js'
 import logger from '../logger.js'
 
 const migrationsDir = path.resolve(
@@ -9,14 +9,13 @@ const migrationsDir = path.resolve(
   '../../migrations'
 )
 
-// Cualquier proceso (app o worker) puede arrancar primero, así que las
-// migraciones se serializan con un advisory lock: el segundo espera y luego
-// no encuentra nada pendiente.
+// Sólo la app usa el propietario; el lock conserva la idempotencia si dos
+// réplicas o un script manual arrancan a la vez.
 const LOCK_ID = 728_411_903
 
 export async function runMigrations () {
-  await waitForDatabase()
-  const client = await pool.connect()
+  await waitForDatabase({ databasePool: migrationPool })
+  const client = await migrationPool.connect()
   try {
     await client.query('SELECT pg_advisory_lock($1)', [LOCK_ID])
     await client.query(`

@@ -1,5 +1,11 @@
 # Auditoría de seguridad y plan de refuerzo
 
+> [!IMPORTANT]
+> Esta auditoría conserva la evidencia histórica y sus notas intermedias; estados como
+> «diferido», `warn` y sus conteos de pruebas no describen ya la candidata. El cierre
+> vigente, incluidos placements, revocación, cuotas de artefactos y roles runtime, está en
+> [`revision-seguridad-2026-08-10.md`](revision-seguridad-2026-08-10.md).
+
 **Fecha**: 7 de agosto de 2026
 **Motivo**: se reportó que copiando la URL del vídeo se accede al contenido
 fuera de Moodle.
@@ -2038,13 +2044,12 @@ un ítem en cola sigue dando 404 hasta que existe revisión activa.
 - **`read_only` y `cap_drop: [ALL]`.** Chocan con el arranque como root del
   entrypoint, que baja a `node` con `su-exec`. Exige inventariar lo que ffmpeg y
   Ghostscript escriben fuera de los volúmenes, y probarlo en un host Linux.
-- **El worker sigue recibiendo todos los secretos.** Comparte el bloque
-  `*app-env` con la aplicación, así que ve `SESSION_SECRET`, `LTI_ADMIN_TOKEN` y
-  las credenciales de administración que no necesita. Recortarlo exige que
-  `config.js` sepa qué rol arranca: hoy valida las credenciales de admin en
-  **todo** proceso de producción, así que quitárselas al worker le impediría
-  arrancar. Es un refactor con riesgo de dejar producción sin arrancar, y por eso
-  no se ha hecho a última hora.
+- **Secretos del worker (actualizado en la revisión posterior).** `SERVICE_ROLE`
+  permite ahora que el worker arranque sin `SESSION_SECRET`, claves de entrega,
+  tokens administrativos ni credenciales de consola. Para no romper `v1.0.5`, los
+  workflows cambian el anchor al entorno mínimo en el mismo commit que promociona
+  una imagen compatible. Sigue necesitando la base de datos y `WATERMARK_SECRET`;
+  faltan un rol de BD mínimo, `read_only`, capacidades mínimas y un sandbox más fuerte.
 - **La promesa forense completa** (recorte de bordes, colusión, audio): el lector
   está arreglado, la marca sigue viviendo sólo en dos esquinas del fotograma.
   Códigos de Tardos y marca en el audio son línea de producto, no un arreglo.
@@ -2071,3 +2076,23 @@ viven en la imagen del worker, que es donde se ejecutan y pasan.
 3. **Comprobar la consola del navegador dentro de Moodle**: `script-src` perdió
    `'unsafe-inline'` y un bloqueo de CSP aparecería ahí.
 4. Dejar `LAUNCH_RESOURCE_SIGNATURE` en `warn` y mirar el log unos días.
+
+### 8.8 Comprobación independiente y estado de despliegue (10 de agosto de 2026)
+
+La revisión posterior encontró que las notas anteriores mezclaban dos afirmaciones
+distintas: «implementado en la rama» y «desplegado». El Compose de producción sigue
+fijado en `v1.0.5`. `main` (`1d1ccbc`) sí contiene la primera integración, pero no los
+commits posteriores de la segunda iteración. Por tanto, las correcciones de §8 no constan
+en la imagen de producción.
+
+También se corrigieron cinco defectos adicionales: secretos web en el worker, Deep
+Linking sin comprobación docente explícita, `target_link_uri` ausente aceptado, arranque
+con configuración que degradaba ante valores erróneos y rangos SSRF IPv6 incompletos.
+El informe vigente, los riesgos aún abiertos y el orden seguro de promoción están en
+[`revision-seguridad-2026-08-10.md`](revision-seguridad-2026-08-10.md).
+
+> **Actualización final de la candidata:** la revisión vigente sustituyó la firma como
+> autoridad por `resource_placement` server-side (`014`), hizo `enforce` obligatorio en
+> producción, ligó cada segmento a un grant revocable, acotó ffmpeg y contabilizó los
+> artefactos publicados (`015`). También separó el bootstrap propietario del proceso web.
+> Ante cualquier contradicción con las notas históricas de §8, manda la revisión vigente.

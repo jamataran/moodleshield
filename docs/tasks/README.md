@@ -23,7 +23,7 @@ El mapa general y las dependencias históricas están en
 
 | # | Tarea | Fase | Estado |
 |---|---|---|---|
-| [T24](backlog/T24-aislamiento-material-entre-profesores.md) | Aislamiento del material entre profesores | 9 · Seguridad | 🟡 **Prioritaria**. La referencia firmada se emite y se verifica en modo **aviso**; falta pasar a `enforce` |
+| [T24](backlog/T24-aislamiento-material-entre-profesores.md) | Aislamiento del material entre profesores | 9 · Seguridad | 🟡 Operacional. Placement cerrado; falta reinsertar actividades anteriores a `014` y probar Moodle |
 | [T11](backlog/T11-player-overlay.md) | Player con overlay del DNI | 5 · Player | 🟡 Manejo de errores arreglado y probado; falta la matriz de navegadores dentro de un Moodle real |
 | [T16](backlog/T16-observabilidad-hardening.md) | Observabilidad y hardening | 8 · Producción | 🟡 Scripts de copia y restauración hechos; falta programarla y probar una restauración |
 | [T22](backlog/T22-fiabilidad-pipeline-aislamiento.md) | Fiabilidad del pipeline | 9 · Fundamentos | 🟡 La fiabilidad está hecha y probada; el aislamiento se escindió a T24 |
@@ -35,15 +35,15 @@ iteraciones de seguridad de agosto de 2026 cerraron T03, T08, T13, T14, T15 y T1
 Lo que queda **no es escribir código**, es cerrar:
 
 ```text
-T24 ──▶ pasar la referencia firmada de «aviso» a «exigir»
+T24 ──▶ reinsertar actividades anteriores a `014` y probar Moodle
 T16 ──▶ programar la copia y probar una restauración
 T11 ──▶ matriz de navegadores dentro de un Moodle real
 T22 ──▶ auditoría formal de la parte de pipeline (ya verificada por pruebas)
 ```
 
-1. **T24** es la prioridad: es lo único que queda del hallazgo abierto más grave
-   (F-05/V-02). El trabajo pendiente es observar el log de avisos hasta comprobar
-   que ninguna actividad viva se quedaría fuera, y entonces cambiar la variable.
+1. **T24** es la prioridad operacional del antiguo hallazgo F-05/V-02. El código
+   está cerrado; el trabajo pendiente es reinsertar lo anterior a `014` y comprobar el recorrido
+   con `enforce` antes de habilitar alumnos.
 2. **T16** es media hora de cron y una restauración de prueba.
 3. **T11** necesita un Moodle real; la ficha trae la checklist paso a paso.
 

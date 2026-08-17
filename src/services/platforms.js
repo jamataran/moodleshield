@@ -198,6 +198,13 @@ export async function setPlatformEnabled (id, enabled, { audit } = {}) {
         'UPDATE lti_oidc_state SET consumed_at=now() WHERE platform_id=$1 AND consumed_at IS NULL',
         [id]
       )
+      await client.query(
+        `UPDATE playback_grant
+            SET revoked_at=COALESCE(revoked_at, now()),
+                revoked_reason=COALESCE(revoked_reason, 'platform_disabled')
+          WHERE platform_id=$1 AND revoked_at IS NULL`,
+        [id]
+      )
     }
     if (audit) {
       await client.query(
@@ -259,21 +266,17 @@ export async function upsertPlatform (input) {
 }
 
 /**
- * Confianza al primer uso del `deployment_id` (V-20): la lista arranca vacía y
- * el primer valor que llega se acepta y queda grabado. El aislamiento real es
- * por `platform_id`, así que el impacto es acotado, pero se pone tope al
- * crecimiento para que una plataforma comprometida no engorde la fila sin
- * límite. Un Moodle real tiene un puñado de deployments, no decenas.
+ * Confianza al primer uso sólo en desarrollo/test. Producción exige registrar
+ * previamente exactamente un deployment: `platform_id` es la frontera tenant
+ * de todos los materiales y no puede representar varios deployments.
  */
-const MAX_DEPLOYMENT_IDS = 64
-
 export async function rememberDeploymentId (platformId, deploymentId) {
   if (!deploymentId) return
   await query(
     `UPDATE lti_platform
         SET deployment_ids = array_append(deployment_ids, $2), updated_at = now()
       WHERE id = $1 AND enabled = true AND NOT ($2 = ANY (deployment_ids))
-        AND cardinality(deployment_ids) < $3`,
-    [platformId, deploymentId, MAX_DEPLOYMENT_IDS]
+        AND cardinality(deployment_ids) = 0`,
+    [platformId, deploymentId]
   )
 }

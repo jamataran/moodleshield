@@ -138,7 +138,7 @@ Salida esperada: dos patrones distintos, del estilo `AABBBAAAAA` y `BBABABBAAB`.
 
 ```bash
 npm run lint              # ESLint
-npm test                  # 164 unitarias, sin base de datos (8 se saltan, ver abajo)
+npm test                  # 306 unitarias, sin base de datos (9 se saltan, ver abajo)
 npm run test:integration  # contra Postgres real
 npm run test:coverage     # cobertura nativa de node:test
 ```
@@ -168,10 +168,11 @@ npm run test:integration
 npm run test:integration:local
 ```
 
-### Las 8 pruebas que se saltan solas
+### Las 9 pruebas que se saltan solas
 
-Son las de la cadena de PDF. Necesitan `qpdf`, `pdfinfo` y `ghostscript`, que viven en la
-imagen del worker y no en tu Mac ni en el runner de CI. Para ejecutarlas de verdad:
+Ocho son de la cadena de PDF y una del lector forense con vídeo real. Necesitan `qpdf`,
+`pdfinfo`, `ghostscript` o `ffmpeg`, que viven en la imagen del worker y no necesariamente
+en tu Mac. Para ejecutar las de PDF de verdad:
 
 ```bash
 docker run --rm -v "$PWD":/src:ro -w /work node:22-alpine sh -c '
@@ -264,9 +265,10 @@ asumir que se puede borrar o machacar— y en [`decisiones.md`](decisiones.md):
   viajan **sólo** en `Authorization: Bearer` ([ADR-003](decisiones.md) + T23). Lo único
   que puede ir en una URL es el ticket `?pt=` del HLS nativo de Safari/iOS (90 s, un
   vídeo, una revisión) y la firma de segmento que valida nginx.
-- **La referencia al material va firmada** (`custom.resourcesig`, T24): es lo que impide
-  que un profesor abra material ajeno escribiendo su UUID a mano. Se firma con
-  `SESSION_SECRET`, que por eso también es permanente.
+- **La autorización LTI es un placement server-side** (`custom.placementid`, T24), ligado
+  a plataforma, deployment, curso y `resource_link.id`. `custom.resourcesig` conserva la
+  integridad de la referencia, pero no autoriza por sí solo: copiar todos los `custom`
+  falla.
 
 ---
 
@@ -294,7 +296,8 @@ Escape no lo toca. Lo vigila `test/ui-iframe.test.js`.
 que asuma lo contrario está mal.
 
 **`frame-ancestors` se calcula de las plataformas registradas.** Sin ninguna dada de alta
-queda en `'self' https:`, que es permisivo: en producción, registra las plataformas.
+queda en `'self'`: Moodle no podrá embeber la herramienta. En producción, registra las
+plataformas antes de probar el launch.
 
 **El keyset lo consulta el PHP de Moodle, no el navegador.** Ver Modo 3.
 
@@ -326,9 +329,9 @@ Utilidades:
 | `scripts/generate-secrets.sh` | Rellena los secretos de un `.env` local |
 | `scripts/generate-env.sh` | Genera el bloque de variables para Portainer (**no** para local) |
 
-> ⚠️ Hoy se registran queries que contienen tokens en el log de depuración. Es un fallo
-> conocido (parte de T16): **no pegues logs de `LOG_LEVEL=debug` en una issue pública** sin
-> revisarlos antes.
+> ⚠️ La rama de seguridad redacta tokens y queries sensibles, pero los logs siguen
+> conteniendo datos operativos y personales. **No pegues logs en una issue pública** sin
+> revisarlos; `v1.0.5` además es anterior a esa redacción.
 
 ---
 
@@ -342,6 +345,7 @@ Las que más se tocan durante el desarrollo:
 
 | Variable | Por defecto | Qué hace |
 |---|---|---|
+| `SERVICE_ROLE` | `app` | `app` o `worker`; las imágenes y Compose lo fijan para validar sólo los secretos necesarios |
 | `PUBLIC_URL` | `http://localhost:3000` | URL tal y como la ve Moodle |
 | `MARK_ALPHA` | `0.06` | Opacidad de la marca A/B. Súbela a `0.5` para verla |
 | `MEDIA_DELIVERY` | `app` | `signed` en producción: los segmentos los sirve nginx |
@@ -349,7 +353,7 @@ Las que más se tocan durante el desarrollo:
 | `TRANSCODE_CONCURRENCY` | `1` | Debe permanecer en `1`: el arranque rechaza otro valor |
 | `CONTENT_API_TOKEN` | — | Activa la API de migración; vacío la mantiene en 404 |
 | `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
-| `LOG_LEVEL` | `info` | `debug` para ver las queries (ojo con los tokens) |
+| `LOG_LEVEL` | `info` | `debug` añade detalle operativo; las rutas sensibles se redactan en la rama endurecida |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas |
 | `TRUST_CLOUDFLARE_CLIENT_IP` | `auto` | De dónde sale la IP del alumno tras un CDN ([ADR-019](decisiones.md)) |
 | `PUBLIC_URL_ALIASES` | — | Otros nombres de la misma instancia ([ADR-020](decisiones.md)). En local ya trae `localhost`, así que con el túnel encendido funcionan los dos |
@@ -372,6 +376,33 @@ npm run lint && npm test
 git commit -m "feat: describe el cambio"
 git push -u origin feature/mi-cambio
 ```
+
+### Worktrees: siempre dentro de `.claude/worktrees/`
+
+Un worktree suelto en el directorio padre acaba invisible y con su propio `.data/` de
+varios cientos de megas. Por eso todos viven **dentro del proyecto**, en
+`.claude/worktrees/`, que ya está en `.gitignore` y por tanto no ensucia el `git status`
+del árbol principal.
+
+Como Git no tiene una opción nativa para fijar ese destino, se configura una vez por clon
+con tres alias locales:
+
+```bash
+git config --local alias.wt '!f() { [ -z "$1" ] && { echo "uso: git wt <nombre> [<rama>|-b <rama-nueva>]"; exit 1; }; n="$1"; shift; git worktree add "$(git rev-parse --show-toplevel)/.claude/worktrees/$n" "$@"; }; f'
+git config --local alias.wtl 'worktree list'
+git config --local alias.wtrm '!f() { git worktree remove "$(git rev-parse --show-toplevel)/.claude/worktrees/$1" "${@:2}"; }; f'
+```
+
+Uso:
+
+```bash
+git wt mi-tarea -b feature/mi-tarea   # crea .claude/worktrees/mi-tarea
+git wtl                               # lista todos
+git wtrm mi-tarea                     # lo retira
+```
+
+Un worktree que ya esté fuera se recoloca sin perder nada —incluidos los ficheros
+ignorados— con `git worktree move <origen> .claude/worktrees/<nombre>`.
 
 El PR ejecuta [`ci.yml`](../.github/workflows/ci.yml): lint, unitarias, pruebas de PDF con
 las herramientas reales, migraciones idempotentes contra Postgres, validación de los tres

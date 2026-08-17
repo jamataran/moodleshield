@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto'
 import config, { assertConfigValid } from './config.js'
 import logger from './logger.js'
 import { closeDatabase, one } from './db/index.js'
-import { runMigrations } from './db/migrate.js'
 import {
   ensureDirs,
   prepareStaging,
@@ -19,10 +18,10 @@ import { migrateLegacyMediaLayout } from './media/layout-migration.js'
 import { purgeRetiredRevisions, reportArchivedMaterials } from './services/revisions.js'
 import { LostLeaseError, videoQueue, pdfQueue } from './queue/postgres.js'
 import { claimNextJob } from './queue/scheduler.js'
+import { assertVideoProcessingCapacity } from './services/processing-limits.js'
 
 assertConfigValid()
 
-await runMigrations()
 await ensureDirs()
 // El traslado del árbol antiguo al árbol por revisión (T21) va aquí y no en un
 // script suelto: un despliegue que se olvidara de ejecutarlo dejaría el
@@ -60,6 +59,7 @@ const PIPELINES = {
     kind: 'video',
     async process (job, { outputDir, signal }) {
       return transcodeVideo(job.material_id, job.source_path, {
+        assertCapacity: assertVideoProcessingCapacity,
         outputDir,
         revisionId: job.revision_id,
         signal

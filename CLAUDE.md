@@ -46,10 +46,11 @@ sueltos. Antes de tocar nada:
 | Documento | Qué resuelve |
 |---|---|
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
+| [`docs/revision-seguridad-2026-08-10.md`](docs/revision-seguridad-2026-08-10.md) | Estado de seguridad vigente: rama frente a producción, riesgos y gates de despliegue |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
 | [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…022: por qué cada decisión y cómo revertirla |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
-| [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría detallada de la última entrega |
+| [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría histórica de la entrega del 6 de agosto; no usar como estado vigente |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Mapa de fases y dependencias |
 | [`docs/tasks/README.md`](docs/tasks/README.md) | Estado real de cada tarea; `done/` sólo con evidencia |
 | [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle (6 pasos) |
@@ -96,7 +97,7 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
   Se firma con `SESSION_SECRET`, que por tanto es **permanente** también por este
   motivo: rotarlo invalidaría la firma de todas las actividades ya insertadas, no
   sólo las sesiones. `LAUNCH_RESOURCE_SIGNATURE` controla si falta firma se avisa
-  (`warn`, por defecto) o se rechaza (`enforce`).
+  (`warn` en desarrollo) o se rechaza (`enforce`, por defecto en producción).
 - **`platform_id` separa instancias Moodle; `owner_sub` separa profesores.** Las
   dos condiciones salen siempre de la sesión LTI, nunca del body ni de la query.
   Un UUID ajeno responde **404**, no 403. `owner_sub` tiene **una** puerta:

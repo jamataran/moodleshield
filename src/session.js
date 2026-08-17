@@ -33,9 +33,11 @@ function safeEqual (a, b) {
   return timingSafeEqual(a, b)
 }
 
-export function issueToken (payload, { secret, ttlSeconds }) {
+export function issueToken (payload, { secret, ttlSeconds, maxExpiresAt = null }) {
   const now = Math.floor(Date.now() / 1000)
-  const body = { ...payload, iat: now, exp: now + ttlSeconds, jti: randomUUID() }
+  const requestedExpiry = now + ttlSeconds
+  const exp = Number.isFinite(maxExpiresAt) ? Math.min(requestedExpiry, maxExpiresAt) : requestedExpiry
+  const body = { ...payload, iat: now, exp, jti: randomUUID() }
   const payloadB64 = b64url(JSON.stringify(body))
   return `${payloadB64}.${b64url(sign(payloadB64, secret))}`
 }
@@ -90,7 +92,8 @@ export function issueSession (context) {
       mode: context.mode ?? 'launch',
       rk: context.resource?.kind ?? null,
       rid: context.resource?.id ?? null,
-      rrv: context.resource?.revisionId ?? null
+      rrv: context.resource?.revisionId ?? null,
+      pl: context.resource?.placementId ?? null
     },
     { secret: config.secrets.session, ttlSeconds: config.session.ttlSeconds }
   )
@@ -113,7 +116,12 @@ export function verifySession (token) {
     canDeepLink: payload.dl === 1,
     mode: payload.mode ?? 'launch',
     resource: payload.rk && payload.rid
-      ? { kind: payload.rk, id: payload.rid, revisionId: payload.rrv ?? null }
+      ? {
+          kind: payload.rk,
+          id: payload.rid,
+          revisionId: payload.rrv ?? null,
+          placementId: payload.pl ?? null
+        }
       : null,
     issuedAt: payload.iat ?? null,
     expiresAt: payload.exp
@@ -125,10 +133,21 @@ export function verifySession (token) {
  * La clave es por revisión, así que el token la lleva: sin ella, una revisión
  * retirada y otra activa compartirían token y devolverían la clave equivocada.
  */
-export function issueKeyToken ({ videoId, revisionId = null, sub, platformId }) {
+export function issueKeyToken ({
+  videoId,
+  revisionId = null,
+  sub,
+  platformId,
+  sessionJti,
+  parentExpiresAt
+}) {
   return issueToken(
-    { typ: 'key', v: videoId, rv: revisionId, sub, pid: platformId },
-    { secret: config.secrets.mediaKey, ttlSeconds: config.media.linkTtlSeconds }
+    { typ: 'key', v: videoId, rv: revisionId, sub, pid: platformId, sj: sessionJti },
+    {
+      secret: config.secrets.mediaKey,
+      ttlSeconds: config.media.linkTtlSeconds,
+      maxExpiresAt: parentExpiresAt
+    }
   )
 }
 
@@ -162,9 +181,14 @@ export function issuePlaybackTicket (ctx) {
       idn: ctx.identity ?? null,
       ctx: ctx.contextId ?? null,
       rl: ctx.resourceLinkId ?? null,
-      sj: ctx.sessionJti ?? null
+      sj: ctx.sessionJti ?? null,
+      se: ctx.parentExpiresAt ?? null
     },
-    { secret: config.secrets.session, ttlSeconds: config.session.playbackTicketTtlSeconds }
+    {
+      secret: config.secrets.session,
+      ttlSeconds: config.session.playbackTicketTtlSeconds,
+      maxExpiresAt: ctx.parentExpiresAt
+    }
   )
 }
 
@@ -184,7 +208,8 @@ export function verifyPlaybackTicket (token, { kind, id }) {
     identity: payload.idn ?? null,
     contextId: payload.ctx ?? null,
     resourceLinkId: payload.rl ?? null,
-    sessionJti: payload.sj ?? null
+    sessionJti: payload.sj ?? null,
+    expiresAt: payload.se ?? payload.exp
   }
 }
 

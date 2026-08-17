@@ -34,7 +34,7 @@ alternativas descartadas están en [`decisiones.md`](decisiones.md).
                     ▼
         ┌───────────────────────┐   ┌──────────────────────┐
         │ PostgreSQL 16         │   │ ${DATA_ROOT}/media   │
-        │ 14 tablas             │   │ segmentos y claves   │
+        │ esquema migrado       │   │ segmentos y claves   │
         └───────────────────────┘   └──────────────────────┘
 ```
 
@@ -100,6 +100,8 @@ Lo importante de este recorrido es lo que **no** aparece: ffmpeg.
 3.  app     → 302 al authorization endpoint (state + nonce guardados en BD)
 4.  Moodle  → POST /lti/launch  (id_token, state)
 5.  app     · valida state, firma, iss, aud, azp, nonce, versión, deployment
+            · valida placement (plataforma + deployment + curso + actividad)
+            · registra un playback_grant revocable
             · emite token de sesión (HMAC, 4 h)
             → HTML del player con el token embebido
               (el visionado NO se registra aquí: ver «Cuándo se registra»)
@@ -113,7 +115,8 @@ Lo importante de este recorrido es lo que **no** aparece: ffmpeg.
             → playlist personalizada  ← sólo texto, microsegundos
 8.  player  → GET /hls/<id>/key?kt=<token>       → 16 bytes
 9.  player  → GET /media/<id>/A/seg_0000.ts?md5=…&expires=…
-    nginx   · valida la firma y sirve con sendfile   ← Node no interviene
+    nginx   · valida la firma y consulta el grant por auth_request
+            · sirve con sendfile si placement/plataforma siguen activos
 10. player  → GET /media/<id>/B/seg_0001.ts?md5=…&expires=…
     …
 ```
@@ -138,7 +141,8 @@ una hora) y una reescritura de texto. El resto es E/S de disco.
    fichero completo nunca entra en el heap; sólo existe en disco al terminar.
 
 2. worker   · SELECT … FOR UPDATE SKIP LOCKED
-            · ffprobe → duración, tamaño, ¿hay audio?
+            · ffprobe con timeout/whitelist → duración, resolución, fps y pistas
+            · reserva cuota/disco para dos variantes con bitrate acotado
             · genera clave AES-128 e IV
             · ffmpeg variante A (marca derecha)   ─┐ GOP fijo, scenecut=0
             · ffmpeg variante B (marca izquierda) ─┘ cortes idénticos
@@ -154,6 +158,11 @@ una hora) y una reescritura de texto. El resto es E/S de disco.
 tool_key                 kid, alg, public_jwk, private_pkcs8, active
 lti_platform             issuer + client_id (único), deployment_ids[], endpoints
 lti_oidc_state           state (PK), nonce, platform_id, expires_at, consumed_at
+deep_link_response_use   jti de respuesta consumido una sola vez
+resource_placement       recurso ligado a plataforma, deployment, curso y actividad
+resource_placement_item  snapshot de una colección al insertarla
+playback_grant           sesión revocable; plataforma, recurso, placement y caducidad
+playback_grant_ip        IP distintas observadas para detectar replay
 
 catalog_folder           carpeta personal por (platform_id, owner_sub); anidable
                          vía parent_id (FK compuesta al mismo propietario);
@@ -358,9 +367,10 @@ Qué protege qué, y contra quién:
 | Capa | Protege de | No protege de |
 |---|---|---|
 | Cifrado AES-128 de los segmentos | Descarga directa del `.ts` | Quien tiene acceso legítimo |
-| Token de clave con caducidad | Compartir un enlace al vídeo | Compartir la clave descargada |
-| URLs de segmento firmadas | Descargar una variante completa y anular la traza | — |
-| Alcance de sesión por recurso | Acceso lateral con un UUID conocido o un token de otra actividad | — |
+| Token de clave ligado al grant padre | Compartir un enlace al vídeo | Compartir la clave ya descargada |
+| URLs de segmento firmadas + `auth_request` | Descargar una variante completa; seguir tras revocación | — |
+| Placement LTI server-side | UUID manual o actividad copiada entre cursos/enlaces | Actividades legacy sin reinsertar |
+| Alcance de sesión por recurso | Reusar un token para otro material | — |
 | Aislamiento por propietario | Que un profesor vea o toque la biblioteca de otro | — |
 | Overlay del DNI | Grabación de pantalla y reenvío | Quien borra el `div` |
 | Marca A/B (forense) | Quien borra el overlay; recompresión; reescalado | Recorte de bordes; colusión |
@@ -418,10 +428,9 @@ antes de subir.
 | Túnel | 128 MB | ~15 MB |
 
 Almacenamiento: aproximadamente **el doble del re-encode** por vídeo (dos
-variantes; el original se borra al terminar). Con CRF 21 a 1080p, el re-encode
-ronda 1–2 GB/hora por variante — frente a un original de cámara a 8 Mbps
-(3,6 GB/h), el resultado suele ocupar *menos* que el original; frente a uno ya
-comprimido, ≈ 2×.
+variantes; el original se borra al terminar). Antes de ffmpeg se reserva una cota basada
+en duración y `VIDEO_MAX_OUTPUT_BITRATE_KBPS`; al terminar se contabilizan los bytes
+reales de segmentos, playlists, clave y póster. La topología soportada usa un worker.
 
 ## Ciclo de vida de las actividades (y el borrado en Moodle)
 
@@ -432,7 +441,8 @@ alumno, aquí no llega ninguna señal. La actividad borrada simplemente deja de
 generar launches.
 
 Esto encaja con el diseño: **el vídeo no pertenece a la actividad**. Un mismo
-vídeo se inserta en N cursos (la actividad sólo guarda `custom.videoId`), así
+vídeo se inserta en N cursos (cada actividad guarda el recurso y un
+`custom.placementid` opaco), así
 que borrar una actividad *no debe* borrar el vídeo. El ciclo de vida es:
 
 ```
@@ -476,13 +486,16 @@ automática con aviso al profesor está en la lista de evolución del plan.
 
 Lo que se puede mover si el sistema se queda corto, por orden de utilidad:
 
-1. **Más workers**: `--scale worker=N`. `SKIP LOCKED` lo soporta sin cambios.
+1. **Un worker más rápido**: la candidata soporta una sola réplica. `SKIP LOCKED`
+   reparte trabajos, pero antes de escalar horizontalmente la reserva de capacidad del
+   artefacto debe convertirse en transaccional.
 2. **Aceleración hardware**: `h264_qsv` (iGPU Intel) o `h264_nvenc` (NVIDIA)
    dividen el tiempo de transcodificación por 10–20.
 3. **CDN delante de los segmentos**: el mismo esquema de URLs firmadas funciona
    con cualquier CDN que soporte firma.
-4. **Réplicas de la aplicación**: no tiene estado (sesiones sin cookies, sin
-   estado en memoria). Sólo hace falta que compartan el volumen de medios.
+4. **Réplicas de la aplicación**: los grants viven en PostgreSQL, pero los rate limits
+   siguen siendo por proceso. Antes de escalar hay que moverlos al borde o a un almacén
+   compartido, además de compartir los volúmenes.
 
 El cuello de botella es siempre la transcodificación, no la reproducción — que
 es exactamente el objetivo del diseño.

@@ -1,5 +1,11 @@
 # T14 · Despliegue con Portainer
 
+> [!NOTE]
+> La sección de cierre conserva decisiones de la iteración original. La revisión de
+> seguridad posterior sí implantó rootfs de sólo lectura, `cap_drop: ALL`, tmpfs
+> inventariados y capabilities mínimas; manda el estado de
+> [`../../revision-seguridad-2026-08-10.md`](../../revision-seguridad-2026-08-10.md).
+
 |  |  |
 |---|---|
 | **Fase** | 8 · Producción |
@@ -21,7 +27,7 @@ concretas en el diseño, todas resueltas en el código:
 
 | Requisito | Cómo se cumple |
 |---|---|
-| Sin migraciones manuales | `runMigrations()` al arrancar app y worker, serializado con `pg_advisory_lock` (`src/db/migrate.js:21`) |
+| Sin migraciones manuales | El entrypoint de app ejecuta un bootstrap efímero con rol propietario, serializado con `pg_advisory_lock`, y elimina esas credenciales antes de iniciar el servidor |
 | Sin generar claves a mano | El par RSA se crea en el primer arranque (`src/server.js:18` → `src/lti/keys.js:33`) |
 | Sin orden de arranque frágil | `depends_on: service_healthy` + espera activa a Postgres (`src/db/index.js:77`) |
 | Sin intervención tras un fallo | `restart: unless-stopped` en los cuatro servicios y retroceso exponencial en la cola (`src/queue/postgres.js:233`) |
@@ -84,16 +90,13 @@ producción y `/docker-apps/moodleshield-test` en test.
 - Una única raíz de datos configurable, preparada por los entrypoints.
 - Endurecimiento de contenedores: `no-new-privileges`, `pids_limit` y red
   interna sin salida a Internet para `db` y `worker`.
+- Revisión posterior: rootfs de sólo lectura, `cap_drop: [ALL]`, tmpfs
+  inventariados y devolución exclusiva de las capabilities del entrypoint.
 
 **No incluye**
 
 - Copias de seguridad automáticas (→ T16).
 - Alta disponibilidad. Un solo nodo; `worker` sí escala horizontalmente.
-- `read_only` y `cap_drop: [ALL]`, que siguen pendientes a propósito: el
-  entrypoint arranca como root para ajustar los mounts y baja a `node` con
-  `su-exec`, así que `cap_drop` exigiría devolver `SETUID`/`SETGID`/`CHOWN`, y
-  `read_only` obligaría a inventariar todo lo que ffmpeg y Ghostscript escriben
-  fuera de los volúmenes.
 
 ## Servicios
 

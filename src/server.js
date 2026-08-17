@@ -1,7 +1,6 @@
 import config, { assertConfigValid } from './config.js'
 import logger from './logger.js'
 import { createApp } from './app.js'
-import { runMigrations } from './db/migrate.js'
 import { closeDatabase } from './db/index.js'
 import { getActiveKey } from './lti/keys.js'
 import { purgeExpiredStates } from './lti/validate.js'
@@ -10,7 +9,6 @@ import { purgeAdminData } from './admin/auth.js'
 
 assertConfigValid()
 
-await runMigrations()
 await ensureDirs()
 
 // Generar el par de claves al arrancar y no en el primer launch: si algo va

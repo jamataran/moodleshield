@@ -1,5 +1,10 @@
 # T22 · Fiabilidad del pipeline y aislamiento multiinstancia
 
+> [!IMPORTANT]
+> Esta ficha conserva el cierre histórico de T22. Desde la revisión final del 10 de
+> agosto, T24 está cerrado en código: `enforce` es el valor de test/producción. Para el
+> estado vigente usa [`../../revision-seguridad-2026-08-10.md`](../../revision-seguridad-2026-08-10.md).
+
 |  |  |
 |---|---|
 | **Fase** | 9 · Fundamentos productivos |
@@ -32,7 +37,7 @@ desplegados. Separarlas permite cerrar T08 con la evidencia que ya existe y
 tratar el aislamiento con el ritmo que exige: migración, firma y ventana de
 gracia antes de romper actividades vivas.
 
-**Estado real del aislamiento hoy.** En esta iteración se implementó la **fase de
+**Estado del aislamiento en aquella iteración.** Se había implementado la **fase de
 aviso** de T24, no el aislamiento completo:
 
 - Cada respuesta de Deep Linking añade una referencia firmada
@@ -43,18 +48,18 @@ aviso** de T24, no el aislamiento completo:
   (`src/lti/routes.js:353-359`) y desde `renderCollectionLaunch` (`:461-467`),
   siempre con el `owner_sub` **de la base de datos**, nunca el del token.
 - El modo lo fija `LAUNCH_RESOURCE_SIGNATURE`, con tres valores —`off`, `warn`,
-  `enforce`— y **`warn` por defecto** (`src/config.js:292` y `:384-385`).
+  `enforce`— y entonces usaba **`warn` por defecto**.
 - En `warn` el launch sin firma válida **se sirve** y deja un aviso estructurado
   con plataforma, material, curso, actividad y quién lanzó.
-- El modo `enforce` está implementado (responde 404, no 403) pero **no está
-  activado en ningún entorno**: las actividades ya desplegadas en cursos no
-  llevan firma y `enforce` las rompería.
+- El modo `enforce` ya estaba implementado (responde 404, no 403), aunque todavía
+  no estaba activado en aquella fotografía histórica.
 - `migrations/011_deep_link_grant.sql` crea la tabla `deep_link_grant`, que
   registra cada emisión para poder medir cuántas actividades legacy quedan antes
   de pasar a `enforce` (`src/services/deep-link-grants.js:12-27`).
 
-Es decir: **el aislamiento no está cerrado**, y el criterio de aceptación
-correspondiente de esta ficha sigue sin marcar. Se cerrará en T24.
+Ese era el estado histórico. En la candidata actual, T24 usa `resource_placement`
+server-side (`014`) y `enforce` es obligatorio en producción. Las actividades anteriores
+a `014` se reinsertan antes de la promoción, aunque ya tuvieran firma.
 
 ## Objetivo
 
@@ -447,7 +452,7 @@ marcha.
 | Los directorios finales aparecen completos o no existen | `publishStaging` (`src/media/storage.js:321-340`) valida el staging entero antes del `rename`, adopta idempotentemente un final ya publicado y aparta a `.quarantine` los restos de un intento roto en vez de sobrescribirlos. Pruebas: `test/publication-atomicity.test.js`, 7 casos, entre ellos «un staging incompleto no llega a publicarse», «una huella que no cuadra invalida la publicación» y «un final completo se adopta de forma idempotente» |
 | Fallar al borrar el original no invalida un vídeo `ready` | `src/worker.js:156-159`: el borrado del fichero de origen va **después** de `completeJob` y su fallo sólo escribe un warning («Material listo, pero no se pudo borrar el original»); el job queda `done` y la revisión activa. El residuo lo recoge después `reconcileStorage`. **No hay prueba dedicada**: verificado por lectura de código |
 | Cancelar durante ffmpeg no deja proceso, upload ni media huérfanos | Cadena completa: `cancel_requested_at` lo devuelve el heartbeat (`src/queue/postgres.js:118`), el worker aborta el `AbortController` (`src/worker.js:117`), `runProcess` mata el **grupo** de procesos con `SIGTERM` y escala a `SIGKILL` pasado `childKillMs` (`src/media/run.js:38-51`), y al quedar el job en `cancelled` se borran origen, staging y los artefactos **de esa revisión** —no los de la activa— (`src/worker.js:190-196`). Pruebas: `queue.integration.js:241` «una cancelación concurrente impide confirmar ready» (`completeJob` rechaza con `CancellationRequestedError`), `:218` «un job pendiente se cancela antes de permitir el borrado» y `test/transcode.test.js:83` «AbortSignal termina un proceso hijo sin esperar a que acabe solo». Lo que **no** se ha probado aquí es una cancelación contra un ffmpeg real a mitad de transcodificación en el stack en marcha |
-| Deep Linking, launch, catálogo y HLS rechazan UUID ajeno | **Sin marcar.** Plataforma: `getVideoForPlatform` / `getDocumentForPlatform` anclan `platform_id`, probado en `queue.integration.js:175` «catálogo y detalle aíslan plataforma y propietario». Recurso: `authorizeResource` (`src/services/authorization.js:41-97`) es el punto único por el que pasan playlist, clave, PDF y metadatos, y una sesión de un vídeo no abre otro. **Profesor en el launch: no.** `enforceResourceReference` (`src/lti/routes.js:289-323`) sólo avisa mientras `LAUNCH_RESOURCE_SIGNATURE` valga `warn`, que es el valor por defecto (`src/config.js:292`). Es T24 |
+| Deep Linking, launch, catálogo y HLS rechazan UUID ajeno | **Estado histórico de T22:** plataforma y sesión estaban aisladas; el profesor en launch se escindió a T24. La candidata actual lo cierra con placement server-side y `enforce` obligatorio |
 | Las comprobaciones corren en CI contra Postgres real | `.github/workflows/ci.yml:52-61` levanta `postgres:16-alpine`, aplica las migraciones dos veces (idempotencia) y ejecuta `npm run test:integration`, donde vive `queue.integration.js`. Vale para los criterios de pipeline; el criterio de aislamiento no tiene todavía prueba que correr, y su cobertura futura es de T24 |
 
 ### Desviaciones respecto a la ficha
@@ -474,8 +479,8 @@ marcha.
    inmutables.
 5. **`LAUNCH_RESOURCE_SIGNATURE` admite tres valores, no dos.** El plan hablaba
    de `warn | enforce`; la implementación añade `off` para poder desactivar la
-   comprobación entera sin tocar código (`src/config.js:384-385`). El valor por
-   defecto es `warn` y **`enforce` no está activado en ningún entorno**.
+   comprobación entera sin tocar código. En aquella iteración el valor por defecto
+   era `warn`; la candidata actual usa `enforce` en test y producción.
 6. **El alcance de sesión no tiene la forma que dibujaba la ficha.** No es
    `{ resource: {kind, id}, mode }` dentro del token: son los campos `mode`,
    `rk`, `rid` y `rrv` (`src/session.js:90-93`, que `verifySession` vuelve a

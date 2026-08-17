@@ -15,6 +15,7 @@ import {
   requestDocumentCancellation,
   updateDocumentMetadata
 } from '../services/documents.js'
+import { requirePlaybackAudit } from '../services/playback-audit.js'
 import { listMaterials, toMaterialDto } from '../services/materials.js'
 import { authorizeResource } from '../services/authorization.js'
 import { getActiveRevision, getCandidateRevision, publicRevision } from '../services/revisions.js'
@@ -30,8 +31,30 @@ import { receiveDocumentUpload } from '../media/upload.js'
 import { parseRangeHeader } from '../media/range.js'
 import { stampPdfForViewer } from '../media/pdf-stamp.js'
 import { displayOwnerName } from '../services/sharing.js'
+import {
+  releaseUploadReservation,
+  reserveUpload,
+  UploadLimitError
+} from '../services/upload-limits.js'
 
 export const documentsRouter = Router()
+
+function declaredUploadBytes (req) {
+  const value = Number(req.get('content-length'))
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new UploadLimitError('La subida directa exige Content-Length; usa la subida por fragmentos', {
+      status: 411,
+      code: 'content_length_required'
+    })
+  }
+  if (value > config.pdf.maxUploadBytes + 1024 * 1024) {
+    throw new UploadLimitError('El cuerpo supera el límite de subida', {
+      status: 413,
+      code: 'upload_too_large'
+    })
+  }
+  return value
+}
 
 function publicDocument (document, { owner = true } = {}) {
   return toMaterialDto({ ...document, kind: 'pdf' }, { owner })
@@ -73,8 +96,17 @@ documentsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
 documentsRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
   const documentId = randomUUID()
   const revisionId = randomUUID()
+  const reservationId = randomUUID()
   let destination = null
   try {
+    await reserveUpload({
+      id: reservationId,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      kind: 'pdf',
+      sizeBytes: declaredUploadBytes(req),
+      expiresAt: new Date(Date.now() + config.media.uploadSessionTtlSeconds * 1000)
+    })
     const upload = await receiveDocumentUpload(req, { revisionId })
     destination = upload.destination
     const { jobId, revision } = await createDocumentAndJob({
@@ -96,16 +128,28 @@ documentsRouter.post('/', requireCatalogInstructor, async (req, res, next) => {
   } catch (err) {
     if (destination) await rm(destination, { force: true }).catch(() => {})
     next(err)
+  } finally {
+    await releaseUploadReservation(reservationId).catch(() => {})
   }
 })
 
 documentsRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res, next) => {
   const documentId = assertDocumentId(req.params.id)
   const revisionId = randomUUID()
+  const reservationId = randomUUID()
   let destination = null
   try {
     const owned = await getDocumentForOwner(documentId, req.session.platformId, req.session.sub)
     if (!owned) return res.status(404).json({ error: 'Documento no encontrado' })
+
+    await reserveUpload({
+      id: reservationId,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      kind: 'pdf',
+      sizeBytes: declaredUploadBytes(req),
+      expiresAt: new Date(Date.now() + config.media.uploadSessionTtlSeconds * 1000)
+    })
 
     const upload = await receiveDocumentUpload(req, { revisionId })
     destination = upload.destination
@@ -126,6 +170,8 @@ documentsRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res
   } catch (err) {
     if (destination) await rm(destination, { force: true }).catch(() => {})
     next(err)
+  } finally {
+    await releaseUploadReservation(reservationId).catch(() => {})
   }
 })
 
@@ -292,7 +338,7 @@ async function deliverDocument (req, res, next, { headOnly = false } = {}) {
     if (!info) return res.status(404).json({ error: 'Documento no encontrado' })
 
     if (!scope.viaOwner) {
-      await recordDocumentView({
+      await requirePlaybackAudit(() => recordDocumentView({
         documentId: id,
         revisionId: revision.id,
         platformId: req.session.platformId,
@@ -307,7 +353,7 @@ async function deliverDocument (req, res, next, { headOnly = false } = {}) {
         identity: req.session.identity,
         ip: req.ip,
         userAgent: req.get('user-agent')
-      }).catch((err) => req.log?.warn({ err, documentId: id }, 'No se pudo registrar la apertura'))
+      }))
     }
 
     res.set({
@@ -381,7 +427,7 @@ documentsRouter.get('/:id/download', requireSession, async (req, res, next) => {
     // Mismo registro que la lectura: desduplicado por el jti de la sesión, así
     // que ver y descargar en la misma sesión cuentan como un único acceso.
     if (!scope.viaOwner) {
-      await recordDocumentView({
+      await requirePlaybackAudit(() => recordDocumentView({
         documentId: id,
         revisionId: revision.id,
         platformId: req.session.platformId,
@@ -396,7 +442,7 @@ documentsRouter.get('/:id/download', requireSession, async (req, res, next) => {
         identity: req.session.identity,
         ip: req.ip,
         userAgent: req.get('user-agent')
-      }).catch((err) => req.log?.warn({ err, documentId: id }, 'No se pudo registrar la descarga'))
+      }))
     }
 
     // El fichero se lee dentro de la compuerta de sellado: mientras se espera

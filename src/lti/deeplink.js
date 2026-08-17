@@ -64,6 +64,8 @@ export function contentItemFor (material, origin = config.publicUrl) {
     }
   }
 
+  if (material.placementId) item.custom.placementid = material.placementId
+
   if (material.kind === 'video') {
     // `custom.videoId` se sigue enviando para que una herramienta con la
     // versión anterior desplegada pueda abrir actividades creadas ahora.

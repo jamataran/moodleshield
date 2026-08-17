@@ -62,9 +62,14 @@ docker compose --env-file .env --env-file .env.local up -d --build
 docker compose --env-file .env --env-file .env.local restart proxy
 ```
 
-Sin túnel ya puedes probar todo lo que no exige HTTPS: subir un vídeo (con
-`LTI_ADMIN_TOKEN=local-admin` puedes registrar plataformas por API), ver la
-cola transcodificar, y pedir playlists con `curl`.
+Sin túnel ya puedes probar todo lo que no exige HTTPS: subir un vídeo (con el
+`LTI_ADMIN_TOKEN` de desarrollo —`local-inseguro-ltiadmin-00000000000000000000`,
+definido en `compose.yml`— puedes registrar plataformas por API), ver la cola
+transcodificar, y pedir playlists con `curl`.
+
+Ese token, como el resto de secretos de desarrollo, tiene **al menos 32
+caracteres**: la validación de V-06 rechaza cualquiera más corto y la app no
+arranca, tampoco en local.
 
 ## Conectar un Moodle real (necesita HTTPS)
 
