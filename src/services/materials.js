@@ -1,7 +1,7 @@
 import { many, one } from '../db/index.js'
 import config from '../config.js'
 import { isUuid } from '../media/storage.js'
-import { visibleClause } from './sharing.js'
+import { placedInContextSql, visibleClause } from './sharing.js'
 
 /**
  * Catálogo unificado de vídeos y PDFs.
@@ -96,6 +96,7 @@ function folderCondition (folderId, params, alias) {
 export async function listMaterials ({
   platformId,
   ownerSub,
+  contextId = null,
   folderId,
   kind,
   q,
@@ -103,12 +104,21 @@ export async function listMaterials ({
   limit,
   onlyReady = false,
   includeArchived = false,
-  archivedOnly = false
+  archivedOnly = false,
+  scope = null
 } = {}) {
   if (!platformId || !ownerSub) return { materials: [], nextCursor: null }
 
+  // «Material de este curso»: lo desplegado en el aula desde la que entra este
+  // profesor, sea de quien sea. Va PLANO a propósito —se ignora `folderId`—
+  // porque ese material vive en las carpetas de su autor y esas carpetas no se
+  // enseñan: compartir el material de un aula no es abrir la biblioteca ajena.
+  const courseScope = scope === 'course'
+  if (courseScope && !contextId) return { materials: [], nextCursor: null }
+
   const size = clampLimit(limit)
-  const params = [platformId, ownerSub]
+  // $3 es el curso del launch: abre la puerta al material desplegado en él.
+  const params = [platformId, ownerSub, contextId]
   const search = likePattern(q)
   const page = decodeCursor(cursor)
 
@@ -136,8 +146,11 @@ export async function listMaterials ({
            to_char(${alias}.created_at AT TIME ZONE 'UTC',
              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at
       FROM ${table} ${alias}
-     WHERE ${alias}.platform_id = $1 AND ${visibleClause(alias)}
-       ${folderCondition(folderId, params, alias)}
+     WHERE ${alias}.platform_id = $1
+       AND ${visibleClause(alias, { context: '$3', kind: kindLiteral })}
+       ${courseScope
+         ? ` AND ${placedInContextSql(alias, kindLiteral, { context: '$3' })}`
+         : folderCondition(folderId, params, alias)}
        ${searchClause}${cursorClause}${readyClause}${archivedClause}`
 
   const branches = []

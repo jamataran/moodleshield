@@ -2,7 +2,7 @@ import { many, one, transaction } from '../db/index.js'
 import config from '../config.js'
 import { assertFolderInTransaction, normalizeName } from './folders.js'
 import { likePattern } from './materials.js'
-import { visibleClause } from './sharing.js'
+import { placedInContextSql, visibleClause } from './sharing.js'
 import { isUuid } from '../media/storage.js'
 
 /**
@@ -80,7 +80,9 @@ export function normalizeItems (raw) {
  * bloquea inserciones nuevas sin romper las existentes — si no, re-guardar una
  * colección cuyo ítem falló después de añadirse tumbaría todo el PATCH.
  */
-async function assertItemsUsable (client, items, { platformId, ownerSub, alreadyPresent = new Set() }) {
+async function assertItemsUsable (
+  client, items, { platformId, ownerSub, contextId = null, alreadyPresent = new Set() }
+) {
   const byKind = { video: [], pdf: [] }
   for (const item of items) byKind[item.kind].push(item.id)
 
@@ -91,8 +93,9 @@ async function assertItemsUsable (client, items, { platformId, ownerSub, already
     const table = kind === 'pdf' ? 'pdf_document' : 'video'
     const { rows } = await client.query(
       `SELECT m.id, m.archived_at, m.status, m.active_revision_id FROM ${table} m
-        WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}`,
-      [platformId, ownerSub, ids]
+        WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1
+          AND ${visibleClause('m', { context: '$4', kind })}`,
+      [platformId, ownerSub, ids, contextId]
     )
     for (const row of rows) {
       const key = `${kind}:${row.id}`
@@ -197,13 +200,20 @@ function collectionPageSize (raw) {
 async function queryCollectionRows ({
   platformId,
   ownerSub,
+  contextId = null,
   folderId,
   q,
   archived = false,
-  cursor
+  cursor,
+  scope = null
 }, { rowLimit = null } = {}) {
   if (!platformId || !ownerSub) return []
-  const params = [platformId, ownerSub]
+  // «Colecciones de este curso»: las desplegadas en el aula desde la que entra
+  // este profesor, sean de quien sean. Plano, sin carpetas: ver `listMaterials`.
+  const courseScope = scope === 'course'
+  if (courseScope && !contextId) return []
+  // $3 es el curso del launch: ver `placedInContextSql` en services/sharing.js.
+  const params = [platformId, ownerSub, contextId]
   let clauses = ''
   if (folderId !== undefined) {
     if (folderId === null || folderId === 'root' || folderId === '') {
@@ -224,6 +234,9 @@ async function queryCollectionRows ({
     clauses += ` AND c.title ILIKE $${params.length} ESCAPE '\\'`
   }
   clauses += archived ? ' AND c.archived_at IS NOT NULL' : ' AND c.archived_at IS NULL'
+  if (courseScope) {
+    clauses += ` AND ${placedInContextSql('c', 'collection', { context: '$3' })}`
+  }
 
   const page = decodeCollectionCursor(cursor)
   if (page) {
@@ -254,7 +267,9 @@ async function queryCollectionRows ({
           WHERE i.collection_id = c.id
        ) counts
       WHERE c.platform_id = $1
-        AND ${visibleClause('c', { publicColumn: 'is_public' })} ${clauses}
+        AND ${visibleClause('c', {
+            context: '$3', kind: 'collection', publicColumn: 'is_public'
+          })} ${clauses}
       ORDER BY c.created_at DESC, c.id DESC
       ${limitClause}`,
     params
@@ -299,13 +314,13 @@ export function getCollectionForPlatform (id, platformId) {
 }
 
 export function createCollection ({
-  platformId, ownerSub, ownerName, title, description, folderId, items
+  platformId, ownerSub, ownerName, contextId = null, title, description, folderId, items
 }) {
   const clean = assertTitle(title)
   const normalized = normalizeItems(items)
   return transaction(async (client) => {
     const folder = await assertFolderInTransaction(client, { folderId, platformId, ownerSub })
-    await assertItemsUsable(client, normalized, { platformId, ownerSub })
+    await assertItemsUsable(client, normalized, { platformId, ownerSub, contextId })
     const { rows } = await client.query(
       `INSERT INTO content_collection
          (title, description, platform_id, owner_sub, owner_name, folder_id)
@@ -329,16 +344,19 @@ export function createCollection ({
  * ser teórica.
  */
 export function updateCollection ({
-  id, platformId, ownerSub, title, description, folderId, items, expectedUpdatedAt
+  id, platformId, ownerSub, contextId = null,
+  title, description, folderId, items, expectedUpdatedAt
 }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `SELECT c.*, (c.owner_sub IS DISTINCT FROM $3) AS shared
          FROM content_collection c
         WHERE c.id = $1 AND c.platform_id = $2
-          AND ${visibleClause('c', { platform: '$2', owner: '$3', publicColumn: 'is_public' })}
+          AND ${visibleClause('c', {
+            platform: '$2', owner: '$3', context: '$4', kind: 'collection', publicColumn: 'is_public'
+          })}
         FOR UPDATE`,
-      [id, platformId, ownerSub]
+      [id, platformId, ownerSub, contextId]
     )
     if (rows.length === 0) return { status: 'not_found' }
     const current = rows[0]
@@ -383,7 +401,7 @@ export function updateCollection ({
       )
       const alreadyPresent = new Set(present.rows.map((row) =>
         row.video_id ? `video:${row.video_id}` : `pdf:${row.document_id}`))
-      await assertItemsUsable(client, normalized, { platformId, ownerSub, alreadyPresent })
+      await assertItemsUsable(client, normalized, { platformId, ownerSub, contextId, alreadyPresent })
       await replaceItems(client, id, normalized)
     }
 
@@ -403,14 +421,16 @@ export function updateCollection ({
  * propia y adaptarla sin tocar la del otro. La copia nace del profesor que
  * duplica y sin carpeta: la del original es de su autor y no la puede ocupar.
  */
-export function duplicateCollection ({ id, platformId, ownerSub, ownerName }) {
+export function duplicateCollection ({ id, platformId, ownerSub, ownerName, contextId = null }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `SELECT c.*, (c.owner_sub IS DISTINCT FROM $3) AS shared
          FROM content_collection c
         WHERE c.id = $1 AND c.platform_id = $2
-          AND ${visibleClause('c', { platform: '$2', owner: '$3', publicColumn: 'is_public' })}`,
-      [id, platformId, ownerSub]
+          AND ${visibleClause('c', {
+            platform: '$2', owner: '$3', context: '$4', kind: 'collection', publicColumn: 'is_public'
+          })}`,
+      [id, platformId, ownerSub, contextId]
     )
     if (rows.length === 0) return { status: 'not_found' }
     const source = rows[0]

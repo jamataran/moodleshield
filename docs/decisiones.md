@@ -686,3 +686,65 @@ la sesión ni en ningún endpoint. El helper que limpia `returnValue` antes de
 `showModal()` se extrae a `src/ui/assets/dialog.js` para que el visor no arrastre
 el catálogo del profesor. Revertirlo es restaurar `.legal-warning` como tercera
 fila de `body.viewer`; el diálogo puede quedarse donde está.
+
+## ADR-023 · El material desplegado en un curso lo ven los profesores de ese curso
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Amplía a ADR-018 · Acota a T24
+
+**Contexto.** En un aula con dos profesores, uno subía el material y lo insertaba
+en la actividad; el otro abría la biblioteca y **no veía nada**. `owner_sub` los
+separa y nadie había marcado la carpeta como pública, así que
+`services/sharing.js` devolvía cero filas. Los alumnos sí lo veían, porque su
+acceso va por el `resource_link` ya ligado, y eso hacía el fallo más
+desconcertante: «funciona para todos menos para mí, que soy el profesor».
+
+Marcar la carpeta como pública a mano existe (ADR-018), pero exige acordarse, y
+comparte con **todo** el claustro de la instancia algo cuyo ámbito real era un
+aula.
+
+**Decisión.** Una tercera vía de visibilidad, además de propio y compartido: el
+material **desplegado en el curso desde el que entra** ese profesor. La condición
+no sale del UUID sino de una fila de `resource_placement` no revocada que ligue
+ese material a ese `platform_id` + `context_id`. Vive en el mismo sitio único que
+las otras dos, `placedInContextSql()` en `services/sharing.js`, y se activa
+pasando el `contextId` de la sesión a las consultas del catálogo.
+
+Una colección desplegada arrastra sus elementos a través del snapshot
+`resource_placement_item`, igual que para los alumnos.
+
+Los permisos son los de ADR-018 sin cambios: ver, abrir, insertar en su curso,
+editar título y descripción, componer y reordenar. Archivar, borrar, purgar,
+subir una versión nueva y mover de carpeta siguen siendo del autor.
+
+En la interfaz es una vista propia, «Material de este curso», **plana**: ese
+material vive en las carpetas de su autor y esas carpetas no se enseñan.
+Compartir el material de un aula no es abrir la biblioteca ajena.
+
+**Razones.** El acto de insertar material en un curso ya es, por parte del autor,
+una decisión de ponerlo a disposición de ese curso. Extender esa decisión a los
+demás profesores del mismo curso no inventa un permiso nuevo: hace explícito el
+que ya se tomó. Y lo hace con el alcance correcto —el aula— en vez del alcance
+disponible —la instancia entera—.
+
+Derivarlo de `resource_placement` en vez de una bandera tiene tres consecuencias
+que se buscaron: no muta nada del autor, así que no hay nada que deshacer;
+revocar el placement cierra también esta puerta; y **no reabre lo que cerró
+T24**, porque teclear un UUID ajeno sigue devolviendo 404 — sin una fila de
+placement para el curso del que vienes, no hay nada que encaje.
+
+**Alternativas descartadas.**
+
+- *Marcar `is_public` automáticamente al insertar.* Es lo primero que se pensó.
+  Publica a todo el claustro por abrir una actividad de un curso, y pisa una
+  bandera que ADR-018 reserva al autor.
+- *Biblioteca común de la instancia.* Más simple, pero convierte `owner_sub` en
+  mera autoría y contradice T24 de frente. Si algún día se quiere, es un cambio
+  consciente, no el efecto lateral de arreglar esto.
+- *Recordar todos los cursos donde alguien ha dado clase.* Exigiría una tabla de
+  pertenencia alimentada por los launches y ampliaría el alcance con el tiempo,
+  sin que nadie lo decida.
+
+**Cómo revertirlo.** Dejar de pasar `contextId` desde las rutas: sin `context` la
+cláusula no añade nada y el comportamiento vuelve exactamente al anterior. La
+vista «Material de este curso» se queda sin filas y se puede ocultar quitando su
+botón. No hay migración que deshacer: no se añadió ni una columna.

@@ -216,6 +216,9 @@ ltiRouter.post('/launch', async (req, res, next) => {
             sessionToken,
             deepLinkToken: dlToken,
             user: { name: context.name, isInstructor: context.isInstructor },
+            // Habilita «Material de este curso»: sin curso en el launch no hay
+            // aula de la que hablar y la vista no se ofrece.
+            hasCourse: Boolean(context.contextId),
             acceptMultiple: Boolean(context.deepLinkingSettings?.accept_multiple)
           }
         })
@@ -233,6 +236,7 @@ ltiRouter.post('/launch', async (req, res, next) => {
             bootstrap: {
               mode: 'manage',
               sessionToken,
+              hasCourse: Boolean(context.contextId),
               user: { name: context.name, isInstructor: true }
             }
           })
@@ -644,7 +648,9 @@ ltiRouter.post('/deeplink/response', async (req, res, next) => {
     const platform = await one('SELECT * FROM lti_platform WHERE id = $1 AND enabled=true', [payload.pid])
     if (!platform) throw new LtiError('Plataforma desconocida', { status: 404 })
 
-    const scope = { ids, platformId: payload.pid, ownerSub: payload.sub }
+    // `ctx` es el curso donde se está insertando: deja seleccionar también el
+    // material que otro profesor ya desplegó en esa misma aula.
+    const scope = { ids, platformId: payload.pid, ownerSub: payload.sub, contextId: payload.ctx }
     let materials
 
     if (kind === 'collection') {
@@ -711,12 +717,12 @@ export function insertableCollectionItems (items) {
  * enseñar ni preparar produciría una actividad que falla al abrirse, y el
  * profesor se enteraría por un alumno.
  */
-async function resolveCollectionsForDeepLink ({ ids, platformId, ownerSub }) {
+async function resolveCollectionsForDeepLink ({ ids, platformId, ownerSub, contextId = null }) {
   const out = []
   for (const id of ids) {
     // Propia o compartida por otro profesor de la misma instancia: quien la ve
     // en su biblioteca puede insertarla en su curso.
-    const collection = await getVisibleCollection({ id, platformId, ownerSub })
+    const collection = await getVisibleCollection({ id, platformId, ownerSub, contextId })
     if (!collection || collection.archived_at) continue
     const items = await loadItems(id)
     if (items.length === 0) {

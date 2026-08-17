@@ -31,6 +31,10 @@ materialsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
     const page = await listMaterials({
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
+      // `?scope=course` lista, en plano, el material desplegado en este curso
+      // aunque sea de otro profesor. Es lo que ve un coprofesor del aula.
+      scope: req.query.scope === 'course' ? 'course' : null,
       folderId: req.query.folderId,
       kind: req.query.kind === 'video' || req.query.kind === 'pdf' ? req.query.kind : undefined,
       q: req.query.q,

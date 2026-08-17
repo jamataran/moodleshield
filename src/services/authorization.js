@@ -53,7 +53,13 @@ export async function authorizeResource (session, kind, materialId) {
     const propio = material.owner_sub === session.sub
     if (!propio) {
       const visible = await getVisibleMaterial({
-        kind, id: materialId, platformId: session.platformId, ownerSub: session.sub
+        kind,
+        id: materialId,
+        platformId: session.platformId,
+        ownerSub: session.sub,
+        // Tercera vía además de propio y compartido: desplegado en el curso
+        // desde el que entra este profesor (services/sharing.js).
+        contextId: session.contextId
       })
       if (!visible) return DENIED
     }

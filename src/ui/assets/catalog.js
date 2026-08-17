@@ -401,6 +401,8 @@ function renderCrumbs () {
     parts = [{ name: 'Archivados' }]
   } else if (state.view === 'all') {
     parts = [{ name: 'Todo el contenido' }]
+  } else if (state.view === 'course') {
+    parts = [{ name: 'Material de este curso' }]
   } else if (state.folderId === null) {
     parts = [{ id: 'all', name: 'Todo el contenido' }, { name: 'Sin carpeta' }]
   } else {
@@ -1730,6 +1732,11 @@ function render () {
   el('all-content').classList.toggle('current', state.view === 'all')
   el('root-content').classList.toggle('current', state.view === 'browse' && state.folderId === null)
   el('archived-toggle').classList.toggle('current', state.view === 'archived')
+  const courseToggle = el('course-toggle')
+  if (courseToggle) {
+    courseToggle.hidden = !boot.hasCourse
+    courseToggle.classList.toggle('current', state.view === 'course')
+  }
 
   for (const tab of document.querySelectorAll('[data-content-filter]')) {
     const selected = tab.dataset.contentFilter === state.contentFilter
@@ -1740,14 +1747,14 @@ function render () {
 
   el('collections-heading').textContent = state.view === 'archived'
     ? 'Colecciones archivadas'
-    : 'Colecciones'
+    : state.view === 'course' ? 'Colecciones usadas en este curso' : 'Colecciones'
   const showCollections = state.contentFilter !== 'materials'
   el('section-collections').hidden = !showCollections || state.collections.length === 0
   el('collection-grid').replaceChildren(...state.collections.map(collectionCard))
 
   el('materials-heading').textContent = state.view === 'archived'
     ? 'Materiales archivados'
-    : 'Materiales'
+    : state.view === 'course' ? 'Materiales usados en este curso' : 'Materiales'
   const showMaterials = state.contentFilter !== 'collections'
   el('section-materials').hidden = !showMaterials || state.materials.length === 0
   el('material-grid').replaceChildren(...state.materials.map(materialCard))
@@ -1767,6 +1774,10 @@ function render () {
     } else if (state.view === 'archived') {
       title = 'No hay contenido archivado'
       description = 'Lo que archives aparecerá aquí y podrás restaurarlo.'
+    } else if (state.view === 'course') {
+      title = 'Este curso todavía no usa ningún material'
+      description = 'Aquí aparece lo que cualquier profesor haya insertado en este ' +
+        'curso, también si es de otro. Inserta material con «Seleccionar contenido».'
     } else if (state.folderId !== null) {
       title = 'Esta ubicación está vacía'
       description = 'Sube un material aquí o mueve contenido desde otra carpeta.'
@@ -1781,7 +1792,7 @@ function render () {
     }
     emptyTitleEl.textContent = title
     emptyDescriptionEl.textContent = description
-    el('empty-upload').hidden = state.view === 'archived' || state.view === 'search'
+    el('empty-upload').hidden = ['archived', 'search', 'course'].includes(state.view)
   }
 
   renderCrumbs()
@@ -1857,6 +1868,11 @@ async function load ({ appendMaterials = false, appendCollections = false, refre
   } else if (state.view === 'browse') {
     params.set('folderId', state.folderId ?? 'root')
     collectionParams.set('folderId', state.folderId ?? 'root')
+  } else if (state.view === 'course') {
+    // Plano y sin carpeta: este material vive en la biblioteca de su autor y
+    // esas carpetas no se enseñan (services/materials.js).
+    params.set('scope', 'course')
+    collectionParams.set('scope', 'course')
   }
   if (appendMaterials && state.nextCursor) params.set('cursor', state.nextCursor)
   if (appendCollections && state.nextCollectionCursor) {
@@ -1979,6 +1995,11 @@ searchEl.addEventListener('input', () => {
 el('archived-toggle').addEventListener('click', () => {
   if (state.view === 'archived') return goBack()
   navigate({ view: 'archived' })
+})
+
+el('course-toggle')?.addEventListener('click', () => {
+  if (state.view === 'course') return goBack()
+  navigate({ view: 'course' })
 })
 
 el('all-content').addEventListener('click', openAll)

@@ -80,6 +80,7 @@ documentsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
     const page = await listMaterials({
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
       kind: 'pdf',
       folderId: req.query.folderId,
       q: req.query.q,
@@ -192,6 +193,7 @@ documentsRouter.patch('/:id', requireCatalogInstructor, async (req, res, next) =
       documentId: assertDocumentId(req.params.id),
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
       title: req.body?.title,
       description: req.body?.description,
       folderId: req.body?.folderId

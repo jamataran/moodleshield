@@ -61,6 +61,7 @@ videosRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
     const page = await listMaterials({
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
       kind: 'video',
       folderId: req.query.folderId,
       q: req.query.q,
@@ -202,6 +203,7 @@ videosRouter.patch('/:id', requireCatalogInstructor, async (req, res, next) => {
       videoId: assertVideoId(req.params.id),
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
       title: req.body?.title,
       description: req.body?.description,
       folderId: req.body?.folderId

@@ -104,9 +104,12 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
   (`warn` en desarrollo) o se rechaza (`enforce`, por defecto en producción).
 - **`platform_id` separa instancias Moodle; `owner_sub` separa profesores.** Las
   dos condiciones salen siempre de la sesión LTI, nunca del body ni de la query.
-  Un UUID ajeno responde **404**, no 403. `owner_sub` tiene **una** puerta:
-  `is_public` en carpeta o colección (ADR-018), con el filtro en un único sitio,
-  `src/services/sharing.js`. `platform_id` no tiene ninguna.
+  Un UUID ajeno responde **404**, no 403. `owner_sub` tiene **dos** puertas, las
+  dos en un único sitio, `src/services/sharing.js`: `is_public` en carpeta o
+  colección (ADR-018), y el material **desplegado en el curso** desde el que
+  entra ese profesor (ADR-023). La segunda no sale del UUID sino de una fila de
+  `resource_placement`, así que revocarla la cierra y T24 sigue en pie.
+  `platform_id` no tiene ninguna.
 - **La autorización va en la sesión, no en el UUID.** Un token de un recurso no
   abre otro. El helper es `authorizeResource(session, kind, id)`.
 - **Ambas variantes llevan marca.** Ninguna es "la limpia" (ADR-005).

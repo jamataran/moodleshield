@@ -30,28 +30,29 @@ export function getDocumentForOwner (id, platformId, ownerSub) {
 }
 
 /** Propios y compartidos: mismo criterio que en vídeo (`services/sharing.js`). */
-export function listReadyDocumentsForDeepLink ({ ids, platformId, ownerSub }) {
+export function listReadyDocumentsForDeepLink ({ ids, platformId, ownerSub, contextId = null }) {
   if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
   return many(
     `SELECT m.id, m.title, m.description
        FROM pdf_document m
       WHERE m.id = ANY($3::uuid[]) AND m.status = 'ready'
-        AND m.platform_id = $1 AND ${visibleClause('m')}
+        AND m.platform_id = $1 AND ${visibleClause('m', { context: '$4', kind: 'pdf' })}
         AND m.archived_at IS NULL AND m.active_revision_id IS NOT NULL`,
-    [platformId, ownerSub, ids]
+    [platformId, ownerSub, ids, contextId]
   )
 }
 
-export function listInsertableDocumentsForDeepLink ({ ids, platformId, ownerSub }) {
+export function listInsertableDocumentsForDeepLink ({ ids, platformId, ownerSub, contextId = null }) {
   if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
   // `owner_sub` viaja para la referencia firmada (T24), como en los vídeos.
   return many(
     `SELECT m.id, m.title, m.description, m.owner_sub
        FROM pdf_document m
-      WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1 AND ${visibleClause('m')}
+      WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1
+        AND ${visibleClause('m', { context: '$4', kind: 'pdf' })}
         AND m.archived_at IS NULL
         AND (m.active_revision_id IS NOT NULL OR m.status IN ('queued','processing'))`,
-    [platformId, ownerSub, ids]
+    [platformId, ownerSub, ids, contextId]
   )
 }
 
@@ -131,14 +132,16 @@ export function createDocumentRevisionAndJob ({
 }
 
 /** Mismo criterio que en vídeo: el compartido se edita, pero no se recoloca. */
-export function updateDocumentMetadata ({ documentId, platformId, ownerSub, title, description, folderId }) {
+export function updateDocumentMetadata ({
+  documentId, platformId, ownerSub, contextId = null, title, description, folderId
+}) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `SELECT m.id, (m.owner_sub IS DISTINCT FROM $3) AS shared FROM pdf_document m
         WHERE m.id = $1 AND m.platform_id = $2
-          AND ${visibleClause('m', { platform: '$2', owner: '$3' })}
+          AND ${visibleClause('m', { platform: '$2', owner: '$3', context: '$4', kind: 'pdf' })}
         FOR UPDATE`,
-      [documentId, platformId, ownerSub]
+      [documentId, platformId, ownerSub, contextId]
     )
     if (rows.length === 0) return { status: 'not_found' }
     if (rows[0].shared && folderId !== undefined) return { status: 'not_owned' }
