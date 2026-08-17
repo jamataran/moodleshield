@@ -45,6 +45,20 @@ test('los roles de app y worker no conservan privilegios de migración', async (
       (err) => err.code === '42501')
     await assert.rejects(app.query('SELECT name FROM schema_migration LIMIT 1'),
       (err) => err.code === '25P02' || err.code === '42501')
+    // El REVOKE de provisión actúa sobre ALL TABLES, que en PostgreSQL incluye
+    // las vistas: una vista nueva nace sin permisos para la app y revienta en
+    // caliente con «permission denied for view». Le pasó a
+    // `catalog_folder_shared` y dejó de poder crearse una carpeta. No se fija la
+    // lista esperada a propósito —se descubren las vistas reales del esquema—
+    // para que añadir una y olvidar su GRANT falle aquí y no en producción.
+    const { rows: views } = await app.query(
+      "SELECT table_name FROM information_schema.views WHERE table_schema='public' ORDER BY 1")
+    assert.ok(views.length > 0, 'se esperaba al menos una vista en el esquema')
+    for (const { table_name: view } of views) {
+      await assert.doesNotReject(
+        app.query(`SELECT * FROM "${view}" LIMIT 1`),
+        `la app no puede leer la vista ${view}: añádela a APP_VIEWS en src/db/worker-role.js`)
+    }
   } finally {
     await app.end()
     await closeDatabase()

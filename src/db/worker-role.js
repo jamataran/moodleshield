@@ -48,6 +48,14 @@ const APP_TABLES = [
   'view_event'
 ]
 
+/**
+ * Vistas que la app necesita leer. Van aparte de APP_TABLES porque el REVOKE de
+ * más abajo actúa sobre ALL TABLES —que en PostgreSQL incluye las vistas— y sin
+ * este GRANT la lectura falla con «permission denied for view». Sólo SELECT: son
+ * derivadas y no se escriben.
+ */
+const APP_VIEWS = ['catalog_folder_shared']
+
 function sqlIdentifier (value, label) {
   const text = String(value)
   if (!/^[a-z_][a-z0-9_]{0,62}$/.test(text)) {
@@ -120,6 +128,7 @@ export async function provisionServiceRoles () {
       await client.query(`REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM ${role}`)
     }
     await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${APP_TABLES.join(', ')} TO ${appRole}`)
+    await client.query(`GRANT SELECT ON ${APP_VIEWS.join(', ')} TO ${appRole}`)
     await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${appRole}`)
     await client.query(`GRANT SELECT ON ${READ_TABLES.join(', ')} TO ${workerRole}`)
     await client.query(`GRANT UPDATE ON ${WRITE_TABLES.join(', ')} TO ${workerRole}`)
