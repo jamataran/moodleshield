@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { many, one, transaction } from '../db/index.js'
+import logger from '../logger.js'
 import { isUuid } from '../media/storage.js'
 
 export class ResourcePlacementError extends Error {
@@ -114,6 +115,39 @@ export async function authorizeResourcePlacement ({ placementId, context, kind, 
         throw new ResourcePlacementError(
           'El profesor que insertó el material debe abrir primero la actividad para activarla',
           { status: 409, code: 'placement_pending_instructor' }
+        )
+      }
+      // Reinsertar sobre una actividad que ya existe: Moodle conserva el
+      // `resource_link` y el Deep Linking crea un placement nuevo. El anterior
+      // queda superado —esa actividad ya no sirve aquel material— y se revoca en
+      // la MISMA transacción que liga al sustituto. Sin esto, el índice único
+      // rechazaba el UPDATE y el profesor veía un 500 de Postgres.
+      //
+      // Sólo llega aquí quien insertó el material, siendo profesor y con
+      // plataforma, deployment, curso, tipo, recurso y propietario cuadrando, así
+      // que esto no da a nadie una forma nueva de tumbar el placement de otro.
+      //
+      // Revocar corta también los grants hijos: si un alumno estaba viendo el
+      // material anterior, deja de servirse. Es lo correcto —el profesor acaba
+      // de cambiar el contenido de esa actividad— pero conviene saberlo.
+      const superados = await client.query(
+        `UPDATE resource_placement
+            SET revoked_at = now(), revoked_reason = 'superseded'
+          WHERE platform_id = $1 AND deployment_id = $2 AND context_id = $3
+            AND resource_link_id = $4 AND id <> $5 AND revoked_at IS NULL
+          RETURNING id`,
+        [
+          placement.platform_id,
+          placement.deployment_id,
+          placement.context_id,
+          context.resourceLinkId,
+          placementId
+        ]
+      )
+      if (superados.rowCount > 0) {
+        logger.info(
+          { placementId, superseded: superados.rows.map((r) => r.id) },
+          'La actividad se reinsertó: se revoca el placement anterior'
         )
       }
       const bound = await client.query(
