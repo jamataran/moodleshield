@@ -203,6 +203,9 @@ guárdalo en un gestor seguro y elimina la copia local cuando ya no la necesites
 En especial:
 
 - `DB_PASSWORD` debe seguir coincidiendo con el usuario persistido en `pgdata`;
+- `DB_APP_PASSWORD` y `DB_WORKER_PASSWORD` son independientes. El entrypoint usa las tres
+  durante el bootstrap y elimina del entorno web la propietaria y la del worker antes de
+  iniciar el servidor;
 - `WATERMARK_SECRET` es permanente: cambiarlo invalida la atribución histórica;
 - `MEDIA_LINK_SECRET` debe ser el mismo para `app` y `proxy`; el Compose ya lo
   comparte automáticamente.

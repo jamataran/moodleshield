@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Obtener main completo
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: main
           fetch-depth: 0
@@ -140,13 +140,30 @@ jobs:
             git push origin "$VERSION"
           fi
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Instalar cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Verificar firma de las imágenes ensayadas en test
+        env:
+          REPO: ${{ steps.meta.outputs.repo }}
+          SOURCE_TAG: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/cd-main.yml@refs/heads/main"
+          for image in app worker proxy; do
+            cosign verify \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "ghcr.io/${REPO}/${image}:${SOURCE_TAG}" >/dev/null
+          done
 
       - name: Promover el mismo digest a GHCR
         env:
@@ -175,6 +192,8 @@ jobs:
           sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
           sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
           sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${VERSION}|"   infra/prod/compose.yml
+          # Activación atómica con la primera imagen que entiende SERVICE_ROLE.
+          sed -i "s|environment: \*app-env # WORKER_ENV_ACTIVATION|environment: *worker-env # WORKER_ENV_ACTIVATION|" infra/prod/compose.yml
           git add infra/prod/compose.yml
           git commit -m "deploy(prod): ${VERSION} [skip ci]"
           git push origin main

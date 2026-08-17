@@ -11,6 +11,8 @@ import { buildUserPlaylist } from '../media/playlist.js'
 import { patternToHex } from '../media/watermark.js'
 import { verifyMediaUrl } from '../media/signing.js'
 import { publicOriginFor } from '../security/public-origin.js'
+import { PlaybackGrantError, touchPlaybackGrant } from '../services/playback-grants.js'
+import { requirePlaybackAudit } from '../services/playback-audit.js'
 import {
   issueKeyToken,
   verifyKeyToken,
@@ -31,15 +33,13 @@ import {
 } from '../media/storage.js'
 
 export const hlsRouter = Router()
+export const mediaGrantRouter = Router()
 
 const NO_STORE = 'no-store, no-cache, must-revalidate, private'
 
-// Nota: NO se pone un rate limit por IP en /hls/:id/key. Con el túnel delante,
-// `req.ip` puede ser una dirección compartida (V-13), así que un límite por IP
-// podría dar 429 a alumnos legítimos de un despliegue grande. Y un `kt` inválido
-// ya se rechaza con 403 sin tocar la base de datos, así que el abuso es barato
-// de absorber. El freno fino por `jti` necesita el modelo de T30; el grueso, el
-// `limit_req` de borde en nginx una vez `TRUST_PROXY` sea fiable (T25/T29).
+// El rate limit de playback agrupa por `jti` verificado y sólo cae a IP cuando no
+// hay sesión válida. Así una NAT de centro no hace competir entre sí a todos los
+// alumnos, mientras las peticiones anónimas siguen teniendo un freno barato.
 
 /**
  * Resuelve el acceso a la playlist por sesión (cabecera Bearer) o por ticket de
@@ -52,6 +52,12 @@ const NO_STORE = 'no-store, no-cache, must-revalidate, private'
 async function resolvePlaylistAccess (req, videoId) {
   const session = verifySession(readSessionToken(req))
   if (session) {
+    await touchPlaybackGrant({
+      jti: session.jti,
+      platformId: session.platformId,
+      sub: session.sub,
+      ip: req.ip
+    })
     const scope = await authorizeResource(session, 'video', videoId)
     if (!scope.ok) return { ok: false, status: 404 }
     return {
@@ -67,12 +73,19 @@ async function resolvePlaylistAccess (req, videoId) {
         resourceLinkId: session.resourceLinkId,
         identity: session.identity,
         platformId: session.platformId,
-        jti: session.jti
+        jti: session.jti,
+        expiresAt: session.expiresAt
       }
     }
   }
   const ticket = verifyPlaybackTicket(readPlaybackTicket(req), { kind: 'video', id: videoId })
   if (ticket) {
+    await touchPlaybackGrant({
+      jti: ticket.sessionJti,
+      platformId: ticket.platformId,
+      sub: ticket.sub,
+      ip: req.ip
+    })
     return {
       ok: true,
       viaOwner: ticket.viaOwner,
@@ -86,7 +99,8 @@ async function resolvePlaylistAccess (req, videoId) {
         resourceLinkId: ticket.resourceLinkId,
         identity: ticket.identity,
         platformId: ticket.platformId,
-        jti: ticket.sessionJti
+        jti: ticket.sessionJti,
+        expiresAt: ticket.expiresAt
       }
     }
   }
@@ -125,7 +139,7 @@ hlsRouter.get('/:id/index.m3u8', async (req, res, next) => {
     // colecciones, registrar en el launch produciría candidatos de vídeos que
     // el alumno nunca reprodujo. El `jti` de la sesión lo desduplica.
     if (!access.viaOwner) {
-      await recordView({
+      await requirePlaybackAudit(() => recordView({
         videoId,
         revisionId: revision.id,
         platformId: access.record.platformId,
@@ -140,14 +154,16 @@ hlsRouter.get('/:id/index.m3u8', async (req, res, next) => {
         identity: access.record.identity,
         ip: req.ip,
         userAgent: req.get('user-agent')
-      }).catch((err) => req.log?.warn({ err, videoId }, 'No se pudo registrar el visionado'))
+      }))
     }
 
     const keyToken = issueKeyToken({
       videoId,
       revisionId: revision.id,
       sub: access.record.sub,
-      platformId: access.record.platformId
+      platformId: access.record.platformId,
+      sessionJti: access.record.jti,
+      parentExpiresAt: access.record.expiresAt
     })
     const { body, pattern } = await buildUserPlaylist({
       videoId,
@@ -156,6 +172,7 @@ hlsRouter.get('/:id/index.m3u8', async (req, res, next) => {
       patternScope: revision.pattern_scope,
       userSub: access.record.sub,
       keyToken,
+      sessionJti: access.record.jti,
       origin: publicOriginFor(req)
     })
 
@@ -206,7 +223,8 @@ hlsRouter.post('/:id/ticket', requireSession, async (req, res, next) => {
       identity: req.session.identity,
       contextId: req.session.contextId,
       resourceLinkId: req.session.resourceLinkId,
-      sessionJti: req.session.jti
+      sessionJti: req.session.jti,
+      parentExpiresAt: req.session.expiresAt
     })
     res.set('Cache-Control', NO_STORE)
     res.json({ ticket, ttlSeconds: config.session.playbackTicketTtlSeconds })
@@ -227,6 +245,12 @@ hlsRouter.get('/:id/key', async (req, res, next) => {
       logger.warn({ videoId, ip: req.ip }, 'Petición de clave rechazada')
       return res.sendStatus(403)
     }
+    await touchPlaybackGrant({
+      jti: payload.sj,
+      platformId: payload.pid,
+      sub: payload.sub,
+      ip: req.ip
+    })
 
     // La clave es por revisión: servir «la actual» daría la clave equivocada a
     // un player que está reproduciendo una revisión ya retirada.
@@ -255,10 +279,37 @@ hlsRouter.get('/:id/key', async (req, res, next) => {
  */
 export const mediaRouter = Router()
 
+/** Subpetición de nginx para que una revocación corte también los segmentos. */
+mediaGrantRouter.get('/media-grant', async (req, res, next) => {
+  try {
+    const rawUri = req.get('x-original-uri')
+    const original = rawUri ? new URL(rawUri, 'http://internal.invalid') : null
+    const uri = original?.pathname
+    const sessionJti = original?.searchParams.get('sj') ?? ''
+    if (!uri || !sessionJti || !verifyMediaUrl(uri, {
+      md5: original.searchParams.get('md5'),
+      expires: original.searchParams.get('expires'),
+      sessionJti
+    })) return res.sendStatus(403)
+    await touchPlaybackGrant({
+      jti: sessionJti,
+      ip: req.ip
+    })
+    res.sendStatus(204)
+  } catch (err) {
+    if (err instanceof PlaybackGrantError && err.status < 500) return res.sendStatus(401)
+    next(err)
+  }
+})
+
 function sendSegment (res, next, { uri, query, dir, variant, segment }) {
   try {
     if (config.media.delivery === 'signed') {
-      if (!verifyMediaUrl(uri, { md5: query.md5, expires: query.expires })) {
+      if (!verifyMediaUrl(uri, {
+        md5: query.md5,
+        expires: query.expires,
+        sessionJti: query.sj
+      })) {
         return res.sendStatus(403)
       }
     }

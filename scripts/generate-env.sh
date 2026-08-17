@@ -140,11 +140,18 @@ HTTP_PORT=$HTTP_PORT
 DB_NAME=moodleshield
 DB_USER=moodleshield
 DB_PASSWORD=$(gen)
+DB_APP_USER=moodleshield_app
+DB_APP_PASSWORD=$(gen)
+DB_WORKER_USER=moodleshield_worker
+DB_WORKER_PASSWORD=$(gen)
 SESSION_SECRET=$(gen)
 WATERMARK_SECRET=$(gen)
 MEDIA_KEY_SECRET=$(gen)
 MEDIA_LINK_SECRET=$(gen)
-CONTENT_API_TOKEN=$(gen)
+# Deshabilitada por defecto; actívala sólo durante una migración y limita las
+# plataformas con CONTENT_API_ALLOWED_PLATFORM_IDS.
+CONTENT_API_TOKEN=
+CONTENT_API_ALLOWED_PLATFORM_IDS=
 ADMIN_USERNAME=$ADMIN_USER
 ADMIN_PASSWORD_HASH=$ADMIN_PASSWORD_HASH
 ADMIN_SESSION_SECRET=$(gen)

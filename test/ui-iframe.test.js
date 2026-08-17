@@ -189,16 +189,86 @@ test('el catálogo permite componer y EDITAR colecciones, no sólo crearlas', as
   assert.ok(html.includes('id="collection-folder"'), 'falta el selector de carpeta de la colección')
 })
 
-test('el catálogo separa colecciones y materiales y permite volver atrás', async () => {
+test('la colección admite material aún en cola, con espera visible para el alumno', async () => {
+  // El picker no puede volver a pedir sólo lo listo: componer una colección con
+  // material recién subido es el caso de uso que cierra esta regresión.
+  const catalog = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.doesNotMatch(catalog, /ready:\s*'1'/,
+    'el picker de colecciones debe listar también el material en preparación')
+
+  // El visor sondea el manifest mientras haya material preparándose, y deja de
+  // hacerlo al salir de la página: sin el clearTimeout, la pestaña enterrada
+  // seguiría consultando el manifest para siempre.
+  const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
+  assert.match(collection, /manifestTimer/, 'falta el sondeo del manifest')
+  assert.match(collection, /pagehide[\s\S]{0,200}clearTimeout\(manifestTimer\)/,
+    'el sondeo debe cancelarse en pagehide')
+  assert.match(collection, /se está preparando/i,
+    'el alumno debe distinguir la espera legítima de un material no disponible')
+})
+
+test('el catálogo separa carpetas, colecciones y materiales sin gastar una franja en pestañas', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
-  for (const id of ['back', 'help-open', 'all-content', 'tab-collections', 'tab-materials',
+  for (const id of ['back', 'help-open', 'all-content', 'section-subfolders',
     'section-collections', 'section-materials', 'load-more-collections']) {
     assert.ok(html.includes(`id="${id}"`), `falta el control de navegación ${id}`)
   }
 
+  // Las pestañas costaban una franja entera para filtrar dos listas que ya
+  // venían cargadas. Ahora los tres tipos conviven en una lista y se separan con
+  // etiquetas de grupo, que valen una línea.
+  assert.doesNotMatch(html, /role="tablist"/,
+    'el tipo de contenido no puede volver a gastar una franja de pestañas')
+  assert.doesNotMatch(html, /data-content-filter/,
+    'el filtro por pestañas se sustituyó por grupos dentro de la lista')
+  assert.equal((html.match(/class="group-label"/g) ?? []).length, 3,
+    'los tres grupos (carpetas, colecciones y materiales) necesitan su etiqueta')
+
   const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
   assert.match(code, /navigationHistory/, 'Atrás necesita conservar el historial del explorador')
   assert.match(code, /nextCollectionCursor/, 'las colecciones necesitan paginación propia')
+  // Un explorador enseña el contenido de la carpeta abierta, subcarpetas
+  // incluidas: obligar a mirar al panel lateral para entrar en una es justo lo
+  // que hacía que esto no pareciera un gestor de archivos.
+  assert.match(code, /childrenOf\(state\.folderId\)/,
+    'las subcarpetas del nivel abierto deben salir también en la lista principal')
+})
+
+test('el catálogo reserva el alto de la pantalla para la lista', async () => {
+  // Misma regla que el visor del alumno (ADR-022/024). El alto de este iframe lo
+  // decide Moodle y no se puede negociar desde dentro, así que cada franja de
+  // cromo sale de la lista: antes eran ~288 px antes del primer elemento.
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /body\.catalog-page\s*\{[^}]*grid-template-rows:\s*minmax\(0, 1fr\)/s,
+    'el catálogo sólo puede gastar UNA fila, y es la del contenido')
+  assert.match(css, /\.catalog-main\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)/s,
+    'dentro del panel principal sólo cabe una franja de cromo: la barra de comandos')
+  assert.match(css, /\.group-label\s*\{[^}]*position:\s*sticky/s,
+    'la etiqueta de grupo tiene que seguir visible al desplazar su grupo')
+
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  assert.doesNotMatch(html, /class="catalog-header"/,
+    'la cabecera repetía el título del propio modal de Moodle')
+  assert.doesNotMatch(html, /<h1/,
+    'el modal de Moodle ya se titula «Seleccionar contenido»: repetirlo cuesta una franja')
+  assert.doesNotMatch(html, /class="catalog-toolbar"/,
+    'el buscador vive en la barra de comandos, no en una fila propia')
+  // Toda explicación se paga en píxeles: va en el diálogo de ayuda.
+  assert.match(html, /id="help-open"[^>]*class="icon"/,
+    'la ayuda es un icono en la barra, no un bloque de texto permanente')
+})
+
+test('la ayuda no se abre sola encima del selector de contenido', async () => {
+  // ADR-022 ya descartó abrir el aviso automáticamente «para no cobrar peaje al
+  // entrar». En `deeplink` el profesor acaba de pulsar «Seleccionar contenido»:
+  // sabe a qué viene. En `manage` ha abierto una actividad vacía y sí necesita
+  // que le expliquen qué hacer.
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  const auto = code.slice(code.indexOf('moodleshield-help-'))
+  assert.notEqual(auto, '', 'debe seguir existiendo la apertura una vez por sesión')
+  const guarda = code.slice(0, code.indexOf('moodleshield-help-'))
+  assert.match(guarda.slice(-400), /boot\.mode === 'manage'/,
+    'la apertura automática sólo puede ocurrir en modo manage')
 })
 
 test('todos los visores muestran aviso, monitorización y descarga contextual', async () => {
@@ -262,6 +332,30 @@ test('el catálogo importa una carpeta entera y avisa antes de escribir nada', a
 
   // Un fichero que falla no puede tumbar la importación entera.
   assert.match(code, /fallidos\.push/, 'los errores por fichero se acumulan y se informan')
+})
+
+test('una cuota agotada para la importación en vez de rechazar todo lo que queda', async () => {
+  // Las cuotas por profesor (F-12) las alcanza sola una importación grande de
+  // vídeo: la cola admite un número limitado de trabajos pendientes. Si el
+  // importador tratara ese 429 como «este fichero está mal», marcaría como
+  // fallidos los cuarenta que quedaban y el profesor no sabría que basta con
+  // esperar.
+  for (const modulo of ['assets/catalog.js', 'assets/admin-import.js']) {
+    const code = await readFile(path.join(uiDir, modulo), 'utf8')
+    assert.match(code, /too_many_pending_jobs/, `${modulo}: falta reconocer la cola llena`)
+    assert.match(code, /too_many_active_uploads/, `${modulo}: falta reconocer las subidas activas`)
+    assert.match(code, /detenidaPorCuota/, `${modulo}: la cuota debe detener el bucle, no anotarse`)
+  }
+
+  // Y una subida que no llega a buen puerto tiene que soltar su reserva: si no,
+  // unos pocos ficheros fallidos consumen la cuota de subidas activas hasta que
+  // caduca la sesión, horas después.
+  const uploader = await readFile(path.join(uiDir, 'assets/chunked-upload.js'), 'utf8')
+  const salida = uploader.slice(uploader.lastIndexOf('} catch (err) {'))
+  assert.match(salida, /method: 'DELETE'/,
+    'una subida fallida debe retirar su sesión, no sólo la cancelada')
+  assert.match(salida, /keepalive: true/,
+    'la limpieza tiene que salir aunque se cierre la pestaña tras el error')
 })
 
 test('el catálogo distingue lo compartido de lo propio y no ofrece acciones ajenas', async () => {
@@ -428,4 +522,11 @@ test('los imports transitivos de JavaScript se revalidan tras un despliegue', as
   const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
   assert.match(pdf, /from '\.\/pdf-download\.js\?v=[^']+'/)
   assert.match(collection, /from '\.\/pdf-download\.js\?v=[^']+'/)
+
+  // V-08/F-09: las URLs de /vendor no llevan `?v=` —PDF.js importa su propio
+  // módulo y fija workerSrc a una ruta fija—, así que NO pueden servirse como
+  // `immutable`: una versión vulnerable cacheada sobreviviría al despliegue de
+  // la corregida hasta que caducara la caché del navegador.
+  assert.doesNotMatch(app, /vendorOptions\s*=\s*\{[^}]*immutable/,
+    'los ficheros de /vendor deben revalidarse para que un parche de seguridad llegue el mismo día')
 })

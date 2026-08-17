@@ -23,6 +23,19 @@ const SKIP_LABEL = {
   invalid: 'ruta no válida'
 }
 
+/**
+ * Cuotas por propietario (F-12). Una importación grande de vídeo agota sola el
+ * número de trabajos pendientes que admite la cola: cuando eso pasa hay que
+ * parar y decirlo, no marcar como fallidos todos los ficheros que quedaban.
+ */
+const QUOTA_CODES = new Set([
+  'too_many_active_uploads',
+  'too_many_pending_jobs',
+  'upload_quota_exceeded',
+  'owner_storage_quota_exceeded',
+  'storage_capacity_guard'
+])
+
 const { uploadFileInChunks, json } = createChunkedUploader({
   baseUrl: BASE,
   headers: () => ({ 'X-MoodleShield-Csrf': boot.csrf ?? '' })
@@ -112,10 +125,12 @@ async function runImport () {
   let versiones = 0
   let hechos = 0
   let omitidos = 0
+  let detenidaPorCuota = null
+  let pendientes = []
 
   try {
     const plan = await requestPlan(files, { signal: controller.signal })
-    const pendientes = plan.entries.filter((entry) => entry.status === 'upload')
+    pendientes = plan.entries.filter((entry) => entry.status === 'upload')
     omitidos = plan.summary.skipped
     if (pendientes.length === 0) {
       setStatus('No hay ningún vídeo ni PDF que importar en esa carpeta.', 'error')
@@ -142,7 +157,13 @@ async function runImport () {
         else creados++
       } catch (err) {
         if (err.name === 'AbortError') break
-        // Un fichero que falla no tumba la importación: se anota y se sigue.
+        // Una cuota agotada no es un fichero malo: es el sistema diciendo
+        // «ahora no». Se para en vez de rechazar todo lo que queda.
+        if (QUOTA_CODES.has(err.code)) {
+          detenidaPorCuota = err.message
+          break
+        }
+        // Un fichero que falla sí es sólo suyo: se anota y se sigue.
         fallidos.push(`${item.path}: ${err.message}`)
       }
       hechos++
@@ -157,16 +178,23 @@ async function runImport () {
     el('cancelButton').hidden = true
     el('current').textContent = ''
 
-    if (creados || versiones || fallidos.length) {
+    const restantes = pendientes.length - hechos
+    if (creados || versiones || fallidos.length || detenidaPorCuota) {
       const resumen = [
         creados ? `${creados} material(es) nuevo(s)` : '',
         versiones ? `${versiones} versión(es) nueva(s)` : '',
         fallidos.length ? `${fallidos.length} con error` : ''
       ].filter(Boolean).join(' · ')
+      const cabecera = detenidaPorCuota
+        ? 'Importación detenida'
+        : cancelada ? 'Importación cancelada' : 'Importación terminada'
       setStatus(
-        `${cancelada ? 'Importación cancelada' : 'Importación terminada'}: ${resumen}. ` +
-        'El procesado (transcodificación y normalización) sigue en cola.',
-        fallidos.length ? 'error' : 'ok'
+        `${cabecera}: ${resumen || 'no se subió nada'}. ` +
+        (detenidaPorCuota
+          ? `${detenidaPorCuota} Quedan ${restantes} fichero(s): espera a que el procesado ` +
+            'avance y vuelve a importar la misma carpeta.'
+          : 'El procesado (transcodificación y normalización) sigue en cola.'),
+        fallidos.length || detenidaPorCuota ? 'error' : 'ok'
       )
       if (fallidos.length) {
         el('failures').hidden = false

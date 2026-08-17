@@ -6,7 +6,7 @@
 # Ambos comparten las capas de dependencias, así que la segunda imagen sale casi
 # gratis en tiempo de build y en registro.
 
-ARG NODE_VERSION=22-alpine
+ARG NODE_VERSION=22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
 
 # ---------------------------------------------------------------------------
 FROM node:${NODE_VERSION} AS deps
@@ -50,7 +50,8 @@ FROM base AS app
 
 # Cap de heap: por debajo de esto Node no reserva memoria que luego le hace
 # falta a ffmpeg en el mismo host.
-ENV NODE_OPTIONS="--max-old-space-size=192"
+ENV NODE_OPTIONS="--max-old-space-size=192" \
+    SERVICE_ROLE=app
 
 EXPOSE 3000
 
@@ -72,7 +73,8 @@ FROM base AS worker
 USER root
 RUN apk add --no-cache ffmpeg qpdf poppler-utils ghostscript
 
-ENV NODE_OPTIONS="--max-old-space-size=192"
+ENV NODE_OPTIONS="--max-old-space-size=192" \
+    SERVICE_ROLE=worker
 
 # El worker no escucha en ningún puerto: se comprueba que el proceso Node sigue
 # vivo. El patrón anclado evita que `pgrep` encuentre su propio shell.

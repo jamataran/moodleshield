@@ -231,7 +231,9 @@ export async function processDocumentRevision ({
     hasPoster,
     normalizedBy: 'ghostscript-pdfwrite'
   }
-  meta.artifactHash = (await documentFingerprint(outputDir)).artifactHash
+  const fingerprint = await documentFingerprint(outputDir)
+  meta.artifactHash = fingerprint.artifactHash
+  meta.artifactSizeBytes = fingerprint.artifactSizeBytes
   await writeFile(path.join(outputDir, 'meta.json'), JSON.stringify(meta, null, 2))
 
   log.info({ pages: meta.pageCount, bytes: meta.sizeBytes }, 'PDF normalizado y listo para publicar')

@@ -39,17 +39,18 @@ function mapWriteError (err) {
  * `.pdf` se corta en el primer chunk en vez de ocupar 100 MB de disco y un
  * turno de worker para que Ghostscript lo rechace.
  */
-function inspectingStream (magic, hash) {
-  let checked = !magic
+function inspectingStream (rule, hash) {
+  let checked = !rule
   let head = Buffer.alloc(0)
   return new Transform({
     transform (chunk, _encoding, callback) {
       hash.update(chunk)
       if (!checked) {
-        head = head.length ? Buffer.concat([head, chunk]) : chunk
-        if (head.length >= magic.length) {
+        const needed = rule.bytes - head.length
+        head = Buffer.concat([head, chunk.subarray(0, needed)])
+        if (head.length >= rule.bytes) {
           checked = true
-          if (!head.subarray(0, magic.length).equals(magic)) {
+          if (!rule.valid(head)) {
             return callback(new UploadError(
               'El contenido del fichero no corresponde al tipo declarado',
               { status: 415, code: 'unsupported_media_type' }
@@ -71,6 +72,29 @@ function inspectingStream (magic, hash) {
   })
 }
 
+/** Firma mínima del contenedor, antes de ceder el fichero hostil a ffmpeg. */
+export function videoMagicRule (extension) {
+  if (['.mp4', '.mov', '.m4v'].includes(extension)) {
+    return { bytes: 12, valid: (head) => head.subarray(4, 8).equals(Buffer.from('ftyp')) }
+  }
+  if (['.mkv', '.webm'].includes(extension)) {
+    return { bytes: 4, valid: (head) => head.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) }
+  }
+  if (extension === '.avi') {
+    return {
+      bytes: 12,
+      valid: (head) => head.subarray(0, 4).equals(Buffer.from('RIFF')) &&
+        head.subarray(8, 12).equals(Buffer.from('AVI '))
+    }
+  }
+  return null
+}
+
+export function matchesVideoMagic (head, extension) {
+  const rule = videoMagicRule(extension)
+  return Boolean(rule && head.length >= rule.bytes && rule.valid(head))
+}
+
 /**
  * Recibe un único fichero en streaming y sólo resuelve después de que Busboy y
  * el writer hayan cerrado. El fichero visible para la cola aparece al final
@@ -89,6 +113,7 @@ export async function receiveUpload (req, {
   allowedExtensions,
   maxBytes,
   magic = null,
+  magicForExtension = null,
   fallbackExt = '.bin'
 }) {
   const tempPath = uploadTempPath()
@@ -138,10 +163,13 @@ export async function receiveUpload (req, {
           })
           return
         }
+        const rule = magic
+          ? { bytes: magic.length, valid: (head) => head.subarray(0, magic.length).equals(magic) }
+          : magicForExtension?.(ext)
         stream.on('limit', () => { limitExceeded = true })
         const writing = pipeline(
           stream,
-          inspectingStream(magic, hash),
+          inspectingStream(rule, hash),
           createWriteStream(tempPath, { flags: 'wx' }),
           { signal: abort.signal }
         )
@@ -212,6 +240,7 @@ export function receiveVideoUpload (req, { revisionId, videoId }) {
     revisionId: revisionId ?? videoId,
     allowedExtensions: VIDEO_EXTENSIONS,
     maxBytes: config.media.maxUploadBytes,
+    magicForExtension: videoMagicRule,
     fallbackExt: '.mp4'
   })
 }

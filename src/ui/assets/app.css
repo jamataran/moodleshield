@@ -158,7 +158,7 @@ input[type="search"], textarea, select {
 .notice.info  { border-color: var(--accent); }
 
 /* ---- Biblioteca del profesor ---- */
-.eyebrow, .section-kicker {
+.eyebrow {
   margin: 0 0 .15rem;
   color: var(--accent);
   font-size: .72rem;
@@ -167,35 +167,24 @@ input[type="search"], textarea, select {
   text-transform: uppercase;
 }
 
+/* UNA fila y nada más, igual que el visor del alumno (ADR-022/024). El alto de
+   este iframe lo decide Moodle y no se puede negociar desde dentro: cada franja
+   de cromo que se añada aquí sale directamente de la lista. */
 body.catalog-page {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: .65rem;
-  padding: .8rem;
+  grid-template-rows: minmax(0, 1fr);
+  padding: .5rem;
 }
 
-.catalog-header,
-.catalog-header-actions,
-.catalog-toolbar,
-.catalog-location,
-.catalog-sidebar-head,
-.section-head {
-  display: flex;
-  align-items: center;
-  gap: .65rem;
-}
-.catalog-header { justify-content: space-between; min-width: 0; }
-.catalog-header > div:first-child { min-width: 0; }
-.catalog-header h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.catalog-header-actions { justify-content: flex-end; flex-wrap: wrap; }
-
+/* El aviso flota sobre el contenido en lugar de empujarlo. Va abajo porque
+   arriba está la barra de comandos, que es lo único fijo que hay. */
 .catalog-page #notice {
   position: fixed;
   z-index: 80;
-  top: .75rem;
+  bottom: 1rem;
   left: 50%;
   width: min(38rem, calc(100vw - 1.5rem));
   transform: translateX(-50%);
@@ -204,8 +193,11 @@ body.catalog-page {
   box-shadow: 0 10px 30px rgb(0 0 0 / .35);
 }
 
-.catalog-toolbar input[type="search"] { flex: 1; min-width: 0; }
+/* Sólo existe como cajón: en escritorio el lateral está siempre a la vista. */
+.catalog-page #places-scrim { display: none; }
+
 .catalog-layout {
+  position: relative;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(13rem, 15rem) minmax(0, 1fr);
@@ -222,17 +214,14 @@ body.catalog-page {
   border-right: 1px solid var(--border);
   background: var(--surface-2);
 }
-.catalog-sidebar-head { justify-content: space-between; padding: 0 .35rem .45rem; }
-.catalog-sidebar h2,
-.catalog-sidebar h3 {
+.catalog-sidebar h2 {
   margin: 0;
+  padding: .8rem .45rem .3rem;
   color: var(--muted);
   font-size: .72rem;
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-.catalog-sidebar h3 { padding: .8rem .45rem .3rem; }
-.icon-text { border: 0; background: none; padding: .25rem .35rem; color: var(--accent); }
 
 .library-views { display: grid; gap: .15rem; }
 .library-view {
@@ -247,6 +236,10 @@ body.catalog-page {
   background: none;
   text-align: left;
 }
+/* `display: grid` de autor gana al `[hidden] { display: none }` del navegador:
+   sin esto, «Material de este curso» se ve incluso cuando el launch no trae
+   curso y su botón no lleva a ninguna parte. */
+.library-view[hidden] { display: none; }
 .library-view:hover:not(:disabled),
 .library-view.current { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .library-view.current { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); }
@@ -290,69 +283,198 @@ body.catalog-page {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
-.catalog-location {
+
+/* ---- La única franja de cromo ---- */
+/* Por encima del cajón de ubicaciones: si el cajón la tapara, taparía también el
+   botón que lo cierra. Necesita fondo propio por la misma razón. */
+.catalog-bar {
+  position: relative;
+  z-index: 45;
   min-width: 0;
-  padding: .6rem .75rem .35rem;
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  padding: .3rem .4rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
+.catalog-bar #search {
+  flex: 0 1 15rem;
+  min-width: 4.5rem;
+  padding: .32rem .5rem;
+}
+.new-menu { flex: none; margin-left: .15rem; }
+.new-menu-trigger {
+  white-space: nowrap;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.new-menu-trigger:hover { background: color-mix(in srgb, #000 8%, var(--accent)); color: #fff; }
+
 .crumbs {
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 2rem;
   display: flex;
   align-items: center;
   gap: .1rem;
   overflow-x: auto;
   white-space: nowrap;
+  scrollbar-width: none;
 }
+.crumbs::-webkit-scrollbar { display: none; }
 .crumb { font-weight: 650; }
 .crumb.current { padding: .25rem .35rem; }
 .crumb-sep { color: var(--muted); }
 
-.content-tabs {
-  display: flex;
-  gap: .25rem;
-  padding: .15rem .75rem .55rem;
-  border-bottom: 1px solid var(--border);
-}
-.content-tabs button { padding: .38rem .75rem; border-color: transparent; background: none; }
-.content-tabs button.current {
-  border-color: var(--border);
-  background: var(--surface-2);
-  color: var(--accent);
-}
-.catalog-results { min-height: 0; overflow-y: auto; padding: .75rem; }
-.explorer-section { margin-bottom: 1.15rem; }
-.explorer-section h2 { margin: 0; font-size: 1rem; }
-.section-head { justify-content: space-between; margin-bottom: .5rem; }
-.section-kicker { color: var(--muted); font-size: .66rem; }
-.load-more-row { margin-top: .55rem; text-align: center; }
+.catalog-results { min-height: 0; overflow-y: auto; padding: 0 0 .6rem; }
 
-.catalog-page .grid { grid-template-columns: 1fr; gap: .45rem; }
-.catalog-page .card {
-  min-height: 5rem;
+/* ---- Grupos de la lista ---- */
+/* Sustituyen a las pestañas y a las cabeceras de sección: una línea en lugar de
+   dos franjas. Pegajosas dentro de su grupo, como en cualquier explorador. */
+.group-label {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0;
+  padding: .3rem .65rem .25rem;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.content-list { display: grid; }
+.load-more-row { margin: .4rem 0 .2rem; text-align: center; }
+
+/* ---- Filas densas ---- */
+.catalog-page .content-list > .card {
+  min-height: 2.75rem;
   display: grid;
-  grid-template-columns: 7.5rem minmax(0, 1fr) auto;
-  align-items: stretch;
+  grid-template-columns: 3.25rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .15rem;
+  padding: 0 .5rem 0 0;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  background: none;
   overflow: visible;
 }
-.catalog-page .card img {
-  width: 7.5rem;
-  height: 100%;
-  min-height: 5rem;
-  aspect-ratio: auto;
-  border-radius: var(--radius) 0 0 var(--radius);
+.catalog-page .content-list > .card:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+
+/* La carpeta reutiliza su tarjeta del lateral, pero en la lista principal es una
+   fila más: sin sangría de árbol y con el mismo alto que un material. */
+.catalog-page .content-list > .folder-card {
+  min-height: 2.75rem;
+  padding-left: 0;
+  padding-right: .5rem;
+  border-radius: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
-.catalog-page .card .body { min-width: 0; padding: .6rem .7rem; }
+.catalog-page .content-list > .folder-card .folder-open { padding: .45rem .25rem .45rem .55rem; }
+/* El grupo ya dice que son carpetas; el glifo las distingue cuando se mezclan
+   con materiales al desplazarse. Va en la etiqueta, que sí es contenedor flex. */
+.catalog-page .content-list > .folder-card .folder-label::before {
+  content: "▸";
+  flex: none;
+  color: var(--muted);
+  font-size: .8rem;
+}
+.catalog-page .content-list > .folder-card .folder-text { flex: 1; }
+.catalog-page .card img {
+  width: 2.75rem;
+  height: 1.6rem;
+  min-height: 0;
+  margin-left: .4rem;
+  aspect-ratio: auto;
+  border-radius: 4px;
+}
+.catalog-page .card .body {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  padding: .3rem .2rem;
+}
+.catalog-page .card .title { font-weight: 550; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Los metadatos ceden el sitio al título cuando la fila es estrecha. */
+.catalog-page .card .body > .muted {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: .78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.catalog-page .card .badge { flex: none; font-size: .66rem; padding: .05rem .35rem; }
+.catalog-page .card .collection-kind { display: none; }
 .catalog-page .card .actions {
   min-width: 0;
-  align-content: center;
-  justify-content: flex-end;
-  padding: .5rem .65rem;
+  flex-wrap: nowrap;
+  gap: .25rem;
+  padding: 0;
   border: 0;
-  border-left: 1px solid var(--border);
 }
-.catalog-page .card .actions button { white-space: nowrap; }
-.catalog-page .collection-card { border-left: 1px solid var(--border); }
+.catalog-page .card .actions button { white-space: nowrap; padding: .28rem .6rem; font-size: .82rem; }
+.catalog-page .collection-card { border-left: 0; }
+.catalog-page .content-list > .collection-card { box-shadow: inset 3px 0 var(--accent); }
+
+/* Lo secundario aparece al apuntar o al tabular. «Insertar» no: en el selector
+   de contenido es la tarea, y esconderla obligaría a cazarla fila a fila. */
+.catalog-page .content-list > .card .actions > :not(.primary) { visibility: hidden; }
+.catalog-page .content-list > .card:hover .actions > :not(.primary),
+.catalog-page .content-list > .card:focus-within .actions > :not(.primary),
+.catalog-page .content-list > .card .actions > details.menu[open] { visibility: visible; }
+
+/* ---- Cuadrícula ---- */
+.catalog-page.is-grid-view .content-list {
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: .6rem;
+  padding: .5rem .65rem;
+}
+.catalog-page.is-grid-view .content-list > .card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* La fila densa centra sus columnas; aquí hay que devolver el estirado o la
+     lámina y el póster se encogen al ancho de su contenido. */
+  align-items: stretch;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.catalog-page.is-grid-view .card img {
+  width: 100%;
+  height: auto;
+  margin: 0;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.catalog-page.is-grid-view .card .body {
+  display: grid;
+  align-items: start;
+  gap: .1rem;
+  padding: .45rem .55rem;
+}
+.catalog-page.is-grid-view .card .title { white-space: normal; overflow-wrap: anywhere; }
+/* En rejilla el cuerpo es una columna: sin esto el badge se estira de lado a lado. */
+.catalog-page.is-grid-view .card .badge { justify-self: start; }
+.catalog-page.is-grid-view .card .actions {
+  flex-wrap: wrap;
+  padding: .4rem .55rem;
+  border-top: 1px solid var(--border);
+}
+.catalog-page.is-grid-view .content-list > .card .actions > :not(.primary) { visibility: visible; }
+.catalog-page.is-grid-view .content-list > .folder-card { grid-column: 1 / -1; }
+
 .collection-visual {
   display: grid;
   place-items: center;
@@ -362,9 +484,30 @@ body.catalog-page {
   font-size: 2rem;
   border-radius: var(--radius) 0 0 var(--radius);
 }
+/* En fila densa la lámina de la colección ocupa lo mismo que una miniatura. */
+.catalog-page .content-list > .card .collection-visual {
+  width: 2.75rem;
+  min-height: 1.6rem;
+  height: 1.6rem;
+  margin-left: .4rem;
+  font-size: 1rem;
+  border-radius: 4px;
+}
+.catalog-page.is-grid-view .card .collection-visual {
+  width: auto;
+  height: auto;
+  min-height: 5rem;
+  margin: 0;
+  /* Más tinte que en la fila: aquí ocupa el sitio de un póster y tiene que
+     leerse como lámina, no como un hueco en blanco. */
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-2));
+  font-size: 1.75rem;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
 .empty-state {
   width: min(32rem, 100%);
-  margin: clamp(1rem, 7vh, 4rem) auto;
+  margin: clamp(1rem, 5vh, 2.5rem) auto;
   padding: 1.5rem;
   border: 1px dashed var(--border);
   border-radius: var(--radius);
@@ -941,6 +1084,38 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   box-shadow: 0 1px 4px rgb(0 0 0 / .35);
 }
 .pdf-page canvas { display: block; border-radius: 4px; }
+/*
+ * Marca de fondo con la identidad, repetida sobre toda la hoja.
+ *
+ * El equilibrio que se busca: invisible de facto al leer, presente en una foto
+ * del monitor. Se calibra con --pdf-mark-alpha y nada más; por debajo de .10 la
+ * compresión de una cámara de móvil se la puede comer, y por encima de .18
+ * empieza a estorbar sobre texto pequeño.
+ *
+ * Negro a baja opacidad en vez de un gris fijo: así el tono lo pone la propia
+ * página y la marca funciona igual sobre blanco que sobre un PDF de fondo claro
+ * con color.
+ */
+.pdf-page-mark {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  color: #000;
+  opacity: var(--pdf-mark-alpha, .13);
+  pointer-events: none;
+  user-select: none;
+}
+.pdf-page-mark text {
+  font: 700 15px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+/* Si el usuario pide más contraste, la marca no debe ser la que se lo quite. */
+@media (prefers-contrast: more) {
+  .pdf-page-mark { opacity: .09; }
+}
 .pdf-page-legal {
   position: absolute;
   z-index: 3;
@@ -1046,39 +1221,42 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   body.catalog-page {
     height: 100vh;
     height: 100dvh;
-    padding: .5rem;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    padding: .35rem;
   }
-  .catalog-header { align-items: flex-start; }
-  .catalog-header #subtitle,
-  .catalog-header-actions #refresh { display: none; }
-  .catalog-header-actions { gap: .35rem; }
-  .catalog-header-actions button { padding: .42rem .55rem; }
-  .catalog-toolbar { flex-wrap: nowrap; }
-  .catalog-toolbar #new-collection { white-space: nowrap; }
-  .catalog-layout {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
+  .catalog-bar { gap: .2rem; padding: .25rem .3rem; }
+  .catalog-bar #search { flex: 1 1 5rem; }
+  .catalog-bar #refresh { display: none; }
+
+  /* El lateral pasa a ser un cajón sobre la lista. La banda horizontal que había
+     antes se llevaba 10,5rem de alto en el sitio donde menos hay. */
+  .catalog-layout { grid-template-columns: minmax(0, 1fr); }
   .catalog-sidebar {
-    max-height: 10.5rem;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
+    position: absolute;
+    z-index: 40;
+    inset-block: 0;
+    left: 0;
+    width: min(15rem, 82%);
+    /* La barra queda por encima del cajón: sin este hueco, la primera ubicación
+       nace debajo de ella y no se ve. */
+    padding-top: calc(var(--catalog-bar-h, 3rem) + .5rem);
+    border-right: 1px solid var(--border);
+    box-shadow: 6px 0 24px rgb(0 0 0 / .35);
+    transform: translateX(-102%);
+    transition: transform .18s ease;
   }
-  .library-views { grid-template-columns: 1fr 1fr; }
-  .archived-view { margin-top: .35rem; }
-  /* Una sola columna conserva la jerarquía visual de las carpetas. */
-  .folder-tree { grid-template-columns: minmax(0, 1fr); }
-  .catalog-location { padding: .45rem .5rem .25rem; }
-  .content-tabs { padding: .1rem .5rem .4rem; overflow-x: auto; }
-  .catalog-results { padding: .5rem; }
-  .catalog-page .card { grid-template-columns: 4rem minmax(0, 1fr); }
-  .catalog-page .card img { width: 4rem; min-height: 4rem; }
-  .catalog-page .card .actions {
-    grid-column: 1 / -1;
-    border-left: 0;
-    border-top: 1px solid var(--border);
+  body.is-places-open .catalog-sidebar { transform: none; }
+  #places-scrim:not([hidden]) {
+    display: block;
+    position: absolute;
+    z-index: 35;
+    inset: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(0 0 0 / .45);
   }
+
+  .catalog-page .card .body { flex-wrap: wrap; gap: 0 .45rem; }
   .collection-editor-grid { grid-template-columns: minmax(0, 1fr); }
   .concept-cards { grid-template-columns: minmax(0, 1fr); }
 

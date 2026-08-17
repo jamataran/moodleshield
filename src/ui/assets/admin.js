@@ -248,6 +248,49 @@ function renderPlatformContent () {
   document.querySelector('#materialsEmpty').hidden = materials.length > 0
 }
 
+function renderPlaybackGrants () {
+  showNotice('#notice', data.message, 'ok')
+  const logoutCsrf = document.querySelector('#logout input[name="_csrf"]')
+  if (logoutCsrf) logoutCsrf.value = data.logoutCsrf
+  const rows = document.querySelector('#grantRows')
+  for (const grant of data.grants ?? []) {
+    const tr = document.createElement('tr')
+    const resource = grant.resource_kind
+      ? `${grant.resource_kind} · ${grant.resource_id}`
+      : 'Catálogo'
+    const status = grant.revoked_at
+      ? `Revocada · ${grant.revoked_reason ?? 'manual'}`
+      : grant.suspicious_at
+        ? 'Sospechosa'
+        : new Date(grant.expires_at) <= new Date() ? 'Caducada' : 'Activa'
+    tr.append(
+      cell(fecha(grant.issued_at)),
+      cell(`${grant.platform_name} · ${grant.user_sub}`),
+      cell(resource),
+      cell(`${grant.request_count} · ${grant.distinct_ips} IP`),
+      cell(status)
+    )
+    const action = document.createElement('td')
+    if (!grant.revoked_at && new Date(grant.expires_at) > new Date()) {
+      const form = document.createElement('form')
+      form.method = 'post'
+      form.action = `/admin/playback-grants/${encodeURIComponent(grant.jti)}/revoke`
+      const csrf = document.createElement('input')
+      csrf.type = 'hidden'
+      csrf.name = '_csrf'
+      csrf.value = grant.revokeCsrf
+      const button = document.createElement('button')
+      button.className = 'danger'
+      button.textContent = 'Revocar'
+      form.append(csrf, button)
+      action.append(form)
+    }
+    tr.append(action)
+    rows.append(tr)
+  }
+  document.querySelector('#grantsEmpty').hidden = (data.grants?.length ?? 0) !== 0
+}
+
 // El login no pasa por aquí: tiene su propio login.js, sin vocabulario LTI.
 if (document.body.dataset.page === 'platforms') {
   renderPlatforms()
@@ -255,4 +298,6 @@ if (document.body.dataset.page === 'platforms') {
   renderForm()
 } else if (document.body.dataset.page === 'platform-content') {
   renderPlatformContent()
+} else if (document.body.dataset.page === 'playback-grants') {
+  renderPlaybackGrants()
 }

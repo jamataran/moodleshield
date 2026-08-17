@@ -23,11 +23,12 @@ export function createChunkedUploader ({ baseUrl = '', headers = () => ({}) } = 
     return { ...headers(), ...extra }
   }
 
-  async function json (path, { method = 'POST', body = null, signal } = {}) {
+  async function json (path, { method = 'POST', body = null, signal, keepalive = false } = {}) {
     const res = await fetch(`${baseUrl}${path}`, {
       method,
       signal,
       body,
+      keepalive,
       headers: requestHeaders(body ? { 'Content-Type': 'application/json' } : {})
     })
     if (res.status === 204) return null
@@ -36,6 +37,9 @@ export function createChunkedUploader ({ baseUrl = '', headers = () => ({}) } = 
     if (!res.ok) {
       const error = new Error(payload?.error ?? `HTTP ${res.status}`)
       error.status = res.status
+      // El código del servidor es lo que distingue un fichero malo (se anota y
+      // se sigue) de una cuota agotada (no tiene sentido seguir intentando).
+      error.code = payload?.code ?? null
       error.payload = payload
       throw error
     }
@@ -121,11 +125,14 @@ export function createChunkedUploader ({ baseUrl = '', headers = () => ({}) } = 
         body: JSON.stringify({})
       })
     } catch (err) {
-      if (signal?.aborted) {
-        // La cancelación es explícita: no se conserva una sesión que el usuario
-        // ha dicho que ya no quiere reanudar.
-        json(`/uploads/${session.uploadId}`, { method: 'DELETE' }).catch(() => {})
-      }
+      // Se retira la sesión SIEMPRE que la subida no llegó a buen puerto, no
+      // sólo al cancelar: este cliente nunca reanuda una sesión anterior —
+      // empieza una nueva— y una sesión abandonada retiene su reserva hasta que
+      // caduca. Con la cuota de subidas activas por profesor, dejarlas atrás
+      // significa que unos pocos ficheros fallidos bloquean al profesor durante
+      // horas. `keepalive` es lo que hace que la limpieza salga aunque el
+      // usuario cierre la pestaña justo después del error.
+      json(`/uploads/${session.uploadId}`, { method: 'DELETE', keepalive: true }).catch(() => {})
       throw err
     }
   }

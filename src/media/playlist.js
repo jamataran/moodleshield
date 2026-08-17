@@ -86,6 +86,7 @@ export function assertVariantsAligned (a, b, { toleranceSeconds = 0.05 } = {}) {
  * @param {string}   [opts.patternScope] cadena que entra en el HMAC de la marca
  * @param {string}   opts.userSub
  * @param {string}   opts.keyToken      autoriza la descarga de la clave AES
+ * @param {string}   opts.sessionJti    liga segmentos y clave a la sesión revocable
  * @param {string}   [opts.basePlaylist] contenido del index.m3u8 de la variante A
  * @param {number}   [opts.expires]     epoch en segundos de caducidad de las URLs
  * @returns {Promise<{body:string, pattern:Uint8Array}>}
@@ -97,6 +98,7 @@ export async function buildUserPlaylist ({
   patternScope,
   userSub,
   keyToken,
+  sessionJti,
   basePlaylist,
   expires,
   // El player pide playlist, clave y segmentos desde la página del visor: si
@@ -134,7 +136,7 @@ export async function buildUserPlaylist ({
     const uri = `${prefix}/${variant}/${segment.name}`
     out[segment.index] =
       config.media.delivery === 'signed'
-        ? `${origin}${signedMediaUrl(uri, { expires: exp })}`
+        ? `${origin}${signedMediaUrl(uri, { expires: exp, sessionJti })}`
         : `${origin}${uri}`
   })
 

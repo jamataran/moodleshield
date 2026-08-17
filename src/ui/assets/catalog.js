@@ -51,7 +51,8 @@ const state = {
   view: 'all',
   folderId: null, // null = raíz de la biblioteca
   query: '',
-  contentFilter: 'all',
+  /** 'list' (filas densas) o 'grid' (láminas con póster). */
+  viewMode: 'list',
   folders: [],
   root: null,
   materials: [],
@@ -68,13 +69,11 @@ const state = {
   focusAfterReload: null
 }
 
-el('subtitle').textContent = boot.mode === 'deeplink'
-  ? 'Elige un recurso o una colección y volverás automáticamente a Moodle'
-  : `Sesión de ${boot.user.name || 'profesor'}`
-el('catalog-title').textContent = boot.mode === 'deeplink' ? 'Seleccionar contenido' : 'Biblioteca'
-el('catalog-context').textContent = boot.mode === 'deeplink'
-  ? 'Configurando una actividad de Moodle'
-  : 'Biblioteca del profesor'
+// El título de la pestaña es el único sitio donde el modo cabe sin gastar
+// pantalla: el modal de Moodle ya se titula «Seleccionar contenido».
+document.title = boot.mode === 'deeplink'
+  ? 'Seleccionar contenido · MoodleShield'
+  : 'Biblioteca · MoodleShield'
 el('dl-token').value = boot.deepLinkToken ?? ''
 
 el('deeplink-help').hidden = boot.mode !== 'deeplink'
@@ -91,16 +90,21 @@ function openHelp () {
 el('help-open').addEventListener('click', openHelp)
 el('help-close').addEventListener('click', () => el('help-dialog').close())
 
-// La explicación importante aparece una vez por sesión de pestaña y queda
-// accesible después desde «Ayuda». Así no consume espacio permanentemente.
-try {
-  const helpKey = `moodleshield-help-${boot.mode}`
-  if (!sessionStorage.getItem(helpKey)) {
-    sessionStorage.setItem(helpKey, '1')
-    queueMicrotask(openHelp)
+// En `deeplink` el profesor acaba de pulsar «Seleccionar contenido» y sabe a qué
+// viene: abrirle un modal encima es cobrarle peaje por entrar, que es justo lo
+// que ADR-022 descartó para el visor. En `manage` es al revés — ha abierto una
+// actividad que no tiene material y necesita que le expliquen qué hacer—, así
+// que ahí sí se abre una vez por sesión de pestaña.
+if (boot.mode === 'manage') {
+  try {
+    const helpKey = `moodleshield-help-${boot.mode}`
+    if (!sessionStorage.getItem(helpKey)) {
+      sessionStorage.setItem(helpKey, '1')
+      queueMicrotask(openHelp)
+    }
+  } catch {
+    // Un navegador que bloquee storage sigue teniendo el botón de Ayuda.
   }
-} catch {
-  // Un navegador que bloquee storage sigue teniendo el botón de Ayuda.
 }
 
 /**
@@ -325,6 +329,8 @@ function renderCrumbs () {
     parts = [{ name: 'Archivados' }]
   } else if (state.view === 'all') {
     parts = [{ name: 'Todo el contenido' }]
+  } else if (state.view === 'course') {
+    parts = [{ name: 'Material de este curso' }]
   } else if (state.folderId === null) {
     parts = [{ id: 'all', name: 'Todo el contenido' }, { name: 'Sin carpeta' }]
   } else {
@@ -420,27 +426,18 @@ function goBack () {
 // Menú «⋯» de las tarjetas
 // ---------------------------------------------------------------------------
 
-function actionMenu (label, actions) {
-  const menu = document.createElement('details')
-  menu.className = 'menu'
-  const summary = document.createElement('summary')
-  summary.setAttribute('aria-label', label)
-  summary.textContent = '⋯'
-  const list = document.createElement('div')
-  list.className = 'menu-list'
-  for (const action of actions) {
-    if (!action) continue
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.textContent = action.label
-    if (action.danger) button.classList.add('danger-text')
-    button.addEventListener('click', () => {
-      menu.open = false
-      action.run()
-    })
-    list.append(button)
-  }
-  menu.append(summary, list)
+/**
+ * Convierte un `<details class="menu">` en un desplegable flotante.
+ *
+ * Va suelto de `actionMenu` porque el menú «＋ Nuevo» de la barra se declara en
+ * el HTML —sus botones tienen ids que el resto del módulo usa— y necesita
+ * exactamente el mismo comportamiento: sacarse del flujo al abrirse para que no
+ * lo recorte el contenedor con scroll, y cerrarse ante cualquier cosa que mueva
+ * su ancla.
+ */
+function menuFlotante (menu) {
+  const summary = menu.querySelector('summary')
+  const list = menu.querySelector('.menu-list')
   // Abrir un menú cierra los demás; el clic fuera los cierra todos (abajo).
   summary.addEventListener('click', () => {
     for (const other of document.querySelectorAll('details.menu[open]')) {
@@ -465,6 +462,30 @@ function actionMenu (label, actions) {
     })
   })
   return menu
+}
+
+function actionMenu (label, actions) {
+  const menu = document.createElement('details')
+  menu.className = 'menu'
+  const summary = document.createElement('summary')
+  summary.setAttribute('aria-label', label)
+  summary.textContent = '⋯'
+  const list = document.createElement('div')
+  list.className = 'menu-list'
+  for (const action of actions) {
+    if (!action) continue
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = action.label
+    if (action.danger) button.classList.add('danger-text')
+    button.addEventListener('click', () => {
+      menu.open = false
+      action.run()
+    })
+    list.append(button)
+  }
+  menu.append(summary, list)
+  return menuFlotante(menu)
 }
 
 document.addEventListener('click', (event) => {
@@ -597,7 +618,7 @@ async function createFolder () {
       body: JSON.stringify({ name, parentId })
     })
     notify('Carpeta creada')
-    state.focusAfterReload = 'new-folder'
+    state.focusAfterReload = 'new-menu-trigger'
     await reload()
   } catch (err) {
     notify(err.message, 'error')
@@ -637,7 +658,7 @@ async function deleteFolder (folder) {
     notify(`Carpeta eliminada; su contenido está en «${parentName}»`)
     if (state.folderId === folder.id) state.folderId = result?.parentId ?? null
     state.navigationHistory = state.navigationHistory.filter((location) => location.folderId !== folder.id)
-    state.focusAfterReload = 'new-folder'
+    state.focusAfterReload = 'new-menu-trigger'
     await reload()
   } catch (err) {
     notify(err.message, 'error')
@@ -744,6 +765,7 @@ window.addEventListener('pagehide', () => {
 function materialCard (item) {
   const card = document.createElement('article')
   card.className = 'card'
+  card.setAttribute('role', 'listitem')
   card.dataset.id = item.id
   card.dataset.kind = item.kind
 
@@ -862,6 +884,7 @@ async function archiveMaterial (item) {
 function collectionCard (collection) {
   const card = document.createElement('article')
   card.className = 'card collection-card'
+  card.setAttribute('role', 'listitem')
   card.dataset.id = collection.id
   card.dataset.kind = 'collection'
 
@@ -1305,8 +1328,6 @@ el('upload-dialog').addEventListener('cancel', (event) => {
   dialogStatus('upload-status', 'La subida sigue en curso. Pulsa «Cancelar» para detenerla.', { error: true, focus: true })
 })
 
-el('upload-open').addEventListener('click', openUpload)
-
 // ---------------------------------------------------------------------------
 // Importación de una carpeta completa
 //
@@ -1318,6 +1339,21 @@ el('upload-open').addEventListener('click', openUpload)
 // La previsión usa `dryRun`: elegir una carpeta para ver qué pasaría no puede
 // crear carpetas en la biblioteca de quien sólo estaba mirando.
 // ---------------------------------------------------------------------------
+
+/**
+ * Cuotas por profesor de la iteración de seguridad (F-12). Que se agoten no es
+ * un problema del fichero que tocaba: es el sistema pidiendo que se espere. Una
+ * importación grande de vídeo las alcanza sola —la cola admite un número
+ * limitado de trabajos pendientes— y hay que pararla, no marcar como fallidos
+ * los cuarenta ficheros que quedaban.
+ */
+const QUOTA_CODES = new Set([
+  'too_many_active_uploads',
+  'too_many_pending_jobs',
+  'upload_quota_exceeded',
+  'owner_storage_quota_exceeded',
+  'storage_capacity_guard'
+])
 
 const SKIP_LABEL = {
   hidden: 'oculto o basura del sistema de ficheros',
@@ -1434,6 +1470,7 @@ el('import-btn').addEventListener('click', async () => {
   let versiones = 0
   let hechos = 0
   let pendientes = []
+  let detenidaPorCuota = null
 
   try {
     // La creación del árbol va aquí y no en la previsión: es la confirmación
@@ -1466,8 +1503,16 @@ el('import-btn').addEventListener('click', async () => {
         else nuevos++
       } catch (err) {
         if (err.name === 'AbortError') break
-        // Un fichero corrupto o demasiado grande no debe tumbar la importación
-        // entera: se anota, se sigue y se cuenta al final.
+        // Una cuota agotada no es un fichero malo: es el sistema diciendo
+        // «ahora no». Seguir intentando marcaría como error todo lo que queda
+        // y llenaría la biblioteca de subidas rechazadas, así que se para y se
+        // dice qué hacer.
+        if (QUOTA_CODES.has(err.code)) {
+          detenidaPorCuota = err.message
+          break
+        }
+        // Un fichero corrupto o demasiado grande sí es sólo suyo: se anota, se
+        // sigue y se cuenta al final.
         fallidos.push(`${item.path}: ${err.message}`)
       }
       hechos++
@@ -1483,21 +1528,29 @@ el('import-btn').addEventListener('click', async () => {
     el('import-btn').disabled = false
     el('import-current').textContent = ''
 
-    if (nuevos || versiones || fallidos.length) {
+    const restantes = pendientes.length - hechos
+    if (nuevos || versiones || fallidos.length || detenidaPorCuota) {
       const resumen = [
         nuevos ? `${nuevos} material(es) nuevo(s)` : '',
         versiones ? `${versiones} versión(es) nueva(s)` : '',
         fallidos.length ? `${fallidos.length} con error` : ''
       ].filter(Boolean).join(' · ')
 
-      if (fallidos.length === 0 && !cancelada) {
+      if (!fallidos.length && !detenidaPorCuota && !cancelada) {
         el('import-dialog').close()
         notify(`Importación terminada: ${resumen}. El procesado sigue en cola.`)
       } else {
+        const cabecera = detenidaPorCuota
+          ? 'Importación detenida'
+          : cancelada ? 'Importación cancelada' : 'Importación terminada'
         dialogStatus('import-status',
-          `${cancelada ? 'Importación cancelada' : 'Importación terminada'}: ${resumen}.` +
+          `${cabecera}: ${resumen || 'no se subió nada'}.` +
+          (detenidaPorCuota
+            ? ` ${detenidaPorCuota} Quedan ${restantes} fichero(s): espera a que el ` +
+              'procesado avance y vuelve a importar la misma carpeta.'
+            : '') +
           (fallidos.length ? ` Fallaron: ${fallidos.slice(0, 5).join('; ')}` : ''),
-          { error: fallidos.length > 0, focus: true })
+          { error: Boolean(fallidos.length || detenidaPorCuota), focus: true })
       }
       await reload()
     } else if (cancelada) {
@@ -1664,7 +1717,7 @@ async function loadPicker ({ append = false } = {}) {
   const cursor = append ? state.pickerNextCursor : null
   if (append && !cursor) return
   const generation = ++pickerGeneration
-  const params = new URLSearchParams({ limit: '60', ready: '1' })
+  const params = new URLSearchParams({ limit: '60' })
   const query = el('collection-search').value.trim()
   if (query) params.set('q', query)
   if (cursor) params.set('cursor', cursor)
@@ -1673,10 +1726,11 @@ async function loadPicker ({ append = false } = {}) {
   try {
     const data = await apiJson(`/materials?${params}`)
     if (generation !== pickerGeneration) return
-    // Sólo lo insertable: listo, con revisión publicada y sin archivar.
-    const ready = data.materials.filter((m) =>
-      m.status === 'ready' && !m.archived && m.hasActiveRevision)
-    const combined = append ? [...state.pickerResults, ...ready] : ready
+    // Lo insertable: publicado o aún en cola (el alumno lo verá al procesarse),
+    // sin archivar. Misma regla que la inserción de material suelto.
+    const insertable = data.materials.filter((m) =>
+      !m.archived && (m.hasActiveRevision || INSERTABLE_STATUSES.has(m.status)))
+    const combined = append ? [...state.pickerResults, ...insertable] : insertable
     state.pickerResults = [...new Map(combined.map((item) => [`${item.kind}:${item.id}`, item])).values()]
     state.pickerNextCursor = data.nextCursor
     renderPicker()
@@ -1698,8 +1752,10 @@ function renderPicker () {
     name.textContent = `${material.kind === 'pdf' ? 'PDF' : 'Vídeo'} · ${material.title}`
     const where = document.createElement('span')
     where.className = 'muted'
+    // La insignia de estado avisa de que se añade algo aún en preparación.
     where.textContent = ` — en ${pathName(material.folderId)}` +
-      (isShared(material) ? ` · de ${ownerLabel(material)}` : '')
+      (isShared(material) ? ` · de ${ownerLabel(material)}` : '') +
+      (material.status !== 'ready' ? ` · ${STATUS_LABEL[material.status] ?? material.status}` : '')
     label.append(name, where)
 
     const toggle = document.createElement('button')
@@ -1784,7 +1840,7 @@ async function saveCollection ({ insert = false } = {}) {
     el('collection-dialog').close()
     state.collectionDraft = { editing: null, items: [] }
     if (insert) return insertResource('collection', collectionId)
-    state.focusAfterReload = 'new-collection'
+    state.focusAfterReload = 'new-menu-trigger'
     await reload()
   } catch (err) {
     if (err.status === 409 && err.payload?.code === 'stale_collection') {
@@ -1830,7 +1886,6 @@ el('collection-dialog').addEventListener('cancel', (event) => {
   dialogStatus('collection-error', 'Espera a que termine el guardado.', { error: true, focus: true })
 })
 el('collection-dialog').addEventListener('close', () => { pickerGeneration++ })
-el('new-collection').addEventListener('click', openNewCollection)
 
 // ---------------------------------------------------------------------------
 // Deep Linking
@@ -1872,33 +1927,38 @@ function render () {
   el('all-content').classList.toggle('current', state.view === 'all')
   el('root-content').classList.toggle('current', state.view === 'browse' && state.folderId === null)
   el('archived-toggle').classList.toggle('current', state.view === 'archived')
-
-  for (const tab of document.querySelectorAll('[data-content-filter]')) {
-    const selected = tab.dataset.contentFilter === state.contentFilter
-    tab.setAttribute('aria-selected', String(selected))
-    tab.tabIndex = selected ? 0 : -1
-    tab.classList.toggle('current', selected)
+  const courseToggle = el('course-toggle')
+  if (courseToggle) {
+    courseToggle.hidden = !boot.hasCourse
+    courseToggle.classList.toggle('current', state.view === 'course')
   }
+
+  // Las subcarpetas del nivel abierto son parte del contenido de ese nivel, como
+  // en cualquier explorador. El lateral las repite como atajo, pero quien navega
+  // por la lista no debería tener que mirar a otro sitio para entrar en una.
+  // En «Todo el contenido», en búsqueda y en archivados no hay un nivel abierto
+  // del que colgar, así que el grupo no aparece.
+  const subfolders = state.view === 'browse' ? childrenOf(state.folderId) : []
+  el('section-subfolders').hidden = subfolders.length === 0
+  el('subfolder-grid').replaceChildren(...subfolders.map(folderCard))
 
   el('collections-heading').textContent = state.view === 'archived'
     ? 'Colecciones archivadas'
-    : 'Colecciones'
-  const showCollections = state.contentFilter !== 'materials'
-  el('section-collections').hidden = !showCollections || state.collections.length === 0
+    : state.view === 'course' ? 'Colecciones usadas en este curso' : 'Colecciones'
+  el('section-collections').hidden = state.collections.length === 0
   el('collection-grid').replaceChildren(...state.collections.map(collectionCard))
 
   el('materials-heading').textContent = state.view === 'archived'
     ? 'Materiales archivados'
-    : 'Materiales'
-  const showMaterials = state.contentFilter !== 'collections'
-  el('section-materials').hidden = !showMaterials || state.materials.length === 0
+    : state.view === 'course' ? 'Materiales usados en este curso' : 'Materiales'
+  el('section-materials').hidden = state.materials.length === 0
   el('material-grid').replaceChildren(...state.materials.map(materialCard))
 
-  loadMoreEl.hidden = !showMaterials || !state.nextCursor
-  loadMoreCollectionsEl.hidden = !showCollections || !state.nextCollectionCursor
+  loadMoreEl.hidden = !state.nextCursor
+  loadMoreCollectionsEl.hidden = !state.nextCollectionCursor
 
-  const allEmpty = (!showCollections || state.collections.length === 0) &&
-    (!showMaterials || state.materials.length === 0)
+  const allEmpty = state.collections.length === 0 && state.materials.length === 0 &&
+    subfolders.length === 0
   emptyEl.hidden = !allEmpty
   if (allEmpty) {
     let title = 'No hay contenido aquí'
@@ -1909,21 +1969,19 @@ function render () {
     } else if (state.view === 'archived') {
       title = 'No hay contenido archivado'
       description = 'Lo que archives aparecerá aquí y podrás restaurarlo.'
+    } else if (state.view === 'course') {
+      title = 'Este curso todavía no usa ningún material'
+      description = 'Aquí aparece lo que cualquier profesor haya insertado en este ' +
+        'curso, también si es de otro. Inserta material con «Seleccionar contenido».'
     } else if (state.folderId !== null) {
       title = 'Esta ubicación está vacía'
       description = 'Sube un material aquí o mueve contenido desde otra carpeta.'
-    } else if (state.contentFilter === 'collections') {
-      title = 'No hay colecciones en esta ubicación'
-      description = 'Crea una para agrupar varios materiales en una única actividad.'
-    } else if (state.contentFilter === 'materials') {
-      title = 'No hay materiales en esta ubicación'
-      description = 'Sube un vídeo o un PDF para empezar.'
     } else {
       description = 'Sube un vídeo o un PDF, o crea una colección.'
     }
     emptyTitleEl.textContent = title
     emptyDescriptionEl.textContent = description
-    el('empty-upload').hidden = state.view === 'archived' || state.view === 'search'
+    el('empty-upload').hidden = ['archived', 'search', 'course'].includes(state.view)
   }
 
   renderCrumbs()
@@ -1999,6 +2057,11 @@ async function load ({ appendMaterials = false, appendCollections = false, refre
   } else if (state.view === 'browse') {
     params.set('folderId', state.folderId ?? 'root')
     collectionParams.set('folderId', state.folderId ?? 'root')
+  } else if (state.view === 'course') {
+    // Plano y sin carpeta: este material vive en la biblioteca de su autor y
+    // esas carpetas no se enseñan (services/materials.js).
+    params.set('scope', 'course')
+    collectionParams.set('scope', 'course')
   }
   if (appendMaterials && state.nextCursor) params.set('cursor', state.nextCursor)
   if (appendCollections && state.nextCollectionCursor) {
@@ -2123,33 +2186,126 @@ el('archived-toggle').addEventListener('click', () => {
   navigate({ view: 'archived' })
 })
 
+el('course-toggle')?.addEventListener('click', () => {
+  if (state.view === 'course') return goBack()
+  navigate({ view: 'course' })
+})
+
 el('all-content').addEventListener('click', openAll)
 el('root-content').addEventListener('click', () => openFolder(null))
 el('back').addEventListener('click', goBack)
-el('new-folder').addEventListener('click', () => { void createFolder() })
 el('refresh').addEventListener('click', () => { void reload() })
 el('empty-upload').addEventListener('click', openUpload)
 loadMoreEl.addEventListener('click', () => { void load({ appendMaterials: true }) })
 loadMoreCollectionsEl.addEventListener('click', () => { void load({ appendCollections: true }) })
 
-const contentTabs = [...document.querySelectorAll('[data-content-filter]')]
-for (const tab of contentTabs) {
-  tab.addEventListener('click', () => {
-    state.contentFilter = tab.dataset.contentFilter
-    render()
-  })
-  tab.addEventListener('keydown', (event) => {
-    const current = contentTabs.indexOf(tab)
-    let next = null
-    if (event.key === 'ArrowLeft') next = (current - 1 + contentTabs.length) % contentTabs.length
-    if (event.key === 'ArrowRight') next = (current + 1) % contentTabs.length
-    if (event.key === 'Home') next = 0
-    if (event.key === 'End') next = contentTabs.length - 1
-    if (next === null) return
-    event.preventDefault()
-    contentTabs[next].click()
-    contentTabs[next].focus()
+// El menú «＋ Nuevo» agrupa las tres formas de crear contenido. Cada una ya
+// resuelve su destino con `destinationFolderId()`, así que sólo hay que cerrar
+// el desplegable antes de abrir el diálogo: si no, se queda abierto detrás.
+const newMenu = menuFlotante(el('new-menu'))
+for (const [id, run] of [
+  ['upload-open', openUpload],
+  ['new-folder', () => { void createFolder() }],
+  ['new-collection', openNewCollection]
+]) {
+  el(id).addEventListener('click', () => {
+    newMenu.open = false
+    run()
   })
 }
+
+// ---------------------------------------------------------------------------
+// Lista vs cuadrícula
+// ---------------------------------------------------------------------------
+
+const VIEW_MODE_KEY = 'moodleshield-vista'
+
+function applyViewMode () {
+  const grid = state.viewMode === 'grid'
+  document.body.classList.toggle('is-grid-view', grid)
+  const toggle = el('view-toggle')
+  toggle.setAttribute('aria-pressed', String(grid))
+  toggle.textContent = grid ? '▤' : '▦'
+  toggle.setAttribute('aria-label', grid ? 'Ver en lista' : 'Ver en cuadrícula')
+}
+
+try {
+  if (sessionStorage.getItem(VIEW_MODE_KEY) === 'grid') state.viewMode = 'grid'
+} catch {
+  // Sin storage se empieza en lista, que es el valor por defecto.
+}
+applyViewMode()
+
+el('view-toggle').addEventListener('click', () => {
+  state.viewMode = state.viewMode === 'grid' ? 'list' : 'grid'
+  try { sessionStorage.setItem(VIEW_MODE_KEY, state.viewMode) } catch { /* da igual */ }
+  applyViewMode()
+})
+
+// ---------------------------------------------------------------------------
+// Cajón de ubicaciones (sólo cuando el lateral no cabe al lado)
+// ---------------------------------------------------------------------------
+
+// El cajón se superpone a todo el panel, barra de comandos incluida. Para que su
+// primera ubicación no quede debajo hace falta el alto real de esa barra, que
+// depende del tamaño de los botones (44 px en táctil, menos con ratón).
+const barraCatalogo = document.querySelector('.catalog-bar')
+new ResizeObserver(([entrada]) => {
+  document.body.style.setProperty('--catalog-bar-h', `${entrada.target.offsetHeight}px`)
+}).observe(barraCatalogo)
+
+function setPlacesOpen (open) {
+  document.body.classList.toggle('is-places-open', open)
+  el('places-toggle').setAttribute('aria-expanded', String(open))
+  el('places-scrim').hidden = !open
+}
+
+el('places-toggle').addEventListener('click', () => {
+  setPlacesOpen(!document.body.classList.contains('is-places-open'))
+})
+el('places-scrim').addEventListener('click', () => setPlacesOpen(false))
+// Navegar cierra el cajón: si no, tapa justo la lista que se acaba de pedir.
+el('places').addEventListener('click', (event) => {
+  if (event.target.closest('button') && !event.target.closest('details.menu')) setPlacesOpen(false)
+})
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.body.classList.contains('is-places-open')) {
+    setPlacesOpen(false)
+    el('places-toggle').focus()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Teclado del explorador
+// ---------------------------------------------------------------------------
+
+/**
+ * Flechas para recorrer la lista y Retroceso para subir un nivel, como en
+ * cualquier gestor de archivos. No hay `roving tabindex`: cada fila sigue siendo
+ * tabulable, así que esto es un atajo añadido y no cambia el orden de tabulación
+ * ni lo que anuncia un lector de pantalla.
+ */
+resultsEl.addEventListener('keydown', (event) => {
+  if (event.key === 'Backspace' && !event.target.matches('input, textarea, select')) {
+    event.preventDefault()
+    return goBack()
+  }
+  const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End']
+  if (!keys.includes(event.key)) return
+  // El primer control de cada fila es el que la abre o la inserta; es el que
+  // recibe el foco al recorrer la lista.
+  const rows = [...resultsEl.querySelectorAll('.content-list > [role="listitem"]')]
+    .map((row) => row.querySelector('button:not(:disabled), a[href]'))
+    .filter(Boolean)
+  if (rows.length === 0) return
+  const current = rows.findIndex((row) => row === event.target)
+  let next
+  if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = rows.length - 1
+  else if (current === -1) next = 0
+  else next = Math.min(rows.length - 1, Math.max(0, current + (event.key === 'ArrowDown' ? 1 : -1)))
+  event.preventDefault()
+  rows[next].focus()
+})
 
 await reload()

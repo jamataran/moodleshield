@@ -115,9 +115,35 @@ test('la API rechaza token o contexto ausentes', async () => {
   assert.equal(noContext.response.status, 400)
 })
 
+test('la lista de plataformas respeta la allowlist del token de migración', async () => {
+  const hiddenPlatformId = randomUUID()
+  await query(
+    `INSERT INTO lti_platform
+       (id, name, issuer, client_id, auth_login_url, auth_token_url, jwks_url)
+     VALUES ($1,'Moodle oculto','https://hidden.example.test','hidden-client',
+             'https://hidden.example.test/auth','https://hidden.example.test/token',
+             'https://hidden.example.test/keys')`,
+    [hiddenPlatformId]
+  )
+  const previous = config.contentApi.allowedPlatformIds
+  config.contentApi.allowedPlatformIds = [PLATFORM_ID]
+  try {
+    const listed = await json('/api/v1/platforms', {
+      headers: { Authorization: `Bearer ${TOKEN}` }
+    })
+    assert.equal(listed.response.status, 200)
+    assert.deepEqual(listed.body.platforms.map((platform) => platform.id), [PLATFORM_ID])
+  } finally {
+    config.contentApi.allowedPlatformIds = previous
+  }
+})
+
 test('sube por fragmentos y deja muchos ficheros pendientes sin procesarlos en la app web', async () => {
   const created = []
-  for (const [filename, content] of [['uno.mp4', 'abcdefgh'], ['dos.mp4', 'ijklmnop']]) {
+  for (const [filename, content] of [
+    ['uno.mp4', '\x00\x00\x00\x18ftypisomvideo-uno'],
+    ['dos.mp4', '\x00\x00\x00\x18ftypisomvideo-dos']
+  ]) {
     const reserved = await json('/api/v1/uploads', {
       method: 'POST',
       headers: headers({ 'Content-Type': 'application/json' }),
@@ -208,17 +234,24 @@ test('importar una carpeta crea el árbol, y reimportarla genera versiones sin c
   assert.equal(carpetas[1].parent_id, null)
 
   // 3. Los bytes viajan por el protocolo de siempre, ya con carpeta asignada.
+  //    La cabecera tiene que ser un MP4 creíble: desde la iteración de
+  //    seguridad, el reintegrado comprueba la firma del contenedor antes de
+  //    ceder el fichero a ffmpeg.
+  const MP4 = Buffer.concat([
+    Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(4)
+  ])
   const subir = async (folderId, materialId, expected = 202) => {
     const reserved = await json('/api/v1/uploads', {
       method: 'POST',
       headers: headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
-        kind: 'video', filename: 'clase.mp4', size: 8, title: 'clase', folderId, materialId
+        kind: 'video', filename: 'clase.mp4', size: MP4.length, title: 'clase', folderId, materialId
       })
     })
     assert.equal(reserved.response.status, 201)
     for (let index = 0; index < reserved.body.chunkCount; index++) {
-      const chunk = Buffer.from('abcdefgh'.slice(index * 5, (index + 1) * 5))
+      const chunk = MP4.subarray(index * reserved.body.chunkBytes,
+        Math.min((index + 1) * reserved.body.chunkBytes, MP4.length))
       const response = await fetch(
         `${baseUrl}/api/v1/uploads/${reserved.body.uploadId}/chunks/${index}`,
         { method: 'PUT', headers: headers({ 'Content-Length': String(chunk.length) }), body: chunk }
@@ -231,6 +264,15 @@ test('importar una carpeta crea el árbol, y reimportarla genera versiones sin c
       body: '{}'
     })
     assert.equal(completed.response.status, expected)
+    if (expected !== 202) {
+      // Un `complete` que falla NO libera la reserva: la retiene hasta que
+      // caduca la sesión. El cliente real la retira (ver assets/chunked-upload.js)
+      // y aquí hay que hacer lo mismo, o esta prueba deja consumida una plaza de
+      // la cuota de subidas activas y rompe la siguiente.
+      const cancelled = await fetch(`${baseUrl}/api/v1/uploads/${reserved.body.uploadId}`,
+        { method: 'DELETE', headers: headers() })
+      assert.equal(cancelled.status, 204)
+    }
     return completed.body
   }
 
@@ -267,4 +309,33 @@ test('importar una carpeta crea el árbol, y reimportarla genera versiones sin c
     2,
     'la segunda importación es una revisión, no un material nuevo'
   )
+})
+
+test('la reserva transaccional impide eludir la cuota con subidas paralelas', async () => {
+  const previous = config.uploads.maxActivePerOwner
+  config.uploads.maxActivePerOwner = 1
+  try {
+    const first = await json('/api/v1/uploads', {
+      method: 'POST',
+      headers: headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ kind: 'video', filename: 'reserva.mp4', size: 12 })
+    })
+    assert.equal(first.response.status, 201)
+
+    const second = await json('/api/v1/uploads', {
+      method: 'POST',
+      headers: headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ kind: 'video', filename: 'otra.mp4', size: 12 })
+    })
+    assert.equal(second.response.status, 429)
+    assert.equal(second.body.code, 'too_many_active_uploads')
+
+    const cancelled = await fetch(`${baseUrl}/api/v1/uploads/${first.body.uploadId}`, {
+      method: 'DELETE',
+      headers: headers()
+    })
+    assert.equal(cancelled.status, 204)
+  } finally {
+    config.uploads.maxActivePerOwner = previous
+  }
 })
