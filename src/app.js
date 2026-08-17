@@ -11,6 +11,7 @@ import { collectionsRouter } from './routes/collections.js'
 import { foldersRouter } from './routes/folders.js'
 import { materialsRouter } from './routes/materials.js'
 import { uploadsRouter } from './routes/uploads.js'
+import { importsRouter } from './routes/imports.js'
 import { hlsRouter, mediaRouter } from './routes/hls.js'
 import { progressRouter } from './routes/progress.js'
 import { contentApiRouter } from './routes/content-api.js'
@@ -89,6 +90,7 @@ export async function createApp () {
   app.use('/lti', ltiRouter)
   app.use('/materials', materialsRouter)
   app.use('/uploads', uploadsRouter)
+  app.use('/imports', importsRouter)
   app.use('/folders', foldersRouter)
   app.use('/collections', collectionsRouter)
   app.use('/videos', videosRouter)

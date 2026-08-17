@@ -115,6 +115,7 @@ Origen más probable: Ana García Pérez (12345678Z) — 100.0% de coincidencia.
 | 🔌 **LTI 1.3 nativo** | Sin plugins ni parches en Moodle. Un alta de administrador y listo |
 | 🔗 **Deep Linking** | El profesor sube e inserta el material sin salir del editor del curso |
 | 📁 **Biblioteca del profesor** | Explorador de archivos con carpetas anidadas, búsqueda y material archivado |
+| 📦 **Importar una carpeta entera** | Se sube respetando la estructura interna; los ocultos se omiten y un fichero repetido entra como **versión nueva**, no como duplicado |
 | 🗂️ **Colecciones** | Varios materiales agrupados en **una sola actividad** de Moodle |
 | ♻️ **Revisiones** | Sustituye un fichero sin cambiar el UUID que Moodle lleva incrustado; rollback incluido |
 | 🏢 **Multiinstancia** | Varios Moodle y varios profesores aislados por `platform_id` + `owner_sub` |
@@ -297,7 +298,7 @@ capa por capa— en [`docs/arquitectura.md`](docs/arquitectura.md).
 |---|---|
 | 🧭 [`docs/README.md`](docs/README.md) | **Índice de la documentación, estado del proyecto y hoja de ruta** |
 | 🏗️ [`docs/arquitectura.md`](docs/arquitectura.md) | Flujos, modelo de datos, endpoints, modelo de seguridad |
-| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…020: por qué cada decisión y cómo revertirla |
+| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…024: por qué cada decisión y cómo revertirla |
 | 💻 [`docs/desarrollo.md`](docs/desarrollo.md) | **Guía para desarrolladores**: entorno, tests, convenciones, depuración |
 | 🎓 [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle, en seis pasos, con diagnóstico |
 | 🔐 [`docs/https-tunel.md`](docs/https-tunel.md) | HTTPS público y túneles para desarrollo local |

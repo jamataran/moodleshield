@@ -24,13 +24,17 @@ COPY infra/nginx/proxy_headers.conf /etc/nginx/proxy_headers.conf
 
 # El entrypoint oficial pasa envsubst sobre /etc/nginx/templates/*.template y
 # escribe el resultado en /etc/nginx/conf.d/. El filtro limita la sustitución a
-# estas dos variables, para que $uri, $arg_* y demás variables de nginx lleguen
+# estas tres variables, para que $uri, $arg_* y demás variables de nginx lleguen
 # intactas a la configuración final.
 #
-# El valor por defecto de MAX_UPLOAD_SIZE no es decorativo: si llegara vacío,
+# Los valores por defecto no son decorativos: si llegaran vacíos,
 # `client_max_body_size ;` es un error de sintaxis y nginx no arrancaría.
-ENV NGINX_ENVSUBST_FILTER="^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE)\$" \
-    MAX_UPLOAD_SIZE=4g
+#
+# MAX_CHUNK_SIZE acota los PUT del protocolo troceado. Tiene que ser mayor que
+# UPLOAD_CHUNK_BYTES (16 MiB por defecto) o cada fragmento responderá 413.
+ENV NGINX_ENVSUBST_FILTER="^(MEDIA_LINK_SECRET|MAX_UPLOAD_SIZE|MAX_CHUNK_SIZE)\$" \
+    MAX_UPLOAD_SIZE=4g \
+    MAX_CHUNK_SIZE=32m
 
 EXPOSE 8080
 

@@ -124,6 +124,7 @@ serving static files with nginx. It makes no difference whether you have 10 stud
 | 🔌 **Native LTI 1.3** | No Moodle plugins, no patches. One admin registration and you're done |
 | 🔗 **Deep Linking** | Teachers upload and insert material without leaving the course editor |
 | 📁 **Teacher library** | A file explorer with nested folders, search, and an archive |
+| 📦 **Whole-folder import** | Uploads a directory tree keeping its structure; hidden files are skipped and a repeated file lands as a **new revision**, not a duplicate |
 | 🗂️ **Collections** | Several materials grouped into **a single Moodle activity** |
 | ♻️ **Revisions** | Replace a file without changing the UUID Moodle has embedded; rollback included |
 | 🏢 **Multi-tenant** | Multiple Moodle instances and teachers isolated by `platform_id` + `owner_sub` |
@@ -304,7 +305,7 @@ All reference documentation is in Spanish.
 |---|---|
 | 🧭 [`docs/README.md`](docs/README.md) | **Documentation index, project status and roadmap** |
 | 🏗️ [`docs/arquitectura.md`](docs/arquitectura.md) | Flows, data model, endpoints, security model |
-| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…020: why each decision, and how to reverse it |
+| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…024: why each decision, and how to reverse it |
 | 💻 [`docs/desarrollo.md`](docs/desarrollo.md) | **Developer guide**: environment, tests, conventions, debugging |
 | 🎓 [`docs/moodle-setup.md`](docs/moodle-setup.md) | Registering the tool in Moodle, in six steps, with troubleshooting |
 | 🔐 [`docs/https-tunel.md`](docs/https-tunel.md) | Public HTTPS and tunnels for local development |

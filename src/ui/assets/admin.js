@@ -43,7 +43,11 @@ function renderPlatforms () {
     content.className = 'btn'
     content.href = `/admin/platforms/${encodeURIComponent(platform.id)}/contenido`
     content.textContent = 'Contenido'
-    action.append(link, ' ', content)
+    const importar = document.createElement('a')
+    importar.className = 'btn'
+    importar.href = `/admin/platforms/${encodeURIComponent(platform.id)}/importar`
+    importar.textContent = 'Importar'
+    action.append(link, ' ', content, ' ', importar)
     tr.append(action)
     rows.append(tr)
   }
@@ -177,6 +181,8 @@ function renderPlatformContent () {
   text(document.querySelector('#issuer'), platform.issuer ?? '')
   const link = document.querySelector('#platformLink')
   if (link && platform.id) link.href = `/admin/platforms/${encodeURIComponent(platform.id)}`
+  const importar = document.querySelector('#importLink')
+  if (importar && platform.id) importar.href = `/admin/platforms/${encodeURIComponent(platform.id)}/importar`
 
   const totals = data.totals ?? {}
   text(document.querySelector('#totals'),

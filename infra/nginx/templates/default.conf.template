@@ -123,7 +123,14 @@ server {
 
     # Protocolo troceado compatible con el límite de cuerpo de Cloudflare. Los
     # PUT llevan sólo 16 MiB por defecto y se escriben directamente en app.
+    #
+    # `client_max_body_size` NO es opcional aquí: el bloque `server` lo deja en
+    # 1m (V-17) y esa herencia hacía que cada fragmento respondiera 413. Se
+    # dimensiona con MAX_CHUNK_SIZE, que debe ser mayor que UPLOAD_CHUNK_BYTES;
+    # sigue siendo dos órdenes de magnitud menor que el fichero completo, que es
+    # lo que buscaba el endurecimiento.
     location ^~ /uploads/ {
+        client_max_body_size ${MAX_CHUNK_SIZE};
         proxy_pass http://moodleshield_app;
         proxy_request_buffering off;
         proxy_http_version 1.1;
@@ -133,6 +140,19 @@ server {
     }
 
     location = /uploads {
+        client_max_body_size ${MAX_CHUNK_SIZE};
+        proxy_pass http://moodleshield_app;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        include /etc/nginx/proxy_headers.conf;
+    }
+
+    # Importación desde la consola de administración: mismo protocolo troceado,
+    # bajo la instancia cuyo contenido se está importando.
+    location ~ "^/admin/platforms/[0-9a-fA-F-]{36}/import/" {
+        client_max_body_size ${MAX_CHUNK_SIZE};
         proxy_pass http://moodleshield_app;
         proxy_request_buffering off;
         proxy_http_version 1.1;

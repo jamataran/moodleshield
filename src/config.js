@@ -210,7 +210,14 @@ export const config = {
     maxCollectionItems: integer('MAX_COLLECTION_ITEMS', 50),
     /** Página por defecto y techo duro del listado del catálogo. */
     defaultPageSize: integer('CATALOG_PAGE_SIZE', 200),
-    maxPageSize: integer('CATALOG_MAX_PAGE_SIZE', 500)
+    maxPageSize: integer('CATALOG_MAX_PAGE_SIZE', 500),
+    /**
+     * Ficheros por importación de carpeta. No es un límite técnico sino de
+     * paciencia: se suben en serie, y 500 vídeos son días de transcodificación.
+     * Pasado el tope se pide dividir en varias importaciones, que además deja
+     * puntos de control naturales.
+     */
+    maxImportEntries: integer('MAX_IMPORT_ENTRIES', 500)
   },
 
   revisions: {
@@ -288,7 +295,20 @@ export const config = {
     passwordHash: adminPasswordHash,
     sessionSecret: adminSessionSecret,
     sessionTtlSeconds: integer('ADMIN_SESSION_TTL_SECONDS', 8 * 60 * 60),
-    allowPrivateLtiHosts: bool('ADMIN_ALLOW_PRIVATE_LTI_HOSTS', false)
+    allowPrivateLtiHosts: bool('ADMIN_ALLOW_PRIVATE_LTI_HOSTS', false),
+    /**
+     * Propietario de la biblioteca institucional: lo que el administrador
+     * importa desde la consola no es de ningún profesor, así que necesita un
+     * `owner_sub` propio por instancia.
+     *
+     * El prefijo `moodleshield:` es lo que garantiza que no choque nunca con el
+     * `sub` de un profesor real, que sale del `id_token` de Moodle. Cambiarlo en
+     * una instalación con contenido ya importado **esconde ese contenido**: las
+     * carpetas siguen ahí, pero pasan a colgar de un propietario que ya no se
+     * consulta. Se cambia antes de importar nada, o no se cambia.
+     */
+    libraryOwnerSub: optional('ADMIN_LIBRARY_OWNER_SUB', 'moodleshield:biblioteca'),
+    libraryOwnerName: optional('ADMIN_LIBRARY_OWNER_NAME', 'Biblioteca del centro')
   },
 
   log: {

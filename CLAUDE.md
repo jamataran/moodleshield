@@ -47,7 +47,7 @@ sueltos. Antes de tocar nada:
 |---|---|
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…022: por qué cada decisión y cómo revertirla |
+| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…024: por qué cada decisión y cómo revertirla |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
 | [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría detallada de la última entrega |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Mapa de fases y dependencias |
@@ -97,6 +97,9 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
   `src/services/sharing.js`. `platform_id` no tiene ninguna.
 - **La autorización va en la sesión, no en el UUID.** Un token de un recurso no
   abre otro. El helper es `authorizeResource(session, kind, id)`.
+- **Importar un fichero que ya existe es una revisión, no un duplicado**
+  (ADR-023). Por eso reimportar una carpeta corregida actualiza las actividades
+  de Moodle ya creadas: el UUID no se mueve.
 - **Ambas variantes llevan marca.** Ninguna es "la limpia" (ADR-005).
 - **`WATERMARK_SECRET` es permanente.** Cambiarlo invalida todas las trazas.
 - **Publicación atómica.** El worker escribe en `.staging/` y publica con un
@@ -109,8 +112,10 @@ migas + tarjetas de carpeta; la colección se compone en un diálogo con buscado
 ```
 src/lti/        handshake OIDC, validación de id_token, Deep Linking, JWKS
 src/routes/     HTTP: videos, documents, collections, materials, folders, hls, auth
+                imports.js reparte un árbol de carpetas y decide alta o revisión
 src/services/   SQL y transacciones; nada de HTTP aquí
                 sharing.js concentra el filtro «propio o compartido»
+                import-plan.js es puro: qué se importa, dónde cae y con qué título
 src/security/   frame-ancestors y la IP real del cliente tras un CDN
 src/admin/      consola: alta de instancias e inventario de contenido por aula
 src/media/      storage (rutas), upload (streaming), transcode, pdf, playlist,

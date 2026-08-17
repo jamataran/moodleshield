@@ -4,6 +4,7 @@ import config from '../config.js'
 import { many, one } from '../db/index.js'
 import { assertUuid } from '../media/storage.js'
 import { createUploadsRouter } from './uploads.js'
+import { createImportsRouter } from './imports.js'
 
 export const contentApiRouter = Router()
 
@@ -100,6 +101,9 @@ contentApiRouter.get('/platforms', requireContentApiToken, async (_req, res, nex
 
 // Recepción resumible por fragmentos; no existe un segundo pipeline de carga.
 contentApiRouter.use('/uploads', createUploadsRouter(requireContentApi))
+// Mismo plan de importación que la biblioteca: un script que migra un árbol de
+// directorios resuelve carpetas y revisiones aquí y sube por `/uploads`.
+contentApiRouter.use('/imports', createImportsRouter(requireContentApi))
 
 contentApiRouter.get('/materials/:kind/:id', requireContentApi, async (req, res, next) => {
   try {

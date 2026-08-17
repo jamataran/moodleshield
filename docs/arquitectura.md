@@ -145,6 +145,47 @@ una hora) y una reescritura de texto. El resto es E/S de disco.
             → video.status = ready
 ```
 
+## El camino de una carpeta entera
+
+Importar no abre un segundo pipeline: abre una fase previa que decide **a dónde
+va cada fichero**, y después usa la subida de siempre ([ADR-023](decisiones.md)).
+
+```
+1. navegador · <input webkitdirectory> → File.webkitRelativePath por fichero
+             → POST /imports/plan { parentId, dryRun: true, entries: [{path, size}] }
+2. app       · clasifica: oculto → fuera; ni vídeo ni PDF → fuera
+             · resuelve el árbol SIN crearlo y devuelve el resumen
+             → «6 carpetas nuevas · 12 vídeos · 4 como versión · 2 omitidos»
+   ── el profesor confirma ──────────────────────────────────────────────
+3. app       · POST /imports/plan (sin dryRun): crea las carpetas que falten
+             · por fichero, busca material PROPIO con ese título en su carpeta
+             → entries: [{ folderId, title, kind, materialId | null }]
+4. navegador · por cada entrada, el protocolo troceado de siempre:
+               POST /uploads (con folderId, o materialId si es revisión)
+               PUT  /uploads/<id>/chunks/<n> …
+               POST /uploads/<id>/complete
+             · un fichero que falla se anota y NO detiene la importación
+```
+
+Tres reglas gobiernan el reparto, y viven en un módulo puro
+(`src/services/import-plan.js`) para poder probarse sin base de datos:
+
+| Regla | Consecuencia |
+|---|---|
+| Un tramo de la ruta que empiece por `.` descarta la entrada | `.DS_Store`, `.git/`, `._clase.mp4`, `__MACOSX/` |
+| Sólo entran vídeo y PDF | El resto se cuenta como omitido, no rompe nada |
+| **Título repetido en la carpeta = revisión, no copia** | El UUID que Moodle lleva incrustado no cambia |
+
+La tercera es la importante: reimportar una carpeta con un vídeo corregido
+**actualiza el contenido de todas las actividades ya creadas** sin tocar
+ninguna. Reimportar mientras la anterior sigue en cola responde 409
+`revision_in_progress` para ese fichero —un material sólo admite una candidata a
+la vez— y la importación continúa con el siguiente.
+
+Lo que la importación **no** hace: crear colecciones. Una carpeta del ordenador
+es una carpeta de la biblioteca. Agrupar varios materiales en una sola actividad
+sigue siendo una decisión explícita en el editor de colecciones.
+
 ## Modelo de datos
 
 ```
@@ -204,10 +245,16 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | GET/POST | `/lti/platforms` | `LTI_ADMIN_TOKEN` | Gestión de plataformas |
 | GET | `/api/v1/platforms` | `CONTENT_API_TOKEN` | Plataformas disponibles para una migración |
 | POST/GET/PUT/DELETE | `/api/v1/uploads…` | token + plataforma + propietario | Mismo protocolo troceado de la UI para scripts/Postman |
+| POST | `/api/v1/imports/plan` | token + plataforma + propietario | Mismo plan de importación de árboles que la biblioteca |
 | GET | `/api/v1/materials/:kind/:id` | token + plataforma + propietario | Estado de material, última revisión y trabajo |
 | GET | `/admin/platforms/:id/contenido` | consola admin | **Inventario del aula**: todo el material de todos sus profesores |
+| GET | `/admin/platforms/:id/importar` | consola admin | Importador de la **biblioteca del centro** |
+| POST | `/admin/platforms/:id/import/imports/plan` | cookie admin + CSRF por cabecera | Plan de importación institucional |
+| — | `/admin/platforms/:id/import/uploads…` | cookie admin + CSRF por cabecera | El mismo protocolo troceado, con el propietario institucional |
+| POST | `/admin/platforms/:id/import/done` | cookie admin + CSRF por cabecera | Cierra la importación y la registra en la auditoría |
 | GET | `/materials` | catálogo | **Catálogo unificado** (vídeos + PDFs), filtros y cursor |
 | GET | `/materials/:kind/:id/revisions` | catálogo | Historial de revisiones |
+| POST | `/imports/plan` | catálogo | **Importar una carpeta**: reparte un árbol de rutas en carpetas y decide alta o revisión (`dryRun` para previsión) |
 | POST | `/uploads` | catálogo | Iniciar subida troceada de alta o sustitución |
 | GET | `/uploads/:id` | catálogo | Fragmentos confirmados (reanudación) |
 | PUT | `/uploads/:id/chunks/:n` | catálogo | Enviar un fragmento binario idempotente |
@@ -310,6 +357,32 @@ instancia —carpetas, colecciones, vídeos y PDF de todos sus profesores,
 compartido o privado— con su ruta, estado y propietario. Sigue filtrando por
 `platform_id`: una instancia nunca ve el contenido de otra. Es de sólo lectura y
 no expone rutas de disco, tokens ni identificadores de revisión.
+
+### Y qué puede escribir: la biblioteca del centro
+
+Ver todo no es poder tocar todo. El único camino de escritura de contenido de la
+consola es `/admin/platforms/:id/importar`, y no escribe en la biblioteca de
+ningún profesor: lo importado cuelga de un **propietario sintético por
+instancia** (`ADMIN_LIBRARY_OWNER_SUB`, por defecto `moodleshield:biblioteca`) y
+su carpeta raíz se marca compartida ([ADR-024](decisiones.md)).
+
+```
+administrador ──importa──▶ biblioteca del centro (owner sintético, compartida)
+                                  │
+                                  └──▶ la ven, la abren y la insertan en sus
+                                       cursos todos los profesores del aula;
+                                       archivarla o borrarla, sólo el admin
+```
+
+El prefijo `moodleshield:` no puede colisionar con el `sub` de un profesor, que
+sale del `id_token`. Las FK compuestas `(folder_id, platform_id, owner_sub)`
+hacen imposible por esquema —no por disciplina— que este camino guarde algo
+dentro de la carpeta de un profesor. Se protege con la cookie de administrador
+(`SameSite=Strict`) más un token CSRF **por cabecera** (`X-MoodleShield-Csrf`),
+porque un PUT de fragmento lleva bytes crudos y no un cuerpo donde quepa un
+campo oculto; el token va atado a la instancia, así que el de un aula no sirve
+para otra. Cada importación deja un evento `content.import` en
+`admin_audit_event`.
 
 La pertenencia a la colección se comprueba contra la base de datos en cada
 petición, no contra una lista congelada en el token: quitar un material de la

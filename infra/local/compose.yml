@@ -153,6 +153,7 @@ services:
       # los segmentos devuelven 403.
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:-local-inseguro-medialink-00000000000000000000}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
+      MAX_CHUNK_SIZE: ${MAX_CHUNK_SIZE:-32m}
     volumes:
       - "${DATA_ROOT:-./data}/media:/srv/media:ro,z"
     ports:

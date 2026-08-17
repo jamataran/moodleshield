@@ -21,7 +21,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | Documento | Qué resuelve |
 |---|---|
 | [`arquitectura.md`](arquitectura.md) | Vista general, árbol de medios, el camino de un visionado y el de una subida, modelo de datos, tabla de endpoints, modelo de seguridad capa por capa |
-| [`decisiones.md`](decisiones.md) | ADR-001…022. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
+| [`decisiones.md`](decisiones.md) | ADR-001…024. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
 | [`auditoria-seguridad-contenido-y-plan.md`](auditoria-seguridad-contenido-y-plan.md) | **Auditoría de seguridad del contenido**: modelo de amenaza, 16 hallazgos priorizados, arquitectura objetivo y plan por fases |
 | [`auditoria-seguridad.md`](auditoria-seguridad.md) | **Segunda auditoría (V-01…V-37)** y, en su [§8](auditoria-seguridad.md#8-notas-de-implementación--claude-fable-5), el registro de qué se implementó, qué se difirió y por qué en la iteración de endurecimiento |
 | [`plan-implementacion.md`](plan-implementacion.md) | Mapa de fases, dependencias y criterios de éxito |
@@ -58,6 +58,14 @@ la misma instancia Moodle ([ADR-018](decisiones.md)), **inventario de contenido 
 en la consola de administración, e **IP real del alumno tras un CDN**
 ([ADR-019](decisiones.md)) — hasta entonces todos los visionados quedaban registrados con
 la IP del borde de Cloudflare, que es justo el dato que el trazado necesita preciso.
+
+Y, más reciente todavía, la **importación de carpetas completas**: el profesor elige una
+carpeta de su ordenador y se sube respetando la estructura interna, omitiendo ocultos y
+tratando cada fichero repetido como **versión nueva** en vez de duplicado, de modo que el
+UUID que Moodle tiene incrustado no se mueve ([ADR-023](decisiones.md)). El administrador
+puede hacer lo mismo desde la consola sobre una **biblioteca del centro** compartida con
+todos los profesores del aula ([ADR-024](decisiones.md)) — el primer camino de escritura
+de contenido que tiene esa consola.
 
 Lo que queda abierto se concentra en tres frentes: **el trazado forense**, **la matriz de
 navegadores del player** y **la línea de producción** (alertas, backup/restore, auditoría).

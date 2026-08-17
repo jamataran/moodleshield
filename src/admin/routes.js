@@ -4,6 +4,14 @@ import config from '../config.js'
 import { query } from '../db/index.js'
 import { renderPage } from '../ui/render.js'
 import { isAllowedOrigin } from '../security/public-origin.js'
+import { createUploadsRouter } from '../routes/uploads.js'
+import { createImportsRouter } from '../routes/imports.js'
+import {
+  auditImport,
+  importCsrfPath,
+  requireImportCsrf,
+  requireImportScope
+} from './import.js'
 import {
   clearAdminCookie,
   clearLoginCsrf,
@@ -44,6 +52,16 @@ import {
 
 export const adminRouter = Router()
 
+const tooManyRequests = (_req, res) => res.status(429).type('text').send('Demasiadas peticiones')
+
+/**
+ * Una importación son cientos de peticiones legítimas —un PUT por fragmento de
+ * 16 MiB—, así que el cinturón general la ahogaría a mitad de la primera
+ * carpeta. Se le da el suyo, generoso pero acotado: sigue habiendo un techo, y
+ * sigue exigiendo sesión de administrador y token CSRF para llegar aquí.
+ */
+const IMPORT_PATH = /^\/platforms\/[^/]+\/import(\/|$)/
+
 // Cinturón adicional para toda la superficie admin. El límite de login que
 // decide el sexto intento sigue en Postgres (y por tanto funciona entre
 // réplicas); éste acota ráfagas generales y pruebas de conectividad costosas.
@@ -52,7 +70,17 @@ adminRouter.use(rateLimit({
   limit: 120,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
-  handler: (_req, res) => res.status(429).type('text').send('Demasiadas peticiones')
+  skip: (req) => IMPORT_PATH.test(req.path),
+  handler: tooManyRequests
+}))
+
+adminRouter.use(rateLimit({
+  windowMs: 60_000,
+  limit: 900,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skip: (req) => !IMPORT_PATH.test(req.path),
+  handler: tooManyRequests
 }))
 
 function headers (_req, res, next) {
@@ -259,6 +287,74 @@ adminRouter.get('/platforms/:id/contenido', async (req, res, next) => {
     next(err)
   }
 })
+
+/**
+ * Importador de la biblioteca institucional.
+ *
+ * La consola gana aquí su primer camino de ESCRITURA de contenido. Todo lo que
+ * entra por él cuelga del propietario sintético de `admin/import.js` y se
+ * comparte con los profesores del aula; nunca escribe en la biblioteca de
+ * ninguno de ellos.
+ */
+adminRouter.get('/platforms/:id/importar', async (req, res, next) => {
+  try {
+    const platform = await getPlatformById(req.params.id)
+    if (!platform) return res.sendStatus(404)
+    const folders = await platformFolders(platform.id)
+    res.type('html').send(await renderPage('admin/platform-import.html', {
+      bootstrap: {
+        platform: { id: platform.id, name: platform.name, issuer: platform.issuer, enabled: platform.enabled },
+        library: {
+          ownerSub: config.admin.libraryOwnerSub,
+          ownerName: config.admin.libraryOwnerName
+        },
+        // Sólo las carpetas de la biblioteca institucional pueden ser destino:
+        // una carpeta de un profesor sólo admite material suyo (FK compuesta).
+        //
+        // `shared` y no `is_public`: una subcarpeta hereda la publicación de su
+        // raíz, así que enseñar el flag crudo etiquetaría como «sin compartir»
+        // precisamente lo que los profesores sí están viendo.
+        folders: folders
+          .filter((folder) => folder.owner_sub === config.admin.libraryOwnerSub)
+          .map((folder) => ({ id: folder.id, path: folder.path, shared: Boolean(folder.shared) })),
+        maxEntries: config.catalog.maxImportEntries,
+        csrf: csrfToken(req.adminSession, 'POST', importCsrfPath(platform.id)),
+        logoutCsrf: csrfToken(req.adminSession, 'POST', '/logout')
+      }
+    }))
+  } catch (err) {
+    next(err)
+  }
+})
+
+const importScope = Router({ mergeParams: true })
+// Ni el plan ni las subidas llevan token en la URL: la puerta es la cookie de
+// administrador, y la cabecera CSRF el segundo cerrojo. La comprobación va una
+// vez aquí, así que los routers montados debajo entran ya autenticados.
+importScope.use('/imports', createImportsRouter((_req, _res, next) => next(), { publicRoot: true }))
+importScope.use('/uploads', createUploadsRouter((_req, _res, next) => next()))
+
+/** Cierre de la importación: lo que de verdad se subió, al registro de auditoría. */
+importScope.post('/done', async (req, res, next) => {
+  try {
+    await auditImport({
+      platformId: req.importPlatform.id,
+      ip: req.ip,
+      summary: {
+        created: Number(req.body?.created) || 0,
+        revisions: Number(req.body?.revisions) || 0,
+        failed: Number(req.body?.failed) || 0,
+        skipped: Number(req.body?.skipped) || 0,
+        cancelled: req.body?.cancelled === true
+      }
+    })
+    res.sendStatus(204)
+  } catch (err) {
+    next(err)
+  }
+})
+
+adminRouter.use('/platforms/:id/import', requireImportScope, requireImportCsrf, importScope)
 
 adminRouter.get('/platforms/:id', async (req, res, next) => {
   try {

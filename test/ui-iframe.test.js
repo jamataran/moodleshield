@@ -60,7 +60,7 @@ test('la interfaz no usa alert, confirm ni prompt', async () => {
 test('cada diálogo declara los botones que su código espera', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
   for (const id of ['help-dialog', 'prompt-dialog', 'confirm-dialog', 'edit-dialog', 'revisions-dialog',
-    'move-dialog', 'upload-dialog', 'collection-dialog']) {
+    'move-dialog', 'upload-dialog', 'import-dialog', 'collection-dialog']) {
     assert.ok(html.includes(`id="${id}"`), `falta el diálogo ${id}`)
   }
   // `method="dialog"` es lo que hace que el botón cierre el diálogo y deje su
@@ -238,6 +238,30 @@ test('el botón de volver hace Atrás y no rebota a la portada del curso', async
     assert.match(html, /id="back-to-classroom"[^>]*>← Atrás</,
       `${page} debe etiquetar el botón como Atrás`)
   }
+})
+
+test('el catálogo importa una carpeta entera y avisa antes de escribir nada', async () => {
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  // `webkitdirectory` es el ÚNICO modo que tiene un navegador de leer un árbol
+  // de directorios. Sin este atributo el diálogo sube ficheros sueltos y la
+  // estructura interna —que es el objetivo— se pierde por el camino.
+  assert.match(html, /id="import-picker"[^>]*\bwebkitdirectory\b/,
+    'el selector de carpeta necesita webkitdirectory')
+  assert.ok(html.includes('id="import-open"'), 'falta el botón de importar carpeta')
+
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.match(code, /webkitRelativePath/,
+    'la ruta relativa es lo que convierte la selección en un árbol de carpetas')
+  // Elegir una carpeta sólo para ver qué pasaría no puede crear carpetas en la
+  // biblioteca: la previsión va en seco y la escritura espera a «Importar».
+  assert.match(code, /dryRun: true/, 'la previsión debe pedirse en seco')
+  const confirmar = code.indexOf("el('import-btn').addEventListener")
+  assert.notEqual(confirmar, -1, 'falta el botón que confirma la importación')
+  assert.match(code.slice(confirmar, confirmar + 900), /requestImportPlan\(files, \{ signal/,
+    'el plan real (el que crea carpetas) sólo se pide al confirmar')
+
+  // Un fichero que falla no puede tumbar la importación entera.
+  assert.match(code, /fallidos\.push/, 'los errores por fichero se acumulan y se informan')
 })
 
 test('el catálogo distingue lo compartido de lo propio y no ofrece acciones ajenas', async () => {

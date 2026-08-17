@@ -69,6 +69,60 @@ Para sustituir el fichero de un material existente sin romper las actividades
 Moodle, incluye su UUID como `materialId` en la reserva. El propietario y la
 plataforma deben coincidir.
 
+## Migrar un árbol de directorios entero
+
+`POST /api/v1/imports/plan` evita tener que crear las carpetas a mano y decidir
+por tu cuenta qué es alta y qué es sustitución. Se le manda **sólo la lista de
+rutas relativas** y responde con el reparto ya resuelto:
+
+```json
+{
+  "parentId": null,
+  "dryRun": false,
+  "entries": [
+    { "path": "Álgebra/Tema 1/clase.mp4", "size": 734003200 },
+    { "path": "Álgebra/Tema 1/apuntes.pdf", "size": 1048576 },
+    { "path": "Álgebra/Tema 1/.DS_Store", "size": 6148 }
+  ]
+}
+```
+
+Respuesta (recortada):
+
+```json
+{
+  "summary": { "videos": 1, "pdfs": 1, "skipped": 1, "hidden": 1,
+               "foldersCreated": 2, "revisions": 0, "newMaterials": 2 },
+  "entries": [
+    { "index": 0, "status": "upload", "kind": "video", "title": "clase",
+      "folderId": "…", "folderPath": "Álgebra / Tema 1", "materialId": null },
+    { "index": 1, "status": "upload", "kind": "pdf", "title": "apuntes",
+      "folderId": "…", "folderPath": "Álgebra / Tema 1", "materialId": null },
+    { "index": 2, "status": "skipped", "reason": "hidden" }
+  ]
+}
+```
+
+Después, por cada entrada con `status: "upload"`, el protocolo de subida de
+arriba pasándole su `folderId` y su `materialId` (que será `null` en un alta y el
+UUID del material existente cuando la ruta repita un título ya presente en esa
+carpeta: entonces **es una revisión y el UUID no cambia**).
+
+- `dryRun: true` resuelve el mismo reparto **sin crear ninguna carpeta**. Sirve
+  para enseñar el resumen antes de lanzar la migración.
+- `parentId` cuelga todo el árbol de una carpeta existente; `null` lo deja en la
+  raíz de la biblioteca.
+- Se omiten los ficheros y carpetas ocultos (cualquier tramo que empiece por
+  `.`, más `__MACOSX`, `Thumbs.db` y compañía) y todo lo que no sea vídeo o PDF.
+- El tope por llamada es `MAX_IMPORT_ENTRIES` (500 por defecto); pasado, responde
+  `413 too_many_entries` y no crea nada.
+- Reimportar un fichero cuya revisión anterior sigue en cola responde `409
+  revision_in_progress` **en el `complete` de ese fichero**: un material sólo
+  admite una candidata a la vez. Espera a que termine o descarta la candidata.
+
+El detalle de por qué repetir es revisión y no duplicado está en
+[ADR-023](decisiones.md).
+
 ## Script listo para usar
 
 El script de ejemplo requiere Bash, `curl` y `jq`. Acepta varios ficheros y los

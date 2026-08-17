@@ -17,6 +17,8 @@
  * profesor y acaban en el DOM tal cual.
  */
 
+import { createChunkedUploader } from './chunked-upload.js?v=import-1'
+
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 
 const el = (id) => document.getElementById(id)
@@ -203,90 +205,12 @@ async function apiJson (url, options) {
   return payload
 }
 
-/**
- * Cloudflare limita cada cuerpo, no el total de una secuencia de peticiones.
- * El servidor decide el tamaño del fragmento para poder cambiarlo sin volver a
- * desplegar este JavaScript. Cada PUT es idempotente y se reintenta ante un
- * corte transitorio; el porcentaje representa bytes reales del fichero.
- */
-async function uploadFileInChunks ({ file, kind, title = '', folderId = null, materialId = null, onProgress, signal }) {
-  const session = await apiJson('/uploads', {
-    method: 'POST',
-    signal,
-    body: JSON.stringify({
-      kind,
-      filename: file.name,
-      size: file.size,
-      title,
-      folderId,
-      materialId
-    })
-  })
-  let completedBytes = 0
-
-  const sendChunk = (index, blob) => new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    const abort = () => xhr.abort()
-    signal?.addEventListener('abort', abort, { once: true })
-    xhr.open('PUT', `/uploads/${session.uploadId}/chunks/${index}`)
-    xhr.setRequestHeader('Authorization', `Bearer ${boot.sessionToken}`)
-    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable) onProgress?.(completedBytes + event.loaded, file.size)
-    })
-    xhr.addEventListener('load', () => {
-      signal?.removeEventListener('abort', abort)
-      if (xhr.status >= 200 && xhr.status < 300) return resolve()
-      let message = `HTTP ${xhr.status}`
-      try { message = JSON.parse(xhr.responseText).error ?? message } catch { /* sin JSON */ }
-      const error = new Error(message)
-      error.status = xhr.status
-      reject(error)
-    })
-    xhr.addEventListener('error', () => {
-      signal?.removeEventListener('abort', abort)
-      reject(new Error('Fallo de red durante el fragmento'))
-    })
-    xhr.addEventListener('abort', () => {
-      signal?.removeEventListener('abort', abort)
-      reject(new DOMException('Subida cancelada', 'AbortError'))
-    })
-    xhr.send(blob)
-  })
-
-  try {
-    for (let index = 0; index < session.chunkCount; index++) {
-      if (signal?.aborted) throw new DOMException('Subida cancelada', 'AbortError')
-      const start = index * session.chunkBytes
-      const blob = file.slice(start, Math.min(start + session.chunkBytes, file.size))
-      let attempt = 0
-      while (true) {
-        try {
-          await sendChunk(index, blob)
-          break
-        } catch (err) {
-          if (err.name === 'AbortError' || err.status || attempt >= 2) throw err
-          attempt++
-          await new Promise((resolve) => setTimeout(resolve, 500 * attempt))
-        }
-      }
-      completedBytes += blob.size
-      onProgress?.(completedBytes, file.size)
-    }
-    return await apiJson(`/uploads/${session.uploadId}/complete`, {
-      method: 'POST',
-      signal,
-      body: JSON.stringify({})
-    })
-  } catch (err) {
-    if (signal?.aborted) {
-      // La cancelación es explícita: no se conserva una sesión que el usuario
-      // ha dicho que ya no quiere reanudar.
-      api(`/uploads/${session.uploadId}`, { method: 'DELETE' }).catch(() => {})
-    }
-    throw err
-  }
-}
+// El protocolo troceado vive en su propio módulo: lo comparten esta biblioteca
+// y el importador de la consola de administración, y dos copias del reintento y
+// la cancelación acabarían divergiendo.
+const { uploadFileInChunks } = createChunkedUploader({
+  headers: () => ({ Authorization: `Bearer ${boot.sessionToken}` })
+})
 
 function formatDuration (seconds) {
   if (!seconds) return ''
@@ -1382,6 +1306,227 @@ el('upload-dialog').addEventListener('cancel', (event) => {
 })
 
 el('upload-open').addEventListener('click', openUpload)
+
+// ---------------------------------------------------------------------------
+// Importación de una carpeta completa
+//
+// El navegador es el único que puede leer un directorio del disco; el servidor
+// es el único que puede decidir dónde cae cada fichero. De ahí las dos fases:
+// se manda la lista de rutas relativas a `/imports/plan` y se suben los bytes
+// después, uno a uno, por el mismo protocolo troceado que una subida suelta.
+//
+// La previsión usa `dryRun`: elegir una carpeta para ver qué pasaría no puede
+// crear carpetas en la biblioteca de quien sólo estaba mirando.
+// ---------------------------------------------------------------------------
+
+const SKIP_LABEL = {
+  hidden: 'oculto o basura del sistema de ficheros',
+  unsupported: 'no es vídeo ni PDF',
+  empty: 'fichero vacío',
+  invalid: 'ruta no válida'
+}
+
+let importAbort = null
+
+/**
+ * `webkitRelativePath` es lo que convierte un `<input webkitdirectory>` en un
+ * árbol: trae la ruta desde la carpeta elegida, incluida ella misma. Si algún
+ * navegador no lo rellena queda el nombre suelto, y el fichero cae en el
+ * destino sin subcarpeta — degradado, pero no roto.
+ */
+function selectedImportFiles () {
+  return [...(el('import-picker').files ?? [])].map((file) => ({
+    file,
+    path: file.webkitRelativePath || file.name
+  }))
+}
+
+function importPlanEntries (files) {
+  return files.map(({ file, path }) => ({ path, size: file.size }))
+}
+
+function requestImportPlan (files, { dryRun = false, signal } = {}) {
+  return apiJson('/imports/plan', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify({
+      parentId: el('import-dialog').dataset.folderId || null,
+      dryRun,
+      entries: importPlanEntries(files)
+    })
+  })
+}
+
+function renderImportPreview (plan) {
+  const { summary } = plan
+  const partes = []
+  if (summary.videos) partes.push(`${summary.videos} vídeo(s)`)
+  if (summary.pdfs) partes.push(`${summary.pdfs} PDF`)
+  if (summary.foldersCreated) partes.push(`${summary.foldersCreated} carpeta(s) nueva(s)`)
+  if (summary.revisions) partes.push(`${summary.revisions} como versión nueva`)
+  if (summary.skipped) partes.push(`${summary.skipped} omitido(s)`)
+  el('import-summary').textContent = partes.length
+    ? `Se importarán ${partes.join(' · ')}.`
+    : 'No hay nada importable en esa carpeta.'
+  el('import-preview').hidden = false
+
+  const omitidos = plan.entries.filter((entry) => entry.status === 'skipped')
+  const lista = el('import-skipped')
+  lista.replaceChildren(...omitidos.slice(0, 100).map((entry) => {
+    const item = document.createElement('li')
+    // Nada de innerHTML: el nombre del fichero lo pone quien importa.
+    item.textContent = `${entry.path} — ${SKIP_LABEL[entry.reason] ?? entry.reasonLabel}`
+    return item
+  }))
+  if (omitidos.length > 100) {
+    const resto = document.createElement('li')
+    resto.textContent = `… y ${omitidos.length - 100} más`
+    lista.append(resto)
+  }
+  el('import-skipped-summary').textContent = `Ver los ${omitidos.length} ficheros omitidos`
+  el('import-skipped-box').hidden = omitidos.length === 0
+}
+
+function openImport () {
+  const folderId = destinationFolderId()
+  el('import-picker').value = ''
+  el('import-btn').disabled = false
+  el('import-preview').hidden = true
+  el('import-skipped-box').hidden = true
+  el('import-skipped').replaceChildren()
+  el('import-progress').hidden = true
+  el('import-bar').value = 0
+  el('import-current').textContent = ''
+  dialogStatus('import-status')
+  el('import-target').textContent = `Se importará en «${pathName(folderId)}».${destinationNotice()}`
+  el('import-dialog').dataset.folderId = folderId ?? ''
+  abrirDialogo(el('import-dialog'))
+  el('import-picker').focus()
+}
+
+el('import-picker').addEventListener('change', async () => {
+  const files = selectedImportFiles()
+  el('import-preview').hidden = true
+  if (files.length === 0) return
+  dialogStatus('import-status', 'Analizando la carpeta…')
+  try {
+    renderImportPreview(await requestImportPlan(files, { dryRun: true }))
+    dialogStatus('import-status')
+  } catch (err) {
+    dialogStatus('import-status', err.message, { error: true, focus: true })
+  }
+})
+
+el('import-btn').addEventListener('click', async () => {
+  const files = selectedImportFiles()
+  if (files.length === 0) {
+    dialogStatus('import-status', 'Elige una carpeta del ordenador', { error: true })
+    el('import-picker').focus()
+    return
+  }
+
+  const controller = new AbortController()
+  importAbort = controller
+  el('import-btn').disabled = true
+  dialogStatus('import-status', 'Preparando la importación…')
+  const fallidos = []
+  let nuevos = 0
+  let versiones = 0
+  let hechos = 0
+  let pendientes = []
+
+  try {
+    // La creación del árbol va aquí y no en la previsión: es la confirmación
+    // del profesor lo que autoriza a escribir en su biblioteca.
+    const plan = await requestImportPlan(files, { signal: controller.signal })
+    pendientes = plan.entries.filter((entry) => entry.status === 'upload')
+    if (pendientes.length === 0) {
+      dialogStatus('import-status', 'No hay ningún vídeo ni PDF que importar en esa carpeta.',
+        { error: true, focus: true })
+      return
+    }
+
+    el('import-progress').hidden = false
+    for (const item of pendientes) {
+      if (controller.signal.aborted) break
+      el('import-current').textContent = `(${hechos + 1}/${pendientes.length}) ${item.path}`
+      try {
+        await uploadFileInChunks({
+          file: files[item.index].file,
+          kind: item.kind,
+          title: item.title,
+          folderId: item.folderId,
+          materialId: item.materialId,
+          signal: controller.signal,
+          onProgress: (loaded, total) => {
+            el('import-bar').value = ((hechos + loaded / total) / pendientes.length) * 100
+          }
+        })
+        if (item.materialId) versiones++
+        else nuevos++
+      } catch (err) {
+        if (err.name === 'AbortError') break
+        // Un fichero corrupto o demasiado grande no debe tumbar la importación
+        // entera: se anota, se sigue y se cuenta al final.
+        fallidos.push(`${item.path}: ${err.message}`)
+      }
+      hechos++
+      el('import-bar').value = (hechos / pendientes.length) * 100
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      dialogStatus('import-status', `No se pudo importar: ${err.message}`, { error: true, focus: true })
+    }
+  } finally {
+    const cancelada = controller.signal.aborted
+    importAbort = null
+    el('import-btn').disabled = false
+    el('import-current').textContent = ''
+
+    if (nuevos || versiones || fallidos.length) {
+      const resumen = [
+        nuevos ? `${nuevos} material(es) nuevo(s)` : '',
+        versiones ? `${versiones} versión(es) nueva(s)` : '',
+        fallidos.length ? `${fallidos.length} con error` : ''
+      ].filter(Boolean).join(' · ')
+
+      if (fallidos.length === 0 && !cancelada) {
+        el('import-dialog').close()
+        notify(`Importación terminada: ${resumen}. El procesado sigue en cola.`)
+      } else {
+        dialogStatus('import-status',
+          `${cancelada ? 'Importación cancelada' : 'Importación terminada'}: ${resumen}.` +
+          (fallidos.length ? ` Fallaron: ${fallidos.slice(0, 5).join('; ')}` : ''),
+          { error: fallidos.length > 0, focus: true })
+      }
+      await reload()
+    } else if (cancelada) {
+      dialogStatus('import-status', 'Importación cancelada antes de subir nada.')
+      await reload()
+    }
+  }
+})
+
+el('import-cancel').addEventListener('click', () => {
+  if (importAbort) {
+    // No se pone a null aquí: mientras el bucle no salga, la importación sigue
+    // «en curso» y Escape no debe cerrar el diálogo por debajo. Lo libera el
+    // `finally` del importador, que es quien sabe que ha terminado de verdad.
+    importAbort.abort()
+    dialogStatus('import-status', 'Cancelando… se detendrá al terminar el fichero en curso.')
+    return
+  }
+  el('import-dialog').close()
+})
+
+el('import-dialog').addEventListener('cancel', (event) => {
+  if (!importAbort) return
+  event.preventDefault()
+  dialogStatus('import-status', 'La importación sigue en curso. Pulsa «Cancelar» para detenerla.',
+    { error: true, focus: true })
+})
+
+el('import-open').addEventListener('click', openImport)
 
 // ---------------------------------------------------------------------------
 // Editor de colección

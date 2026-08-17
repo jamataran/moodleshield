@@ -222,6 +222,38 @@ export function getOwnedMaterial ({ kind, id, platformId, ownerSub }) {
 }
 
 /**
+ * Material PROPIO con ese título dentro de una carpeta concreta.
+ *
+ * Es lo que convierte una reimportación en versiones nuevas en vez de en
+ * duplicados: el fichero `Tema 1/clase.mp4` que ya se subió vuelve al mismo
+ * UUID, y las actividades de Moodle que lo enlazan siguen apuntando al mismo
+ * sitio con el contenido actualizado.
+ *
+ * Estrictamente `owner_sub`, sin la puerta de lo compartido: subir una versión
+ * nueva es de las operaciones reservadas al autor (ADR-018). Sobre material de
+ * otro profesor, el importador crea material propio, no le reescribe el suyo.
+ *
+ * El título no es único, así que se resuelve por el más antiguo: es una regla
+ * arbitraria, pero estable entre importaciones, que es lo que importa.
+ */
+export function findOwnMaterialByTitle ({ kind, platformId, ownerSub, folderId = null, title }) {
+  const table = kind === 'pdf' ? 'pdf_document' : 'video'
+  const clean = String(title ?? '').normalize('NFC').trim()
+  if (!platformId || !ownerSub || !clean) return Promise.resolve(null)
+  if (folderId !== null && !isUuid(folderId)) return Promise.resolve(null)
+  return one(
+    `SELECT id, title, status, folder_id, active_revision_id FROM ${table}
+      WHERE platform_id = $1 AND owner_sub = $2
+        AND folder_id IS NOT DISTINCT FROM $3::uuid
+        AND archived_at IS NULL
+        AND lower(btrim(title)) = lower(btrim($4))
+      ORDER BY created_at, id
+      LIMIT 1`,
+    [platformId, ownerSub, folderId, clean]
+  )
+}
+
+/**
  * Colecciones que referencian un material. Es lo que convierte un borrado que
  * rompería contenido en un 409 con un mensaje accionable.
  */
