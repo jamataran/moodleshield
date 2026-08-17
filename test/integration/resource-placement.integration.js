@@ -165,3 +165,76 @@ test('F-11: revocar el placement corta también los tokens hijos del grant', asy
     (err) => err.code === 'placement_revoked' && err.status === 401
   )
 })
+
+/**
+ * Reinsertar contenido en una actividad que YA existe.
+ *
+ * Moodle permite editar una actividad y volver a elegir material: el
+ * `resource_link.id` es el mismo, pero el Deep Linking crea un placement nuevo.
+ * Al abrirla, el placement nuevo intentaba ligarse a un `resource_link_id` que
+ * el anterior ya ocupaba y Postgres respondía con
+ * `resource_placement_link_uq`, que llegaba al profesor como un 500 con el
+ * mensaje crudo de la base de datos.
+ */
+test('reinsertar en la misma actividad sustituye el placement anterior', async () => {
+  const primero = await place({ id: VIDEO_A, kind: 'video', owner_sub: OWNER })
+  await authorizeResourcePlacement({
+    placementId: primero.placementId,
+    context: placementContext(),
+    kind: 'video',
+    resourceId: VIDEO_A,
+    ownerSub: OWNER
+  })
+
+  // El profesor edita la actividad y elige otro material: mismo resource_link.
+  const segundo = await place({ id: VIDEO_B, kind: 'video', owner_sub: OWNER })
+  const ligado = await authorizeResourcePlacement({
+    placementId: segundo.placementId,
+    context: placementContext(),
+    kind: 'video',
+    resourceId: VIDEO_B,
+    ownerSub: OWNER
+  })
+
+  assert.equal(ligado.resource_link_id, 'resource-link-1',
+    'el placement nuevo debe quedarse con la actividad')
+
+  const anterior = await query(
+    'SELECT revoked_at, revoked_reason FROM resource_placement WHERE id=$1',
+    [primero.placementId]
+  )
+  assert.ok(anterior.rows[0].revoked_at,
+    'el placement anterior debe quedar revocado, no conviviendo con el nuevo')
+  assert.equal(anterior.rows[0].revoked_reason, 'superseded')
+})
+
+test('el placement sustituido deja de abrir el material que servía', async () => {
+  const primero = await place({ id: VIDEO_A, kind: 'video', owner_sub: OWNER })
+  await authorizeResourcePlacement({
+    placementId: primero.placementId,
+    context: placementContext(),
+    kind: 'video',
+    resourceId: VIDEO_A,
+    ownerSub: OWNER
+  })
+  const segundo = await place({ id: VIDEO_B, kind: 'video', owner_sub: OWNER })
+  await authorizeResourcePlacement({
+    placementId: segundo.placementId,
+    context: placementContext(),
+    kind: 'video',
+    resourceId: VIDEO_B,
+    ownerSub: OWNER
+  })
+
+  // La actividad ya no sirve el material viejo: su placement está revocado.
+  await assert.rejects(
+    authorizeResourcePlacement({
+      placementId: primero.placementId,
+      context: placementContext(),
+      kind: 'video',
+      resourceId: VIDEO_A,
+      ownerSub: OWNER
+    }),
+    (err) => err instanceof ResourcePlacementError
+  )
+})

@@ -20,6 +20,7 @@ import { adminRouter } from './admin/routes.js'
 import { getFrameAncestors, refreshFrameAncestors } from './security/frame-ancestors.js'
 import { clientIpMiddleware } from './security/client-ip.js'
 import { publicOriginFor } from './security/public-origin.js'
+import { errorResponse } from './security/error-response.js'
 import { purgeExpiredPlaybackGrants } from './services/playback-grants.js'
 import { purgeExpiredUploadReservations } from './services/upload-limits.js'
 import {
@@ -190,10 +191,10 @@ export async function createApp () {
   app.use((err, req, res, _next) => {
     const status = err.status ?? 500
     if (status >= 500) req.log?.error({ err }, 'Error no controlado')
-    res.status(status).json({
-      error: status >= 500 && config.isProduction ? 'Error interno' : err.message,
-      code: status < 500 ? err.code : undefined
+    const { status: responseStatus, body } = errorResponse(err, {
+      isProduction: config.isProduction
     })
+    res.status(responseStatus).json(body)
   })
 
   return app
