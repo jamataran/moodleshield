@@ -21,12 +21,31 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; FAILED=1; }
 head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 FAILED=0
 
-# Emite un token de sesión con el mismo módulo que usa la app tras un launch LTI.
-sesion() { # $1=sub  $2=nombre  $3=instructor(true|false)
+# Emite un token de sesión por el mismo camino que la app tras un launch LTI:
+# acuñar NO basta. Desde T22 cada sesión queda registrada en `playback_grant`
+# —es lo que permite revocarla— y una que no consta se rechaza con
+# `session_untracked`. Eso obliga además a una plataforma real: el registro
+# tiene `platform_id NOT NULL`. Es lo que hace `issueTrackedSession` en
+# src/lti/routes.js; aquí se replica porque no está exportada.
+#
+# El modo importa: subir y gestionar catálogo exige `catalog` o `manage`
+# (src/routes/auth.js). Un `launch` de alumno sólo sirve para reproducir.
+sesion() { # $1=sub  $2=nombre  $3=instructor(true|false)  $4=modo  [$5=videoId]
+  local recurso="${5:-}"          # `set -u`: el quinto argumento es opcional
   $C exec -T app node --input-type=module -e "
-    const { issueSession } = await import('/app/src/session.js')
-    console.log(issueSession({ sub: '$1', platformId: null, name: '$2', identity: '$1', isInstructor: $3 }))
-  " | tr -d '\r'
+    const { issueSession, verifySession } = await import('/app/src/session.js')
+    const { one } = await import('/app/src/db/index.js')
+    const { registerPlaybackGrant } = await import('/app/src/services/playback-grants.js')
+    const plataforma = await one('select id from lti_platform order by id limit 1')
+    const recurso = '$recurso' ? { kind: 'video', id: '$recurso' } : undefined
+    const token = issueSession({
+      sub: '$1', platformId: plataforma.id, name: '$2', identity: '$1',
+      isInstructor: $3, contextId: 'demo-local', mode: '$4', resource: recurso
+    })
+    await registerPlaybackGrant(verifySession(token))
+    console.log(token)
+    process.exit(0)
+  " 2>/dev/null | tr -d '\r' | tail -1
 }
 
 head_ "0· Comprobando que el stack responde"
@@ -38,11 +57,14 @@ $C exec -T worker sh -c '
     -f lavfi -i "testsrc=size=640x360:rate=24:duration=40" \
     -f lavfi -i "sine=frequency=440:duration=40" \
     -c:v libx264 -preset ultrafast -c:a aac -shortest /tmp/demo.mp4'
-docker cp "$($C ps -q worker)":/tmp/demo.mp4 /tmp/ms-demo.mp4
+# Por `cat`, no por `docker cp`: desde que el worker corre con el rootfs de
+# sólo lectura y `/tmp` en tmpfs, `docker cp` no encuentra el fichero —lee las
+# capas de la imagen, no los montajes— y responde «Could not find the file».
+$C exec -T worker cat /tmp/demo.mp4 > /tmp/ms-demo.mp4
 ok "vídeo generado ($(du -h /tmp/ms-demo.mp4 | cut -f1))"
 
 head_ "2· Subiendo como profesor (a través de nginx, igual que en producción)"
-PROFE=$(sesion profe1 "Profe Demo" true)
+PROFE=$(sesion profe1 "Profe Demo" true catalog)
 RESP=$(curl -fsS -X POST "$BASE/videos" -H "Authorization: Bearer $PROFE" \
         -F title="Demo" -F file=@/tmp/ms-demo.mp4)
 VID=$(echo "$RESP" | sed -E 's/.*"id":"([^"]+)".*/\1/')
@@ -59,10 +81,12 @@ printf '\r'
 [ "$ST" = "ready" ] && ok "listo — y ffmpeg ya no volverá a ejecutarse para este vídeo" || bad "sigue en $ST"
 
 head_ "4· Dos alumnos abren el MISMO vídeo → patrones A/B distintos"
-ANA=$(sesion ana "Ana García" false)
-LUIS=$(sesion luis "Luis Martín" false)
-PL_ANA=$(curl -fsS "$BASE/hls/$VID/index.m3u8?st=$ANA")
-PL_LUIS=$(curl -fsS "$BASE/hls/$VID/index.m3u8?st=$LUIS")
+ANA=$(sesion ana "Ana García" false launch "$VID")
+LUIS=$(sesion luis "Luis Martín" false launch "$VID")
+# En cabecera, nunca en la URL: el `?st=` se retiró en T23 y hoy el único token
+# que viaja en query es el ticket `?pt=` del HLS nativo de Safari/iOS.
+PL_ANA=$(curl -fsS -H "Authorization: Bearer $ANA"  "$BASE/hls/$VID/index.m3u8")
+PL_LUIS=$(curl -fsS -H "Authorization: Bearer $LUIS" "$BASE/hls/$VID/index.m3u8")
 PAT_ANA=$(echo "$PL_ANA"  | grep -oE '/[AB]/seg' | grep -oE '^/[AB]' | tr -d '/\n')
 PAT_LUIS=$(echo "$PL_LUIS" | grep -oE '/[AB]/seg' | grep -oE '^/[AB]' | tr -d '/\n')
 echo "     ana : $PAT_ANA"
@@ -77,8 +101,24 @@ code() { curl -s -o /dev/null -w '%{http_code}' "$1"; }
 [ "$(code "${SEG%%\?*}")"   = 403 ] && ok "el mismo sin firma → 403"                     || bad "sin firma dio $(code "${SEG%%\?*}")"
 [ "$(code "$OTRA")"         = 403 ] && ok "la OTRA variante con su firma → 403  ← esto es lo que impide escapar de la traza" || bad "variante cruzada dio $(code "$OTRA")"
 [ "$(code "$BASE/media/$VID/key.bin")" = 403 ] && ok "la clave AES no se sirve como estático → 403" || bad "key.bin accesible"
-FIRST=$($C exec -T worker sh -c "head -c1 /data/media/$VID/A/seg_0000.ts | od -An -tx1 | tr -d ' \n'")
-[ "$FIRST" != "47" ] && ok "el .ts está cifrado (primer byte 0x$FIRST, no 0x47)" || bad "¡el segmento está en claro!"
+# El árbol es por revisión (T21): /data/media/videos/<uuid>/<revision>/A/…, así
+# que la ruta se busca en vez de componerla. Antes se componía a mano, el `head`
+# fallaba con "No such file or directory" y `$FIRST` quedaba vacío: como ""
+# tampoco es "47", la comprobación daba correcto SIEMPRE, incluso con los
+# segmentos en claro. Un vacío es un fallo, no un aprobado.
+SEGF=$($C exec -T worker sh -c "find /data/media -path '*$VID*' -name 'seg_0000.ts' 2>/dev/null | head -1" | tr -d '\r\n')
+if [ -z "$SEGF" ]; then
+  bad "no encuentro ningún seg_0000.ts de $VID: no puedo comprobar el cifrado"
+else
+  FIRST=$($C exec -T worker sh -c "head -c1 '$SEGF' | od -An -tx1 | tr -d ' \n'")
+  if [ -z "$FIRST" ]; then
+    bad "no pude leer el primer byte de $SEGF"
+  elif [ "$FIRST" != "47" ]; then
+    ok "el .ts está cifrado (primer byte 0x$FIRST, no 0x47 de MPEG-TS)"
+  else
+    bad "¡el segmento está en claro!"
+  fi
+fi
 
 head_ "6· Trazado forense: simulo la filtración de Ana y la traceo"
 
@@ -99,9 +139,9 @@ ok "3 alumnos registrados como espectadores"
 # correcto —las resuelve el navegador del alumno—, pero dentro del contenedor
 # ese host no existe. Para la demo las reapuntamos al nombre de servicio.
 PUB=$($C exec -T app printenv PUBLIC_URL | tr -d '\r\n')
-curl -fsS "$BASE/hls/$VID/index.m3u8?st=$ANA" \
-  | sed "s|${PUB}|http://proxy:8080|g" > /tmp/ms-pl.m3u8
-docker cp /tmp/ms-pl.m3u8 "$($C ps -q worker)":/tmp/pl.m3u8 >/dev/null
+curl -fsS -H "Authorization: Bearer $ANA" "$BASE/hls/$VID/index.m3u8" \
+  | sed "s|${PUB}|http://proxy:8080|g; s|http://127.0.0.1:${HTTP_PORT:-8088}|http://proxy:8080|g" \
+  | $C exec -T worker sh -c 'cat > /tmp/pl.m3u8'
 
 $C exec -T worker sh -c "
   ffmpeg -hide_banner -loglevel error -y -allowed_extensions ALL \
@@ -118,7 +158,7 @@ if [ "$FAILED" = 0 ]; then
   printf '  su propia mezcla; los segmentos están cifrados y firmados por patrón.\n\n'
   echo "  Vídeo de prueba: $VID"
   echo "  Para verlo en el navegador (con overlay):"
-  echo "     open \"$BASE/hls/$VID/index.m3u8?st=<token>\"   # sólo descarga la playlist"
+  echo "     curl -H \"Authorization: Bearer <token>\" \"$BASE/hls/$VID/index.m3u8\"   # sólo descarga la playlist"
   echo "  El player completo requiere un launch LTI real desde Moodle."
 else
   printf '  \033[31mHubo fallos.\033[0m Revisa arriba y mira: %s logs app worker\n' "$C"
