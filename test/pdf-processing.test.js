@@ -222,7 +222,7 @@ test('la normalización descarta el JavaScript embebido del documento', { skip }
 
     // Puede fallar la validación (xref desplazado) o normalizarse; lo que no
     // puede es publicarse con el JavaScript dentro.
-    let meta = null
+    let meta
     try {
       meta = await run(DOC, REV, source, output)
     } catch (err) {
