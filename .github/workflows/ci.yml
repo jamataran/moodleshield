@@ -161,12 +161,14 @@ jobs:
           targets: default
           push: false
           set: |
-            *.cache-from=type=gha
-            *.cache-to=type=gha,mode=max
             *.platform=linux/amd64
             *.output=type=docker
         env:
           APP_VERSION: ${{ github.sha }}
+          # Los ámbitos de caché los declara cada target en docker-bake.hcl: uno
+          # por imagen. Con un `*.cache-to` comodín las tres compartían ámbito y
+          # se peleaban por reservar la misma entrada («failed to reserve cache»).
+          CACHE: gha
 
       # v0.36.0 es posterior a la incidencia de credenciales de Trivy de marzo
       # de 2026 y se fija al commit firmado, no a un tag mutable.

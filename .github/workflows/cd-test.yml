@@ -149,12 +149,14 @@ jobs:
           files: docker/docker-bake.hcl
           targets: default
           push: true
+          # La caché ya no se declara aquí: cada target trae su ámbito desde
+          # docker-bake.hcl. Sólo quedan las atestaciones, que no dependen de él.
           set: |
-            *.cache-from=type=gha
-            *.cache-to=type=gha,mode=max
             *.attest=type=sbom
             *.attest=type=provenance,mode=max
         env:
+          # Un ámbito de caché por imagen (ver docker/docker-bake.hcl).
+          CACHE: gha
           REGISTRY: ghcr.io
           REPO: ${{ steps.meta.outputs.repo }}
           TAGS: ${{ steps.meta.outputs.sha_tag }},edge
