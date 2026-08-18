@@ -14,8 +14,9 @@ La guía canónica de alta, almacenamiento, recuperación del error PostgreSQL
 
 ## El edge: nginx con TLS
 
-Para nginx instalado en el mismo host usa `HTTP_BIND_ADDRESS=127.0.0.1` y este
-bloque, ajustando dominio y certificados:
+Con nginx instalado en el mismo host, `HTTP_BIND_ADDRESS=127.0.0.1`; si corre en
+un contenedor —lo habitual—, `0.0.0.0` (ver más abajo). El bloque, ajustando
+dominio y certificados:
 
 ```nginx
 server {
@@ -52,9 +53,10 @@ server {
 ```
 
 Si nginx/Nginx Proxy Manager corre en otro contenedor, su `127.0.0.1` no es el
-host Docker. Liga `HTTP_BIND_ADDRESS` a la IP LAN concreta, apunta a
-`IP-PRIVADA-DEL-HOST:43127` y limita ese puerto al edge. Usa `0.0.0.0` sólo si
-también filtras el puerto. No uses la IP dinámica del contenedor `proxy`.
+host Docker: ahí hace falta `HTTP_BIND_ADDRESS=0.0.0.0` —lo que genera el
+script— o, si prefieres acotar, la IP LAN concreta del host, apuntando a
+`IP-PRIVADA-DEL-HOST:43127`. En los dos casos limita ese puerto al edge: va sin
+cifrar. No uses la IP dinámica del contenedor `proxy`.
 
 ## Alta en Portainer
 
