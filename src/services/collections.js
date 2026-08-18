@@ -79,9 +79,22 @@ export function normalizeItems (raw) {
  * Un material archivado o fallido sólo se admite si YA estaba en la colección:
  * bloquea inserciones nuevas sin romper las existentes — si no, re-guardar una
  * colección cuyo ítem falló después de añadirse tumbaría todo el PATCH.
+ *
+ * **Aquí NO se abre la puerta del curso (ADR-023), y es deliberado.** Esa puerta
+ * dice «este material está desplegado en el aula desde la que entras», y da
+ * acceso de trabajo *dentro de esa aula*. Una colección, en cambio, es un objeto
+ * de su autor que viaja: quien la compone la inserta después en CUALQUIER curso
+ * suyo, y ahí nadie revuelve a comprobar los elementos. Admitir material por la
+ * puerta del curso al componer convertía la colección en un blanqueador de
+ * procedencia — el material privado de un profesor salía de su aula, y con él la
+ * visibilidad de biblioteca que concede `placedInContextSql`, en cadena y sin
+ * tope. Lo prueba `test/integration/coteacher-visibility.integration.js`.
+ *
+ * Componer con material del aula volverá a ser posible el día que la lista esté
+ * ligada a UNA actividad y no pueda viajar; mientras tanto, no.
  */
 async function assertItemsUsable (
-  client, items, { platformId, ownerSub, contextId = null, alreadyPresent = new Set() }
+  client, items, { platformId, ownerSub, alreadyPresent = new Set() }
 ) {
   const byKind = { video: [], pdf: [] }
   for (const item of items) byKind[item.kind].push(item.id)
@@ -94,8 +107,8 @@ async function assertItemsUsable (
     const { rows } = await client.query(
       `SELECT m.id, m.archived_at, m.status, m.active_revision_id FROM ${table} m
         WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1
-          AND ${visibleClause('m', { context: '$4', kind })}`,
-      [platformId, ownerSub, ids, contextId]
+          AND ${visibleClause('m')}`,
+      [platformId, ownerSub, ids]
     )
     for (const row of rows) {
       const key = `${kind}:${row.id}`
@@ -314,13 +327,13 @@ export function getCollectionForPlatform (id, platformId) {
 }
 
 export function createCollection ({
-  platformId, ownerSub, ownerName, contextId = null, title, description, folderId, items
+  platformId, ownerSub, ownerName, title, description, folderId, items
 }) {
   const clean = assertTitle(title)
   const normalized = normalizeItems(items)
   return transaction(async (client) => {
     const folder = await assertFolderInTransaction(client, { folderId, platformId, ownerSub })
-    await assertItemsUsable(client, normalized, { platformId, ownerSub, contextId })
+    await assertItemsUsable(client, normalized, { platformId, ownerSub })
     const { rows } = await client.query(
       `INSERT INTO content_collection
          (title, description, platform_id, owner_sub, owner_name, folder_id)
@@ -401,7 +414,7 @@ export function updateCollection ({
       )
       const alreadyPresent = new Set(present.rows.map((row) =>
         row.video_id ? `video:${row.video_id}` : `pdf:${row.document_id}`))
-      await assertItemsUsable(client, normalized, { platformId, ownerSub, contextId, alreadyPresent })
+      await assertItemsUsable(client, normalized, { platformId, ownerSub, alreadyPresent })
       await replaceItems(client, id, normalized)
     }
 
@@ -420,17 +433,24 @@ export function updateCollection ({
  * Duplicar una colección compartida es la forma de llevársela a la biblioteca
  * propia y adaptarla sin tocar la del otro. La copia nace del profesor que
  * duplica y sin carpeta: la del original es de su autor y no la puede ocupar.
+ *
+ * **Sin la puerta del curso (ADR-023), y por el mismo motivo que
+ * `assertItemsUsable`:** duplicar es ADQUIRIR: la copia nace con `owner_sub` de
+ * quien duplica y ya no la ata ningún aula, así que la puerta que sólo daba
+ * acceso de trabajo dentro de un curso acabaría concediendo propiedad fuera de
+ * él. Compartir de verdad —`is_public` en carpeta o colección, ADR-018— sí lo
+ * permite, porque ahí el autor lo ha decidido.
  */
-export function duplicateCollection ({ id, platformId, ownerSub, ownerName, contextId = null }) {
+export function duplicateCollection ({ id, platformId, ownerSub, ownerName }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `SELECT c.*, (c.owner_sub IS DISTINCT FROM $3) AS shared
          FROM content_collection c
         WHERE c.id = $1 AND c.platform_id = $2
           AND ${visibleClause('c', {
-            platform: '$2', owner: '$3', context: '$4', kind: 'collection', publicColumn: 'is_public'
+            platform: '$2', owner: '$3', publicColumn: 'is_public'
           })}`,
-      [id, platformId, ownerSub, contextId]
+      [id, platformId, ownerSub]
     )
     if (rows.length === 0) return { status: 'not_found' }
     const source = rows[0]

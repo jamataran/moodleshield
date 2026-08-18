@@ -961,3 +961,51 @@ suyo, más holgado y todavía acotado. Cada importación deja un evento
 **Cambiar `ADMIN_LIBRARY_OWNER_SUB` con contenido ya importado lo esconde**: las
 carpetas y el material siguen en la base de datos, pero cuelgan de un
 propietario que ya no se consulta. Se decide antes de importar nada.
+
+## ADR-027 · Ligar un placement a su actividad es anotar un hecho, no autorizar: lo hace el primer launch, sea quien sea
+
+**Estado**: aceptada · **Fecha**: 2026-08 · **Sustituye a** la condición de bind
+descrita en `auditoria-seguridad-contenido-y-plan.md` (F-05)
+
+**Contexto.** Un `resource_placement` nace en el Deep Linking, cuando la
+actividad de Moodle **todavía no existe**: no hay `resource_link_id` que
+guardar. Se aprende en el primer launch. La auditoría F-05 pidió además que ese
+primer launch fuera del **mismo profesor que insertó** y con rol Instructor,
+para que «no se confíe en el primero gana»; hasta entonces los alumnos recibían
+un 409 `placement_pending_instructor`.
+
+En Moodle real eso rompe el caso normal de un equipo docente: un profesor crea
+la actividad, otro le pone el material, y el primero en abrirla es un alumno. La
+actividad **parecía configurada** —contenido elegido, guardado, visible en el
+curso— y estaba muerta. El mensaje pedía avisar a «el profesor que insertó el
+material» sin decir quién era, porque el sistema tampoco lo enseña.
+
+**Decisión.** Cualquier launch liga un placement sin ligar. El resto de
+condiciones no se toca: plataforma, `deployment_id`, `context_id`, tipo, recurso
+y `owner_sub` tienen que cuadrar con la fila, y un placement **ya ligado** a otra
+actividad sigue dando `placement_link_mismatch`.
+
+**Razones.** Ligar no es una decisión de autorización: es registrar un
+emparejamiento que **Moodle ya hizo** al guardar la selección de contenido. El
+`id_token` lo firma la plataforma y trae las dos mitades —el placement en
+`custom` y la actividad en `resource_link.id`—, así que quien abre la actividad
+no elige nada; sólo es la primera persona que pasa por delante. Exigir que sea
+una concreta convierte a esa persona en un paso manual invisible.
+
+**Consecuencias.** Se pierde una propiedad estrecha: un profesor **con edición
+en ese mismo curso** puede, copiando los `custom` de una actividad ajena antes
+de que nadie la abra, quedarse el placement de un compañero y dejarle la
+actividad rota. No gana audiencia —mismo curso, mismo material que sus alumnos
+ya tenían delante— y para llegar ahí ya necesita permisos de edición sobre el
+curso: el daño es molestia, no fuga. A cambio, las actividades dejan de nacer
+muertas.
+
+`created_by_sub` se conserva y sigue escribiéndose: ya no es una condición, pero
+es la traza de quién insertó. El log de bind anota además **quién ligó**, que es
+lo único que permite reconstruir después por qué una actividad quedó atada a la
+que quedó.
+
+**Cómo revertirlo.** Reponer en `authorizeResourcePlacement` la guarda
+`!context.isInstructor || context.sub !== placement.created_by_sub`. Antes de
+hacerlo, resolver el problema de producto que la hacía inviable: que el profesor
+sepa que su actividad está pendiente de activación y quién puede activarla.
