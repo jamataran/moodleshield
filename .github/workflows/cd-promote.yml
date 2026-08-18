@@ -56,6 +56,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Instalar cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      # Se promociona un digest sin reconstruirlo, así que lo único que
+      # demuestra su procedencia es la firma que le puso `cd-test.yml` al
+      # publicarlo. Verificarla aquí es lo que impide promocionar una imagen
+      # empujada a GHCR por cualquier otro camino.
+      - name: Verificar la firma de las imágenes ensayadas en test
+        env:
+          REPO: ${{ steps.meta.outputs.repo }}
+          SRC: ${{ steps.meta.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/cd-test.yml@refs/heads/test"
+          for img in app worker proxy; do
+            cosign verify \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "ghcr.io/${REPO}/${img}:${SRC}" >/dev/null
+            echo "✓ firma verificada: ${img}:${SRC}"
+          done
+
       - name: Re-etiquetar el mismo digest (app + worker + proxy)
         env:
           REPO: ${{ steps.meta.outputs.repo }}
@@ -102,6 +124,12 @@ jobs:
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${VERSION}|"   infra/prod/compose.yml
+            # Activación atómica del entorno reducido del worker, en el MISMO
+            # commit que la imagen: nunca se aplica a una imagen antigua cuyo
+            # config.js todavía exige los secretos web. Vivía en release.yml
+            # cuando ese workflow escribía el Compose de producción; al pasar la
+            # promoción aquí (ADR-028) tenía que venirse con ella.
+            sed -i "s|environment: \*app-env # WORKER_ENV_ACTIVATION|environment: *worker-env # WORKER_ENV_ACTIVATION|" infra/prod/compose.yml
 
             # El commit del bump es condicional; el push NO, porque el merge de
             # arriba también tiene que llegar a main aunque la etiqueta ya fuera

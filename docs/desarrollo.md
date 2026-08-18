@@ -441,6 +441,14 @@ Sólo se etiqueta un commit que ya esté desplegado en test: si no existe su
 `:sha-<commit>` en GHCR, `cd-promote` falla en cerrado. Y una PR hacia `test` que
 toque `infra/prod/` la rechaza el job `frontera-entornos` de `ci.yml`.
 
+El tag lo puedes crear a mano o con [`release.yml`](../.github/workflows/release.yml),
+que **sólo hace eso**: deriva la versión del último `vX.Y.Z`, localiza el commit
+ensayado en `test` y empuja el tag. La promoción entera es de `cd-promote.yml`.
+
+**El manual de pruebas del pipeline —qué mirar en cada paso, cómo comprobar que
+el digest promocionado es el mismo, y las cuatro cosas que deben fallar— está en
+[`.github/DESPLIEGUE.md`](../.github/DESPLIEGUE.md).**
+
 Los cambios que sólo tocan documentación, `LICENSE`, `.idea/` o `infra/local/` no publican
 imágenes ni despliegan.
 
