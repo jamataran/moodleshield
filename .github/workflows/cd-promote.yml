@@ -1,5 +1,13 @@
 name: 'CD · tag vX.Y.Z: promover la misma imagen a producción'
 
+# El tag se crea sobre `test`, sobre un commit YA desplegado y probado ahí.
+# Promocionar es dos cosas, y ninguna es construir:
+#   1. Re-etiquetar el mismo digest sha-<commit> como vX.Y.Z.
+#   2. Avanzar `main` HASTA ese commit y escribir la etiqueta en
+#      infra/prod/compose.yml.
+# Portainer de producción sigue `main`, que por tanto sólo se mueve aquí:
+# ningún merge de trabajo puede tocar producción (ADR-028).
+
 # Promoción a producción SIN reconstruir: `docker buildx imagetools create`
 # re-etiqueta el digest que ya rodó en test como vX.Y.Z + latest. Ni Node, ni
 # tests, ni build: el commit ya se verificó y construyó al entrar en main.
@@ -24,6 +32,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # Historia completa: este job mueve `main` hasta el commit
+          # etiquetado, y con un checkout superficial no hay base de merge.
+          fetch-depth: 0
 
       - name: Resolver commit y etiquetas
         id: meta
@@ -34,6 +46,7 @@ jobs:
           # apuntar al objeto tag y no al commit.
           commit=$(git rev-parse HEAD)
           echo "repo=$repo"                    >> "$GITHUB_OUTPUT"
+          echo "commit=$commit"                >> "$GITHUB_OUTPUT"
           echo "sha_tag=sha-${commit::7}"      >> "$GITHUB_OUTPUT"
           echo "version=${GITHUB_REF_NAME}"    >> "$GITHUB_OUTPUT"
 
@@ -53,7 +66,7 @@ jobs:
           for img in app worker proxy; do
             src="ghcr.io/${REPO}/${img}:${SRC}"
             if ! docker buildx imagetools inspect "$src" >/dev/null 2>&1; then
-              echo "::error::No existe ${src}. Sólo se pueden etiquetar commits que hayan pasado por main (cd-main publica su imagen sha-*). Haz push a main primero."
+              echo "::error::No existe ${src}. Sólo se etiquetan commits que hayan pasado por \`test\` (cd-test publica su imagen sha-*). Un tag sobre un commit sin ensayar en test no se promociona."
               exit 1
             fi
             docker buildx imagetools create \
@@ -67,27 +80,43 @@ jobs:
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           REPO: ${{ steps.meta.outputs.repo }}
+          TAG_SHA: ${{ steps.meta.outputs.commit }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Mismo patrón que cd-main: partir siempre de la punta real de main y
+          # Mismo patrón que cd-test: partir siempre de la punta real de main y
           # reintentar, en vez de rebasar un cambio sobre la misma línea.
           for intento in 1 2 3; do
             git fetch origin main
             git checkout -B main origin/main
 
+            # Producción corre EL MISMO árbol que se ensayó en test, no una
+            # mezcla: main avanza hasta el commit etiquetado antes de escribir
+            # la etiqueta de imagen. Si ya lo contiene, no hay nada que traer.
+            if ! git merge-base --is-ancestor "$TAG_SHA" HEAD; then
+              git merge --no-ff --no-edit -m "promote: ${VERSION} [skip ci]" "$TAG_SHA"
+            fi
+
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${VERSION}|"   infra/prod/compose.yml
 
+            # El commit del bump es condicional; el push NO, porque el merge de
+            # arriba también tiene que llegar a main aunque la etiqueta ya fuera
+            # la correcta.
             if git diff --quiet -- infra/prod/compose.yml; then
-              echo "Sin cambios (prod ya estaba en ${VERSION})"; exit 0
+              echo "La etiqueta de prod ya era ${VERSION}"
+            else
+              git add infra/prod/compose.yml
+              git commit -m "deploy(prod): ${VERSION} [skip ci]"
             fi
 
-            git add infra/prod/compose.yml
-            git commit -m "deploy(prod): ${VERSION} [skip ci]"
+            if git diff --quiet origin/main HEAD; then
+              echo "main ya estaba en ${VERSION}: nada que empujar"; exit 0
+            fi
+
             if git push origin main; then
               echo "Desplegado ${VERSION} en prod"; exit 0
             fi

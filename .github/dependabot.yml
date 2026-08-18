@@ -1,7 +1,11 @@
 version: 2
+
+# Las actualizaciones entran por `test`, como cualquier otro cambio: nada se
+# mergea directamente contra producción (ADR-028).
 updates:
   - package-ecosystem: npm
     directory: /
+    target-branch: test
     schedule:
       interval: weekly
       day: monday
@@ -15,12 +19,14 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
+    target-branch: test
     schedule:
       interval: monthly
     labels: [dependencias, ci]
 
   - package-ecosystem: docker
     directory: /docker
+    target-branch: test
     schedule:
       interval: monthly
     labels: [dependencias, docker]
