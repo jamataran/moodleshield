@@ -20,6 +20,25 @@ test('un rol que sólo contiene la palabra Instructor como texto no cuela', () =
   assert.equal(hasInstructorRole(['http://example.org/InstructorAssistantThing']), false)
 })
 
+test('el sub-rol de alumno Learner#Instructor no escala (V-05)', () => {
+  assert.equal(
+    hasInstructorRole(['http://purl.imsglobal.org/vocab/lis/v2/membership/Learner#Instructor']),
+    false
+  )
+})
+
+test('el rol institucional institution/person#Instructor no escala (V-05)', () => {
+  assert.equal(
+    hasInstructorRole(['http://purl.imsglobal.org/vocab/lis/v2/institution/person#Instructor']),
+    false
+  )
+})
+
+test('roles como cadena en lugar de array no provoca un 500 (V-31)', () => {
+  assert.equal(hasInstructorRole(INSTRUCTOR), false)
+  assert.equal(hasInstructorRole(undefined), false)
+})
+
 test('toLaunchContext aplana el id_token a la forma que usa la app', () => {
   const claims = {
     iss: PLATFORM.issuer,

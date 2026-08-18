@@ -1,7 +1,7 @@
 import { many, one, query, transaction } from '../db/index.js'
 import logger from '../logger.js'
 import { assertFolderInTransaction } from './folders.js'
-import { listMaterials, listCollectionsUsing } from './materials.js'
+import { listMaterials, listCollectionsUsing, VIEWERS_LIMIT } from './materials.js'
 import { insertRevision, syncMaterialStatus } from './revisions.js'
 import { normalizeName } from './folders.js'
 import { visibleClause } from './sharing.js'
@@ -50,15 +50,35 @@ export function getVideoForOwner (id, platformId, ownerSub) {
  * Sólo material visible (propio o compartido por otro profesor de la misma
  * instancia), listo y no archivado puede insertarse en un curso.
  */
-export function listReadyVideosForDeepLink ({ ids, platformId, ownerSub }) {
+export function listReadyVideosForDeepLink ({ ids, platformId, ownerSub, contextId = null }) {
   if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
   return many(
     `SELECT m.id, m.title, m.description
        FROM video m
       WHERE m.id = ANY($3::uuid[]) AND m.status = 'ready'
-        AND m.platform_id = $1 AND ${visibleClause('m')}
+        AND m.platform_id = $1 AND ${visibleClause('m', { context: '$4', kind: 'video' })}
         AND m.archived_at IS NULL AND m.active_revision_id IS NOT NULL`,
-    [platformId, ownerSub, ids]
+    [platformId, ownerSub, ids, contextId]
+  )
+}
+
+/**
+ * Un material nuevo puede enlazarse desde Moodle mientras el worker lo
+ * prepara. El launch no sirve bytes hasta que exista `active_revision_id`.
+ */
+export function listInsertableVideosForDeepLink ({ ids, platformId, ownerSub, contextId = null }) {
+  if (!platformId || !ownerSub || !ids?.length) return Promise.resolve([])
+  // `owner_sub` viaja para la referencia firmada (T24): la firma se calcula
+  // con el propietario del material, no con el profesor que inserta — un
+  // material compartido lo inserta otro, pero la fila sigue siendo del autor.
+  return many(
+    `SELECT m.id, m.title, m.description, m.owner_sub
+       FROM video m
+      WHERE m.id = ANY($3::uuid[]) AND m.platform_id = $1
+        AND ${visibleClause('m', { context: '$4', kind: 'video' })}
+        AND m.archived_at IS NULL
+        AND (m.active_revision_id IS NOT NULL OR m.status IN ('queued','processing'))`,
+    [platformId, ownerSub, ids, contextId]
   )
 }
 
@@ -154,14 +174,16 @@ export function createVideoRevisionAndJob ({
  * descripción; lo que no se puede es cambiarlo de carpeta, porque la carpeta es
  * de su autor (`services/sharing.js`).
  */
-export function updateVideoMetadata ({ videoId, platformId, ownerSub, title, description, folderId }) {
+export function updateVideoMetadata ({
+  videoId, platformId, ownerSub, contextId = null, title, description, folderId
+}) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `SELECT m.id, (m.owner_sub IS DISTINCT FROM $3) AS shared FROM video m
         WHERE m.id = $1 AND m.platform_id = $2
-          AND ${visibleClause('m', { platform: '$2', owner: '$3' })}
+          AND ${visibleClause('m', { platform: '$2', owner: '$3', context: '$4', kind: 'video' })}
         FOR UPDATE`,
-      [videoId, platformId, ownerSub]
+      [videoId, platformId, ownerSub, contextId]
     )
     if (rows.length === 0) return { status: 'not_found' }
     if (rows[0].shared && folderId !== undefined) return { status: 'not_owned' }
@@ -337,7 +359,8 @@ export function listViewers (videoId, { revisionId = null } = {}) {
        FROM view_event
       WHERE video_id = $1 AND ($2::uuid IS NULL OR revision_id = $2)
       GROUP BY user_sub
-      ORDER BY last_seen DESC`,
-    [videoId, revisionId]
+      ORDER BY last_seen DESC
+      LIMIT $3`,
+    [videoId, revisionId, VIEWERS_LIMIT]
   )
 }

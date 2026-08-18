@@ -13,6 +13,100 @@ export class LtiError extends Error {
   }
 }
 
+/** El destino guardado en el state debe estar presente e idéntico en el token. */
+export function assertTargetLinkMatches (expected, received) {
+  if (expected && received !== expected) {
+    throw new LtiError('target_link_uri del id_token no coincide con el del login', {
+      status: 401,
+      code: 'target_link_mismatch'
+    })
+  }
+}
+
+/** El target de iniciación viene por front-channel: debe ser una launch URI propia. */
+export function assertLaunchTargetAllowed (value, origins = config.publicOrigins) {
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    throw new LtiError('target_link_uri no es una URL válida', {
+      status: 400,
+      code: 'invalid_target_link_uri'
+    })
+  }
+  if (!origins.includes(url.origin) || url.pathname !== '/lti/launch' ||
+      url.search || url.hash || url.username || url.password) {
+    throw new LtiError('target_link_uri no pertenece a una launch URI registrada', {
+      status: 400,
+      code: 'target_link_not_allowed'
+    })
+  }
+  return url.toString()
+}
+
+export function assertMessageClaims (claims, platform, messageType) {
+  const contextId = claims[CLAIM.context]?.id
+  const roles = claims[CLAIM.roles]
+  if (typeof contextId !== 'string' || !contextId.trim() || contextId.length > 512) {
+    throw new LtiError('Falta un context.id LTI válido', { code: 'missing_context_id' })
+  }
+  if (!Array.isArray(roles) || roles.length === 0 || roles.some((role) => typeof role !== 'string')) {
+    throw new LtiError('El claim roles no es una lista LTI válida', { code: 'invalid_roles' })
+  }
+  if (messageType === MESSAGE_TYPE.resourceLink) {
+    const resourceLinkId = claims[CLAIM.resourceLink]?.id
+    if (typeof resourceLinkId !== 'string' || !resourceLinkId.trim() || resourceLinkId.length > 512) {
+      throw new LtiError('Falta resource_link.id', { code: 'missing_resource_link_id' })
+    }
+    return
+  }
+  const settings = claims[CLAIM.deepLinkingSettings]
+  if (!settings || typeof settings !== 'object') {
+    throw new LtiError('Falta deep_linking_settings', { code: 'missing_deep_linking_settings' })
+  }
+  let returnUrl
+  try {
+    returnUrl = new URL(settings.deep_link_return_url)
+  } catch {
+    throw new LtiError('deep_link_return_url no es válida', { code: 'invalid_deep_link_return_url' })
+  }
+  if (!['http:', 'https:'].includes(returnUrl.protocol) ||
+      returnUrl.origin !== new URL(platform.issuer).origin || returnUrl.username ||
+      returnUrl.password || returnUrl.hash) {
+    throw new LtiError('deep_link_return_url no pertenece a la plataforma', {
+      code: 'deep_link_return_url_not_allowed'
+    })
+  }
+}
+
+export function assertDeploymentAllowed (platform, deploymentId, {
+  production = config.isProduction
+} = {}) {
+  if (typeof deploymentId !== 'string' || !deploymentId.trim() || deploymentId.length > 512) {
+    throw new LtiError('Falta deployment_id', { code: 'missing_deployment_id' })
+  }
+  const known = platform.deployment_ids ?? []
+  if (known.length > 1) {
+    throw new LtiError('La plataforma debe representar exactamente un deployment', {
+      status: 401,
+      code: 'multiple_deployments_not_supported'
+    })
+  }
+  if (production && known.length !== 1) {
+    throw new LtiError('El deployment_id debe registrarse antes del primer launch', {
+      status: 401,
+      code: 'deployment_not_configured'
+    })
+  }
+  if (known.length > 0 && !known.includes(deploymentId)) {
+    throw new LtiError(`deployment_id desconocido: ${deploymentId}`, {
+      status: 401,
+      code: 'unknown_deployment_id'
+    })
+  }
+  return { learn: !production && known.length === 0 }
+}
+
 /** Guarda el `state`/`nonce` que enviamos a la plataforma en el initiation login. */
 export async function saveOidcState ({ state, nonce, platformId, targetLinkUri }) {
   await query(
@@ -103,14 +197,21 @@ export async function validateLaunch ({ idToken, state }) {
     })
   }
 
-  // Con varios `aud`, el spec exige que `azp` identifique a nuestro client_id.
-  if (Array.isArray(claims.aud) && claims.aud.length > 1) {
-    if (claims.azp !== platform.client_id) {
-      throw new LtiError('azp no coincide con el client_id registrado', {
-        status: 401,
-        code: 'invalid_azp'
-      })
-    }
+  // OIDC Core §3.1.3.7 pide validar `azp` SIEMPRE que esté presente, no sólo con
+  // varios `aud` (V-29): un token con `azp` de otro cliente no debe colarse
+  // aunque `aud` sea una cadena.
+  if (claims.azp != null && claims.azp !== platform.client_id) {
+    throw new LtiError('azp no coincide con el client_id registrado', {
+      status: 401,
+      code: 'invalid_azp'
+    })
+  }
+  // Con varios `aud`, además, `azp` es obligatorio.
+  if (Array.isArray(claims.aud) && claims.aud.length > 1 && claims.azp == null) {
+    throw new LtiError('Con varios aud, el id_token debe incluir azp', {
+      status: 401,
+      code: 'missing_azp'
+    })
   }
 
   if (claims.nonce !== stateRow.nonce) {
@@ -133,18 +234,28 @@ export async function validateLaunch ({ idToken, state }) {
     })
   }
 
-  const deploymentId = claims[CLAIM.deploymentId]
-  if (!deploymentId) {
-    throw new LtiError('Falta deployment_id', { code: 'missing_deployment_id' })
-  }
-  const known = platform.deployment_ids ?? []
-  if (known.length > 0 && !known.includes(deploymentId)) {
-    throw new LtiError(`deployment_id desconocido: ${deploymentId}`, {
+  const now = Math.floor(Date.now() / 1000)
+  if (claims.iat > now + config.lti.clockToleranceSeconds ||
+      claims.iat < now - config.lti.maxTokenAgeSeconds - config.lti.clockToleranceSeconds) {
+    throw new LtiError('El id_token es demasiado antiguo o está fechado en el futuro', {
       status: 401,
-      code: 'unknown_deployment_id'
+      code: 'invalid_token_age'
     })
   }
-  await rememberDeploymentId(platform.id, deploymentId)
+  assertMessageClaims(claims, platform, messageType)
+
+  // El `target_link_uri` del id_token debe coincidir con el que la plataforma
+  // envió en el initiation login (V-29). Login y token salen del mismo Moodle,
+  // así que el spec garantiza que son iguales; si no lo son, el token no se
+  // acuñó para este launch. Sólo se comprueba cuando el login trajo el valor.
+  const tokenTargetLink = claims[CLAIM.targetLinkUri]
+  assertTargetLinkMatches(stateRow.target_link_uri, tokenTargetLink)
+
+  const deploymentId = claims[CLAIM.deploymentId]
+  const deployment = assertDeploymentAllowed(platform, deploymentId)
+  if (deployment.learn) {
+    await rememberDeploymentId(platform.id, deploymentId)
+  }
 
   return { platform, claims, context: toLaunchContext(claims, platform) }
 }

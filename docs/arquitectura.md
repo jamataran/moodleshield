@@ -34,7 +34,7 @@ alternativas descartadas están en [`decisiones.md`](decisiones.md).
                     ▼
         ┌───────────────────────┐   ┌──────────────────────┐
         │ PostgreSQL 16         │   │ ${DATA_ROOT}/media   │
-        │ 14 tablas             │   │ segmentos y claves   │
+        │ esquema migrado       │   │ segmentos y claves   │
         └───────────────────────┘   └──────────────────────┘
 ```
 
@@ -100,17 +100,23 @@ Lo importante de este recorrido es lo que **no** aparece: ffmpeg.
 3.  app     → 302 al authorization endpoint (state + nonce guardados en BD)
 4.  Moodle  → POST /lti/launch  (id_token, state)
 5.  app     · valida state, firma, iss, aud, azp, nonce, versión, deployment
+            · valida placement (plataforma + deployment + curso + actividad)
+            · registra un playback_grant revocable
             · emite token de sesión (HMAC, 4 h)
-            · registra el visionado en view_event
             → HTML del player con el token embebido
-6.  player  → GET /hls/<id>/index.m3u8?st=<token>
+              (el visionado NO se registra aquí: ver «Cuándo se registra»)
+6.  player  → GET /hls/<id>/index.m3u8
+            · hls.js manda el token en `Authorization: Bearer` (xhrSetup)
+            · el HLS nativo de Safari/iOS, que no puede poner cabeceras, pide
+              antes POST /hls/<id>/ticket y usa `?pt=<ticket de 90 s>`
 7.  app     · deriva el patrón: HMAC(WATERMARK_SECRET, "sub:videoId:n")
             · reescribe la playlist de A: cada segmento apunta a A o a B
             · firma cada URL (secure_link) y la URI de la clave
             → playlist personalizada  ← sólo texto, microsegundos
 8.  player  → GET /hls/<id>/key?kt=<token>       → 16 bytes
 9.  player  → GET /media/<id>/A/seg_0000.ts?md5=…&expires=…
-    nginx   · valida la firma y sirve con sendfile   ← Node no interviene
+    nginx   · valida la firma y consulta el grant por auth_request
+            · sirve con sendfile si placement/plataforma siguen activos
 10. player  → GET /media/<id>/B/seg_0001.ts?md5=…&expires=…
     …
 ```
@@ -135,7 +141,8 @@ una hora) y una reescritura de texto. El resto es E/S de disco.
    fichero completo nunca entra en el heap; sólo existe en disco al terminar.
 
 2. worker   · SELECT … FOR UPDATE SKIP LOCKED
-            · ffprobe → duración, tamaño, ¿hay audio?
+            · ffprobe con timeout/whitelist → duración, resolución, fps y pistas
+            · reserva cuota/disco para dos variantes con bitrate acotado
             · genera clave AES-128 e IV
             · ffmpeg variante A (marca derecha)   ─┐ GOP fijo, scenecut=0
             · ffmpeg variante B (marca izquierda) ─┘ cortes idénticos
@@ -145,12 +152,84 @@ una hora) y una reescritura de texto. El resto es E/S de disco.
             → video.status = ready
 ```
 
+## El camino de una carpeta entera
+
+Importar no abre un segundo pipeline: abre una fase previa que decide **a dónde
+va cada fichero**, y después usa la subida de siempre ([ADR-025](decisiones.md)).
+
+```
+1. navegador · <input webkitdirectory> → File.webkitRelativePath por fichero
+             → POST /imports/plan { parentId, dryRun: true, entries: [{path, size}] }
+2. app       · clasifica: oculto → fuera; ni vídeo ni PDF → fuera
+             · resuelve el árbol SIN crearlo y devuelve el resumen
+             → «6 carpetas nuevas · 12 vídeos · 4 como versión · 2 omitidos»
+   ── el profesor confirma ──────────────────────────────────────────────
+3. app       · POST /imports/plan (sin dryRun): crea las carpetas que falten
+             · por fichero, busca material PROPIO con ese título en su carpeta
+             → entries: [{ folderId, title, kind, materialId | null }]
+4. navegador · por cada entrada, el protocolo troceado de siempre:
+               POST /uploads (con folderId, o materialId si es revisión)
+               PUT  /uploads/<id>/chunks/<n> …
+               POST /uploads/<id>/complete
+             · un fichero que falla se anota y NO detiene la importación
+```
+
+Tres reglas gobiernan el reparto, y viven en un módulo puro
+(`src/services/import-plan.js`) para poder probarse sin base de datos:
+
+| Regla | Consecuencia |
+|---|---|
+| Un tramo de la ruta que empiece por `.` descarta la entrada | `.DS_Store`, `.git/`, `._clase.mp4`, `__MACOSX/` |
+| Sólo entran vídeo y PDF | El resto se cuenta como omitido, no rompe nada |
+| **Título repetido en la carpeta = revisión, no copia** | El UUID que Moodle lleva incrustado no cambia |
+
+La tercera es la importante: reimportar una carpeta con un vídeo corregido
+**actualiza el contenido de todas las actividades ya creadas** sin tocar
+ninguna. Reimportar mientras la anterior sigue en cola responde 409
+`revision_in_progress` para ese fichero —un material sólo admite una candidata a
+la vez— y la importación continúa con el siguiente.
+
+Lo que la importación **no** hace: crear colecciones. Una carpeta del ordenador
+es una carpeta de la biblioteca. Agrupar varios materiales en una sola actividad
+sigue siendo una decisión explícita en el editor de colecciones.
+
+### La importación choca con las cuotas, y eso es correcto
+
+Las cuotas por propietario (F-12, `src/services/upload-limits.js`) no distinguen
+una importación de cuarenta subidas a mano, y no deben: existen para que un
+profesor no monopolice el worker. La que se alcanza primero es
+`MAX_PENDING_JOBS_PER_OWNER` (10 por defecto), porque la cola procesa de uno en
+uno y un vídeo tarda minutos.
+
+Cuando eso ocurre, el importador **se detiene** —no marca como fallidos los
+ficheros que quedaban— y dice cuántos faltan. Reimportar la misma carpeta más
+tarde retoma el trabajo: las carpetas se reutilizan y sólo se suben los ficheros
+que aún no estaban.
+
+El coste que hay que conocer: los ficheros que **sí** entraron se reconocen por
+título y se vuelven a subir **como revisión**, no se saltan. Saltarlos exigiría
+comparar el contenido, y el navegador no puede calcular el SHA-256 de un fichero
+de varios GB sin leerlo entero. Una importación interrumpida y retomada gasta,
+por tanto, ancho de banda repetido en lo ya subido; dividir una biblioteca
+grande en varias importaciones lo evita.
+
+Un fichero que falla por su cuenta (corrupto, demasiado grande, contenido que no
+corresponde a su extensión) sí se anota y la importación sigue. En cualquiera de
+los dos casos el cliente **retira la sesión de subida**: una sesión abandonada
+retiene su reserva hasta caducar, y unos pocos fallos consumirían la cuota de
+subidas activas durante horas.
+
 ## Modelo de datos
 
 ```
 tool_key                 kid, alg, public_jwk, private_pkcs8, active
 lti_platform             issuer + client_id (único), deployment_ids[], endpoints
 lti_oidc_state           state (PK), nonce, platform_id, expires_at, consumed_at
+deep_link_response_use   jti de respuesta consumido una sola vez
+resource_placement       recurso ligado a plataforma, deployment, curso y actividad
+resource_placement_item  snapshot de una colección al insertarla
+playback_grant           sesión revocable; plataforma, recurso, placement y caducidad
+playback_grant_ip        IP distintas observadas para detectar replay
 
 catalog_folder           carpeta personal por (platform_id, owner_sub); anidable
                          vía parent_id (FK compuesta al mismo propietario);
@@ -167,6 +246,8 @@ transcode_job            cola de vídeo: revisión, lease, intentos, cancelació
 pdf_job                  cola de PDF, con la misma semántica
 view_event               quién cargó qué vídeo, de qué revisión
 document_view_event      lo mismo para documentos
+learner_progress         marcador «reanudar donde lo dejó» por alumno y recurso
+                         (sin FK a propósito: dato consultivo, ADR-021)
 schema_migration         control de migraciones
 ```
 
@@ -200,9 +281,18 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | GET | `/lti/config` | — | Datos de alta en Moodle |
 | POST | `/lti/deeplink/response` | token de Deep Linking | Devuelve la selección a Moodle |
 | GET/POST | `/lti/platforms` | `LTI_ADMIN_TOKEN` | Gestión de plataformas |
+| GET | `/api/v1/platforms` | `CONTENT_API_TOKEN` | Plataformas disponibles para una migración |
+| POST/GET/PUT/DELETE | `/api/v1/uploads…` | token + plataforma + propietario | Mismo protocolo troceado de la UI para scripts/Postman |
+| POST | `/api/v1/imports/plan` | token + plataforma + propietario | Mismo plan de importación de árboles que la biblioteca |
+| GET | `/api/v1/materials/:kind/:id` | token + plataforma + propietario | Estado de material, última revisión y trabajo |
 | GET | `/admin/platforms/:id/contenido` | consola admin | **Inventario del aula**: todo el material de todos sus profesores |
+| GET | `/admin/platforms/:id/importar` | consola admin | Importador de la **biblioteca del centro** |
+| POST | `/admin/platforms/:id/import/imports/plan` | cookie admin + CSRF por cabecera | Plan de importación institucional |
+| — | `/admin/platforms/:id/import/uploads…` | cookie admin + CSRF por cabecera | El mismo protocolo troceado, con el propietario institucional |
+| POST | `/admin/platforms/:id/import/done` | cookie admin + CSRF por cabecera | Cierra la importación y la registra en la auditoría |
 | GET | `/materials` | catálogo | **Catálogo unificado** (vídeos + PDFs), filtros y cursor |
 | GET | `/materials/:kind/:id/revisions` | catálogo | Historial de revisiones |
+| POST | `/imports/plan` | catálogo | **Importar una carpeta**: reparte un árbol de rutas en carpetas y decide alta o revisión (`dryRun` para previsión) |
 | POST | `/uploads` | catálogo | Iniciar subida troceada de alta o sustitución |
 | GET | `/uploads/:id` | catálogo | Fragmentos confirmados (reanudación) |
 | PUT | `/uploads/:id/chunks/:n` | catálogo | Enviar un fragmento binario idempotente |
@@ -233,6 +323,7 @@ fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
 | POST | `/collections/:id/duplicate` | catálogo | Copia lógica |
 | DELETE | `/collections/:id` | catálogo | Archivar (no borra) |
 | GET | `/collections/:id/manifest` | sesión con alcance | Índice para el visor del alumno |
+| PUT | `/progress/:kind/:id` | sesión con alcance | Marcador de reanudación del alumno (la lectura viaja en el bootstrap del launch, ADR-021) |
 | GET | `/hls/:id/index.m3u8` | sesión con alcance | **Playlist personalizada** |
 | GET | `/hls/:id/key` | token de clave | Clave AES-128 de esa revisión |
 | GET | `/media/videos/:id/:rev/:variant/:seg` | URL firmada | Segmento (en producción, nginx) |
@@ -305,6 +396,32 @@ compartido o privado— con su ruta, estado y propietario. Sigue filtrando por
 `platform_id`: una instancia nunca ve el contenido de otra. Es de sólo lectura y
 no expone rutas de disco, tokens ni identificadores de revisión.
 
+### Y qué puede escribir: la biblioteca del centro
+
+Ver todo no es poder tocar todo. El único camino de escritura de contenido de la
+consola es `/admin/platforms/:id/importar`, y no escribe en la biblioteca de
+ningún profesor: lo importado cuelga de un **propietario sintético por
+instancia** (`ADMIN_LIBRARY_OWNER_SUB`, por defecto `moodleshield:biblioteca`) y
+su carpeta raíz se marca compartida ([ADR-026](decisiones.md)).
+
+```
+administrador ──importa──▶ biblioteca del centro (owner sintético, compartida)
+                                  │
+                                  └──▶ la ven, la abren y la insertan en sus
+                                       cursos todos los profesores del aula;
+                                       archivarla o borrarla, sólo el admin
+```
+
+El prefijo `moodleshield:` no puede colisionar con el `sub` de un profesor, que
+sale del `id_token`. Las FK compuestas `(folder_id, platform_id, owner_sub)`
+hacen imposible por esquema —no por disciplina— que este camino guarde algo
+dentro de la carpeta de un profesor. Se protege con la cookie de administrador
+(`SameSite=Strict`) más un token CSRF **por cabecera** (`X-MoodleShield-Csrf`),
+porque un PUT de fragmento lleva bytes crudos y no un cuerpo donde quepa un
+campo oculto; el token va atado a la instancia, así que el de un aula no sirve
+para otra. Cada importación deja un evento `content.import` en
+`admin_audit_event`.
+
 La pertenencia a la colección se comprueba contra la base de datos en cada
 petición, no contra una lista congelada en el token: quitar un material de la
 colección le cierra la puerta también a las sesiones ya emitidas.
@@ -321,6 +438,27 @@ El `jti` del token de sesión desduplica (índice único parcial por recurso +
 guarda además la **revisión exacta** que se sirvió, que es contra la que el
 trazado tiene que comparar.
 
+## Qué ve el alumno de su propia sesión
+
+El visor gasta **una sola fila** en cromo (ADR-022): «Atrás», un chip ámbar
+permanente `⚠ Sesión monitorizada · identidad · IP · Ver detalles`, y el botón
+que pliega el panel lateral. Todo lo demás —título del material, lista de la
+colección, Anterior/Siguiente, descarga y línea de estado— vive en ese panel, de
+modo que el alto restante es íntegramente del contenido.
+
+El chip abre un `<dialog>` con el aviso legal completo y los datos registrados
+de la sesión: nombre, identidad, IP, inicio y caducidad, referencia de
+auditoría, material y navegador. Esa **referencia es el `jti`**, el mismo valor
+que la sección anterior guarda en `view_event.session_jti`: lo que el alumno lee
+se puede cotejar con lo registrado. Sale del bootstrap del launch
+(`session: { issuedAt, expiresAt, reference }`), no de descodificar el token.
+
+Sólo se enseña lo que existe. `identity` puede llegar vacío —LTI 1.3 no tiene
+claim de documento de identidad, sólo el parámetro personalizado de
+[`moodle-setup.md`](moodle-setup.md)— y entonces se dice; el correo, el título
+del curso y el historial de accesos previos no están ni en la sesión ni en
+ningún endpoint, y por eso no aparecen.
+
 ## Modelo de seguridad
 
 Qué protege qué, y contra quién:
@@ -328,9 +466,10 @@ Qué protege qué, y contra quién:
 | Capa | Protege de | No protege de |
 |---|---|---|
 | Cifrado AES-128 de los segmentos | Descarga directa del `.ts` | Quien tiene acceso legítimo |
-| Token de clave con caducidad | Compartir un enlace al vídeo | Compartir la clave descargada |
-| URLs de segmento firmadas | Descargar una variante completa y anular la traza | — |
-| Alcance de sesión por recurso | Acceso lateral con un UUID conocido o un token de otra actividad | — |
+| Token de clave ligado al grant padre | Compartir un enlace al vídeo | Compartir la clave ya descargada |
+| URLs de segmento firmadas + `auth_request` | Descargar una variante completa; seguir tras revocación | — |
+| Placement LTI server-side | UUID manual o actividad copiada entre cursos/enlaces | Actividades legacy sin reinsertar |
+| Alcance de sesión por recurso | Reusar un token para otro material | — |
 | Aislamiento por propietario | Que un profesor vea o toque la biblioteca de otro | — |
 | Overlay del DNI | Grabación de pantalla y reenvío | Quien borra el `div` |
 | Marca A/B (forense) | Quien borra el overlay; recompresión; reescalado | Recorte de bordes; colusión |
@@ -344,11 +483,26 @@ puede capturar el vídeo. El sistema no lo impide — lo hace atribuible.
 
 ### El PDF protege menos que el vídeo, y hay que decirlo
 
-Un PDF no tiene marca forense. El visor muestra un overlay con la identidad del
-alumno y el documento sólo se entrega tras comprobar el alcance de la sesión,
-pero **el PDF autorizado viaja completo al navegador** para que PDF.js lo
-renderice. Un alumno con conocimientos puede recuperar esos bytes desde las
-herramientas de desarrollo y quitar el overlay.
+Un PDF no tiene marca forense. El visor estampa la identidad del alumno de dos
+formas —una marca de fondo repetida sobre toda la hoja, tenue para no estorbar
+la lectura, y el aviso legal en vertical al margen— y el documento sólo se
+entrega tras comprobar el alcance de la sesión, pero **el PDF autorizado viaja
+completo al navegador** para que PDF.js lo renderice. Un alumno con
+conocimientos puede recuperar esos bytes desde las herramientas de desarrollo y
+quitar ambas marcas.
+
+Conviene tener claro contra qué sirve cada cosa, porque es fácil confundirlas:
+
+| Marca | Dónde vive | Qué permite atribuir |
+|---|---|---|
+| Fondo repetido del visor | Capa del navegador, no el documento | Una **foto del monitor** o una captura de pantalla |
+| Sello de la descarga (ADR-017) | Dentro del PDF generado al vuelo | Una copia descargada, hasta que alguien la reprocese |
+| Nada | — | Una filtración de los bytes originales |
+
+La marca de fondo se calibra con `--pdf-mark-alpha` en `app.css`. El criterio es
+el más bajo que todavía se lea al fotografiar la pantalla: por debajo de `.10` la
+compresión de una cámara de móvil se la come, y por encima de `.18` empieza a
+molestar sobre texto pequeño.
 
 | | Vídeo | PDF |
 |---|---|---|
@@ -388,10 +542,9 @@ antes de subir.
 | Túnel | 128 MB | ~15 MB |
 
 Almacenamiento: aproximadamente **el doble del re-encode** por vídeo (dos
-variantes; el original se borra al terminar). Con CRF 21 a 1080p, el re-encode
-ronda 1–2 GB/hora por variante — frente a un original de cámara a 8 Mbps
-(3,6 GB/h), el resultado suele ocupar *menos* que el original; frente a uno ya
-comprimido, ≈ 2×.
+variantes; el original se borra al terminar). Antes de ffmpeg se reserva una cota basada
+en duración y `VIDEO_MAX_OUTPUT_BITRATE_KBPS`; al terminar se contabilizan los bytes
+reales de segmentos, playlists, clave y póster. La topología soportada usa un worker.
 
 ## Ciclo de vida de las actividades (y el borrado en Moodle)
 
@@ -402,7 +555,8 @@ alumno, aquí no llega ninguna señal. La actividad borrada simplemente deja de
 generar launches.
 
 Esto encaja con el diseño: **el vídeo no pertenece a la actividad**. Un mismo
-vídeo se inserta en N cursos (la actividad sólo guarda `custom.videoId`), así
+vídeo se inserta en N cursos (cada actividad guarda el recurso y un
+`custom.placementid` opaco), así
 que borrar una actividad *no debe* borrar el vídeo. El ciclo de vida es:
 
 ```
@@ -446,13 +600,16 @@ automática con aviso al profesor está en la lista de evolución del plan.
 
 Lo que se puede mover si el sistema se queda corto, por orden de utilidad:
 
-1. **Más workers**: `--scale worker=N`. `SKIP LOCKED` lo soporta sin cambios.
+1. **Un worker más rápido**: la candidata soporta una sola réplica. `SKIP LOCKED`
+   reparte trabajos, pero antes de escalar horizontalmente la reserva de capacidad del
+   artefacto debe convertirse en transaccional.
 2. **Aceleración hardware**: `h264_qsv` (iGPU Intel) o `h264_nvenc` (NVIDIA)
    dividen el tiempo de transcodificación por 10–20.
 3. **CDN delante de los segmentos**: el mismo esquema de URLs firmadas funciona
    con cualquier CDN que soporte firma.
-4. **Réplicas de la aplicación**: no tiene estado (sesiones sin cookies, sin
-   estado en memoria). Sólo hace falta que compartan el volumen de medios.
+4. **Réplicas de la aplicación**: los grants viven en PostgreSQL, pero los rate limits
+   siguen siendo por proceso. Antes de escalar hay que moverlos al borde o a un almacén
+   compartido, además de compartir los volúmenes.
 
 El cuello de botella es siempre la transcodificación, no la reproducción — que
 es exactamente el objetivo del diseño.

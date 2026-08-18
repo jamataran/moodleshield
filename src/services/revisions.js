@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { many, one, transaction } from '../db/index.js'
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { many, one, query, transaction } from '../db/index.js'
 import config from '../config.js'
 import logger from '../logger.js'
-import { isUuid, removeRevisionFiles } from '../media/storage.js'
+import { isUuid, readMediaMeta, removeRevisionFiles, revisionDir, tombstonePath } from '../media/storage.js'
 
 /**
  * Revisiones: el material lógico y el fichero físico dejan de ser lo mismo.
@@ -30,7 +32,9 @@ const KIND = {
                  width = r.width,
                  height = r.height,
                  size_bytes = r.size_bytes,
-                 original_filename = r.original_filename`
+                 original_filename = r.original_filename`,
+    /** Lo que la lápida forense necesita de la fila (F-14). */
+    forensicColumns: 'r.pattern_scope, r.segment_count, r.segment_seconds, r.width, r.height'
   },
   pdf: {
     table: 'pdf_document',
@@ -41,7 +45,10 @@ const KIND = {
     projection: `page_count = r.page_count,
                  sha256 = r.sha256,
                  size_bytes = r.size_bytes,
-                 original_filename = r.original_filename`
+                 original_filename = r.original_filename`,
+    // El PDF no lleva patrón A/B: su lápida guarda la lista de lectores.
+    forensicColumns: `NULL::text AS pattern_scope, NULL::integer AS segment_count,
+                 NULL::integer AS segment_seconds, NULL::integer AS width, NULL::integer AS height`
   }
 }
 
@@ -148,12 +155,15 @@ export async function insertRevision (client, kind, {
 
 export function listRevisions ({ kind, materialId }) {
   const { revisions, fk, table } = kindConfig(kind)
+  // Cota de filas (V-27): la retención mantiene pocas revisiones por material,
+  // pero la consulta no debe poder crecer sin límite.
   return many(
     `SELECT r.*, (m.active_revision_id = r.id) AS is_active
        FROM ${revisions} r
        JOIN ${table} m ON m.id = r.${fk}
       WHERE r.${fk} = $1
-      ORDER BY r.revision_number DESC`,
+      ORDER BY r.revision_number DESC
+      LIMIT 500`,
     [materialId]
   )
 }
@@ -378,9 +388,10 @@ export function minimumGraceSeconds () {
 }
 
 export function listPurgeCandidates (kind, { limit = 50 } = {}) {
-  const { table, revisions, fk } = kindConfig(kind)
+  const { table, revisions, fk, forensicColumns } = kindConfig(kind)
   return many(
-    `SELECT r.id, r.${fk} AS material_id, r.storage_layout, r.revision_number
+    `SELECT r.id, r.${fk} AS material_id, r.storage_layout, r.revision_number,
+            r.retired_at, ${forensicColumns}
        FROM ${revisions} r
        JOIN ${table} m ON m.id = r.${fk}
       WHERE r.status IN ('retired','purging')
@@ -399,6 +410,52 @@ export function listPurgeCandidates (kind, { limit = 50 } = {}) {
 }
 
 /**
+ * Lápida forense antes de purgar (F-14). Purgar borraba también la evidencia:
+ * `meta.json` desaparecía con los artefactos, la fila de la revisión (con su
+ * `pattern_scope`) se eliminaba y `view_event.revision_id` quedaba a NULL por
+ * la FK — una filtración que aflorara después era imposible de trazar. La
+ * lápida es un sobre autocontenido: ámbito del patrón, geometría de la marca y
+ * la lista de quién vio ESA revisión. `tools/trace.mjs` la usa como plan B
+ * cuando ya no hay ni fila ni meta.json.
+ *
+ * Falla en cerrado: si la lápida no se puede escribir, la purga NO continúa.
+ */
+async function writeForensicTombstone (kind, row) {
+  const { events, fk } = kindConfig(kind)
+  const materialId = row.material_id
+  const meta = await readMediaMeta(revisionDir(kind, materialId, row.id, row.storage_layout))
+  const viewers = await many(
+    `SELECT user_sub, user_name, user_identity, count(*)::int AS views,
+            min(created_at) AS first_at, max(created_at) AS last_at
+       FROM ${events}
+      WHERE ${fk} = $1 AND revision_id = $2
+      GROUP BY user_sub, user_name, user_identity
+      ORDER BY views DESC`,
+    [materialId, row.id]
+  )
+  const tombstone = {
+    version: 1,
+    kind,
+    materialId,
+    revisionId: row.id,
+    revisionNumber: row.revision_number ?? null,
+    patternScope: row.pattern_scope ?? materialId,
+    segmentCount: meta?.segmentCount ?? row.segment_count ?? null,
+    segmentSeconds: meta?.segmentSeconds ?? row.segment_seconds ?? null,
+    width: meta?.width ?? row.width ?? null,
+    height: meta?.height ?? row.height ?? null,
+    markGeometry: meta?.markGeometry ?? null,
+    markAlpha: meta?.markAlpha ?? null,
+    retiredAt: row.retired_at ?? null,
+    purgedAt: new Date().toISOString(),
+    viewers
+  }
+  const file = tombstonePath(kind, materialId, row.id)
+  await mkdir(path.dirname(file), { recursive: true })
+  await writeFile(file, JSON.stringify(tombstone, null, 2))
+}
+
+/**
  * Purga idempotente: marca, borra artefactos y sólo entonces borra la fila. Si
  * el borrado de disco falla, la fila se queda en `purging` y se reintenta; no
  * se informa de un éxito que no ocurrió.
@@ -406,12 +463,30 @@ export function listPurgeCandidates (kind, { limit = 50 } = {}) {
 export async function purgeRetiredRevisions () {
   const purged = { video: 0, pdf: 0, failed: 0 }
   for (const kind of ['video', 'pdf']) {
-    const { revisions } = kindConfig(kind)
+    const { revisions, table } = kindConfig(kind)
     for (const row of await listPurgeCandidates(kind)) {
       try {
-        await one(`UPDATE ${revisions} SET status = 'purging' WHERE id = $1 RETURNING id`, [row.id])
+        // Marca condicional y atómica (V-26): sólo pasa a `purging` si la
+        // revisión sigue retirada/purging y NO es la activa. Si un `activate`
+        // concurrente la reactivó entre `listPurgeCandidates` y aquí, el UPDATE
+        // no afecta ninguna fila y se salta — nunca se borran los ficheros de una
+        // revisión activa. El bloqueo de fila que toma `activate` sobre la propia
+        // revisión serializa las dos operaciones. Antes esto se hacía con un
+        // UPDATE incondicional sin releer estado, con la misma carrera que la
+        // purga manual arreglaba sólo en su lado.
+        const marked = await one(
+          `UPDATE ${revisions} r SET status = 'purging'
+            WHERE r.id = $1 AND r.status IN ('retired','purging')
+              AND NOT EXISTS (SELECT 1 FROM ${table} m WHERE m.active_revision_id = r.id)
+            RETURNING r.id`,
+          [row.id]
+        )
+        if (!marked) continue
+        // La lápida va ANTES del borrado y su fallo aborta la purga (F-14):
+        // sin evidencia preservada no se destruye nada.
+        await writeForensicTombstone(kind, row)
         await removeRevisionFiles(kind, row.material_id, row.id, row.storage_layout)
-        await one(`DELETE FROM ${revisions} WHERE id = $1 RETURNING id`, [row.id])
+        await query(`DELETE FROM ${revisions} WHERE id = $1`, [row.id])
         purged[kind]++
       } catch (err) {
         logger.error({ err, kind, revisionId: row.id }, 'No se pudo purgar una revisión retirada')
@@ -423,6 +498,100 @@ export async function purgeRetiredRevisions () {
     logger.info(purged, 'Purga de revisiones retiradas')
   }
   return purged
+}
+
+/**
+ * Purga manual de una revisión retirada, pedida por el profesor.
+ *
+ * Corrige la carrera de V-26. Antes vivía en la capa de rutas con `one()`
+ * sueltos —cada uno su propia transacción— y sin bloquear el material: un
+ * `activate` concurrente (otra pestaña, un doble clic) podía activar justo esta
+ * revisión entre la comprobación y el borrado de ficheros, dejándola `ready` y
+ * activa con sus segmentos, su clave AES y su poster ya borrados del disco. El
+ * material se rompía en caliente para todos los alumnos.
+ *
+ * Aquí se toma `FOR UPDATE` sobre el material —el mismo orden de bloqueo que
+ * `activateRevision`/`discardRevision`— y sólo tras marcar la revisión `purging`
+ * dentro de esa transacción se borran los ficheros. Un `activate` que llegue
+ * después adquiere el bloqueo, ve el estado `purging` y la rechaza (no está en
+ * `ready`/`retired`), así que nunca se reactiva una revisión ya vaciada.
+ */
+export async function purgeRevisionManually ({ kind, materialId, revisionId, platformId, ownerSub }) {
+  const { table, revisions, fk } = kindConfig(kind)
+  // `active_revision_id` vuelve de pg en minúsculas; `assertUuid` valida el
+  // formato pero no normaliza la caja. Un `:rid` en mayúsculas pasaba la
+  // comparación JS `=== active_revision_id` (fallo) mientras el tipo `uuid` de
+  // Postgres sí encontraba la fila: se podía purgar la revisión activa (V-26,
+  // matiz). Se normaliza antes de cualquier comparación en JavaScript.
+  revisionId = String(revisionId).toLowerCase()
+  const gate = await transaction(async (client) => {
+    const { rows: materials } = await client.query(
+      `SELECT id, active_revision_id FROM ${table}
+        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 FOR UPDATE`,
+      [materialId, platformId, ownerSub]
+    )
+    if (materials.length === 0) return { status: 'material_not_found' }
+    if (materials[0].active_revision_id === revisionId) return { status: 'active_revision' }
+
+    const { rows } = await client.query(
+      `SELECT r.*,
+              (r.retired_at IS NOT NULL AND r.retired_at < now() - make_interval(secs => $3)) AS grace_elapsed
+         FROM ${revisions} r
+        WHERE r.id = $1 AND r.${fk} = $2
+        FOR UPDATE`,
+      [revisionId, materialId, minimumGraceSeconds()]
+    )
+    if (rows.length === 0) return { status: 'revision_not_found' }
+    const row = rows[0]
+    if (row.legal_hold) return { status: 'on_hold' }
+    if (!['retired', 'failed', 'cancelled', 'purging'].includes(row.status)) {
+      return { status: 'not_purgeable', revisionStatus: row.status }
+    }
+    if (row.status === 'retired' && !row.grace_elapsed) return { status: 'in_grace' }
+
+    await client.query(`UPDATE ${revisions} SET status = 'purging' WHERE id = $1`, [revisionId])
+    return { status: 'ok', storageLayout: row.storage_layout, row }
+  })
+
+  if (gate.status !== 'ok') return gate
+
+  // Ya está `purging` y confirmado: el borrado de ficheros y de la fila ocurre
+  // fuera del bloqueo sin riesgo de reactivación. `query` (no `one`) porque la
+  // purga automática podría haber borrado la fila entre medias, y eso no es un
+  // error. La lápida forense va primero y su fallo aborta (F-14).
+  await writeForensicTombstone(kind, { ...gate.row, material_id: materialId })
+  await removeRevisionFiles(kind, materialId, revisionId, gate.storageLayout)
+  await query(`DELETE FROM ${revisions} WHERE id = $1`, [revisionId])
+  logger.info({ kind, materialId, revisionId }, 'Revisión purgada a petición del profesor')
+  return { status: 'purged' }
+}
+
+/**
+ * Retención para investigación (F-14). `legal_hold` existía en el esquema y
+ * las purgas ya lo respetaban, pero no había forma de activarlo: la única
+ * revisión que importaba proteger —la de una filtración bajo análisis— sólo
+ * podía marcarse editando la base de datos a mano. Sólo el propietario del
+ * material puede retener o liberar, y ambas cosas quedan en el log.
+ */
+export async function setRevisionLegalHold ({ kind, materialId, revisionId, platformId, ownerSub, hold }) {
+  const { table, revisions, fk } = kindConfig(kind)
+  revisionId = String(revisionId).toLowerCase()
+  const material = await one(
+    `SELECT id FROM ${table} WHERE id = $1 AND platform_id = $2 AND owner_sub = $3`,
+    [materialId, platformId, ownerSub]
+  )
+  if (!material) return { status: 'material_not_found' }
+  const row = await one(
+    `UPDATE ${revisions} SET legal_hold = $3 WHERE id = $1 AND ${fk} = $2
+     RETURNING id, legal_hold`,
+    [revisionId, materialId, Boolean(hold)]
+  )
+  if (!row) return { status: 'revision_not_found' }
+  logger.info(
+    { kind, materialId, revisionId, legalHold: row.legal_hold },
+    row.legal_hold ? 'Revisión retenida para investigación' : 'Retención de revisión liberada'
+  )
+  return { status: 'ok', legalHold: row.legal_hold }
 }
 
 /**

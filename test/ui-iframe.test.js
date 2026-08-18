@@ -60,7 +60,7 @@ test('la interfaz no usa alert, confirm ni prompt', async () => {
 test('cada diálogo declara los botones que su código espera', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
   for (const id of ['help-dialog', 'prompt-dialog', 'confirm-dialog', 'edit-dialog', 'revisions-dialog',
-    'move-dialog', 'upload-dialog', 'collection-dialog']) {
+    'move-dialog', 'upload-dialog', 'import-dialog', 'collection-dialog']) {
     assert.ok(html.includes(`id="${id}"`), `falta el diálogo ${id}`)
   }
   // `method="dialog"` es lo que hace que el botón cierre el diálogo y deje su
@@ -124,11 +124,25 @@ test('un diálogo no arrastra el returnValue de la vez anterior', async () => {
   // la especificación cierra «sin resultado», no con cadena vacía. Un helper que
   // resuelve mirando `returnValue === 'ok'` interpretaría entonces el Escape de
   // hoy como el «Aceptar» de ayer — y askConfirm protege borrados de material.
+  // El visor del alumno abre su aviso legal con un helper propio en
+  // `assets/dialog.js`, para no arrastrar los 70 KB del catálogo. Al haber dos
+  // puertas, las dos tienen que limpiar igual, y nadie más puede abrirse la suya.
+  const abridores = ['assets/catalog.js', 'assets/dialog.js']
+  for (const modulo of abridores) {
+    const fuente = await readFile(path.join(uiDir, modulo), 'utf8')
+    assert.match(fuente, /returnValue\s*=\s*''[\s\S]{0,120}?showModal\(\)/,
+      `${modulo}: hay que limpiar returnValue antes de showModal()`)
+  }
+
+  for (const file of await uiFiles('.js')) {
+    const relativo = path.relative(uiDir, file).split(path.sep).join('/')
+    if (abridores.includes(relativo)) continue
+    const fuente = stripCommentsAndStrings(await readFile(file, 'utf8'))
+    assert.doesNotMatch(fuente, /showModal\(\)/,
+      `${relativo} debe abrir por el helper, no con showModal() directo`)
+  }
+
   const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
-
-  assert.match(code, /returnValue\s*=\s*''[\s\S]{0,120}?showModal\(\)/,
-    'quien abre un diálogo debe limpiar returnValue antes de showModal()')
-
   for (const nombre of ['askText', 'askConfirm']) {
     const inicio = code.indexOf(`function ${nombre} (`)
     assert.notEqual(inicio, -1, `falta ${nombre}`)
@@ -175,16 +189,86 @@ test('el catálogo permite componer y EDITAR colecciones, no sólo crearlas', as
   assert.ok(html.includes('id="collection-folder"'), 'falta el selector de carpeta de la colección')
 })
 
-test('el catálogo separa colecciones y materiales y permite volver atrás', async () => {
+test('la colección admite material aún en cola, con espera visible para el alumno', async () => {
+  // El picker no puede volver a pedir sólo lo listo: componer una colección con
+  // material recién subido es el caso de uso que cierra esta regresión.
+  const catalog = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.doesNotMatch(catalog, /ready:\s*'1'/,
+    'el picker de colecciones debe listar también el material en preparación')
+
+  // El visor sondea el manifest mientras haya material preparándose, y deja de
+  // hacerlo al salir de la página: sin el clearTimeout, la pestaña enterrada
+  // seguiría consultando el manifest para siempre.
+  const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
+  assert.match(collection, /manifestTimer/, 'falta el sondeo del manifest')
+  assert.match(collection, /pagehide[\s\S]{0,200}clearTimeout\(manifestTimer\)/,
+    'el sondeo debe cancelarse en pagehide')
+  assert.match(collection, /se está preparando/i,
+    'el alumno debe distinguir la espera legítima de un material no disponible')
+})
+
+test('el catálogo separa carpetas, colecciones y materiales sin gastar una franja en pestañas', async () => {
   const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
-  for (const id of ['back', 'help-open', 'all-content', 'tab-collections', 'tab-materials',
+  for (const id of ['back', 'help-open', 'all-content', 'section-subfolders',
     'section-collections', 'section-materials', 'load-more-collections']) {
     assert.ok(html.includes(`id="${id}"`), `falta el control de navegación ${id}`)
   }
 
+  // Las pestañas costaban una franja entera para filtrar dos listas que ya
+  // venían cargadas. Ahora los tres tipos conviven en una lista y se separan con
+  // etiquetas de grupo, que valen una línea.
+  assert.doesNotMatch(html, /role="tablist"/,
+    'el tipo de contenido no puede volver a gastar una franja de pestañas')
+  assert.doesNotMatch(html, /data-content-filter/,
+    'el filtro por pestañas se sustituyó por grupos dentro de la lista')
+  assert.equal((html.match(/class="group-label"/g) ?? []).length, 3,
+    'los tres grupos (carpetas, colecciones y materiales) necesitan su etiqueta')
+
   const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
   assert.match(code, /navigationHistory/, 'Atrás necesita conservar el historial del explorador')
   assert.match(code, /nextCollectionCursor/, 'las colecciones necesitan paginación propia')
+  // Un explorador enseña el contenido de la carpeta abierta, subcarpetas
+  // incluidas: obligar a mirar al panel lateral para entrar en una es justo lo
+  // que hacía que esto no pareciera un gestor de archivos.
+  assert.match(code, /childrenOf\(state\.folderId\)/,
+    'las subcarpetas del nivel abierto deben salir también en la lista principal')
+})
+
+test('el catálogo reserva el alto de la pantalla para la lista', async () => {
+  // Misma regla que el visor del alumno (ADR-022/024). El alto de este iframe lo
+  // decide Moodle y no se puede negociar desde dentro, así que cada franja de
+  // cromo sale de la lista: antes eran ~288 px antes del primer elemento.
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /body\.catalog-page\s*\{[^}]*grid-template-rows:\s*minmax\(0, 1fr\)/s,
+    'el catálogo sólo puede gastar UNA fila, y es la del contenido')
+  assert.match(css, /\.catalog-main\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)/s,
+    'dentro del panel principal sólo cabe una franja de cromo: la barra de comandos')
+  assert.match(css, /\.group-label\s*\{[^}]*position:\s*sticky/s,
+    'la etiqueta de grupo tiene que seguir visible al desplazar su grupo')
+
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  assert.doesNotMatch(html, /class="catalog-header"/,
+    'la cabecera repetía el título del propio modal de Moodle')
+  assert.doesNotMatch(html, /<h1/,
+    'el modal de Moodle ya se titula «Seleccionar contenido»: repetirlo cuesta una franja')
+  assert.doesNotMatch(html, /class="catalog-toolbar"/,
+    'el buscador vive en la barra de comandos, no en una fila propia')
+  // Toda explicación se paga en píxeles: va en el diálogo de ayuda.
+  assert.match(html, /id="help-open"[^>]*class="icon"/,
+    'la ayuda es un icono en la barra, no un bloque de texto permanente')
+})
+
+test('la ayuda no se abre sola encima del selector de contenido', async () => {
+  // ADR-022 ya descartó abrir el aviso automáticamente «para no cobrar peaje al
+  // entrar». En `deeplink` el profesor acaba de pulsar «Seleccionar contenido»:
+  // sabe a qué viene. En `manage` ha abierto una actividad vacía y sí necesita
+  // que le expliquen qué hacer.
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  const auto = code.slice(code.indexOf('moodleshield-help-'))
+  assert.notEqual(auto, '', 'debe seguir existiendo la apertura una vez por sesión')
+  const guarda = code.slice(0, code.indexOf('moodleshield-help-'))
+  assert.match(guarda.slice(-400), /boot\.mode === 'manage'/,
+    'la apertura automática sólo puede ocurrir en modo manage')
 })
 
 test('todos los visores muestran aviso, monitorización y descarga contextual', async () => {
@@ -226,6 +310,54 @@ test('el botón de volver hace Atrás y no rebota a la portada del curso', async
   }
 })
 
+test('el catálogo importa una carpeta entera y avisa antes de escribir nada', async () => {
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  // `webkitdirectory` es el ÚNICO modo que tiene un navegador de leer un árbol
+  // de directorios. Sin este atributo el diálogo sube ficheros sueltos y la
+  // estructura interna —que es el objetivo— se pierde por el camino.
+  assert.match(html, /id="import-picker"[^>]*\bwebkitdirectory\b/,
+    'el selector de carpeta necesita webkitdirectory')
+  assert.ok(html.includes('id="import-open"'), 'falta el botón de importar carpeta')
+
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.match(code, /webkitRelativePath/,
+    'la ruta relativa es lo que convierte la selección en un árbol de carpetas')
+  // Elegir una carpeta sólo para ver qué pasaría no puede crear carpetas en la
+  // biblioteca: la previsión va en seco y la escritura espera a «Importar».
+  assert.match(code, /dryRun: true/, 'la previsión debe pedirse en seco')
+  const confirmar = code.indexOf("el('import-btn').addEventListener")
+  assert.notEqual(confirmar, -1, 'falta el botón que confirma la importación')
+  assert.match(code.slice(confirmar, confirmar + 900), /requestImportPlan\(files, \{ signal/,
+    'el plan real (el que crea carpetas) sólo se pide al confirmar')
+
+  // Un fichero que falla no puede tumbar la importación entera.
+  assert.match(code, /fallidos\.push/, 'los errores por fichero se acumulan y se informan')
+})
+
+test('una cuota agotada para la importación en vez de rechazar todo lo que queda', async () => {
+  // Las cuotas por profesor (F-12) las alcanza sola una importación grande de
+  // vídeo: la cola admite un número limitado de trabajos pendientes. Si el
+  // importador tratara ese 429 como «este fichero está mal», marcaría como
+  // fallidos los cuarenta que quedaban y el profesor no sabría que basta con
+  // esperar.
+  for (const modulo of ['assets/catalog.js', 'assets/admin-import.js']) {
+    const code = await readFile(path.join(uiDir, modulo), 'utf8')
+    assert.match(code, /too_many_pending_jobs/, `${modulo}: falta reconocer la cola llena`)
+    assert.match(code, /too_many_active_uploads/, `${modulo}: falta reconocer las subidas activas`)
+    assert.match(code, /detenidaPorCuota/, `${modulo}: la cuota debe detener el bucle, no anotarse`)
+  }
+
+  // Y una subida que no llega a buen puerto tiene que soltar su reserva: si no,
+  // unos pocos ficheros fallidos consumen la cuota de subidas activas hasta que
+  // caduca la sesión, horas después.
+  const uploader = await readFile(path.join(uiDir, 'assets/chunked-upload.js'), 'utf8')
+  const salida = uploader.slice(uploader.lastIndexOf('} catch (err) {'))
+  assert.match(salida, /method: 'DELETE'/,
+    'una subida fallida debe retirar su sesión, no sólo la cancelada')
+  assert.match(salida, /keepalive: true/,
+    'la limpieza tiene que salir aunque se cierre la pestaña tras el error')
+})
+
 test('el catálogo distingue lo compartido de lo propio y no ofrece acciones ajenas', async () => {
   // Compartir da acceso de trabajo, no de propiedad (ADR-018). Si la interfaz
   // ofrece «Archivar» sobre material de otro profesor, el botón sólo puede
@@ -247,8 +379,35 @@ test('el catálogo distingue lo compartido de lo propio y no ofrece acciones aje
   }
 })
 
-test('la cabecera de una actividad compuesta prioriza el título y compacta la monitorización', async () => {
+test('el visor del alumno reserva el alto de la pantalla para el contenido', async () => {
+  // La pantalla de estudio es la del material. Cada franja de cromo se descuenta
+  // de su alto, y dentro del iframe de Moodle ese alto ya llega recortado: el
+  // visor asume 100dvh y no negocia nada con el padre, así que lo que sobra se
+  // corta en vez de hacer scroll.
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /body\.viewer\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\)/s,
+    'el visor sólo puede gastar UNA fila en cromo')
+  assert.match(css, /\.viewer-topbar\s*\{[^}]*display:\s*flex/s,
+    'atrás, aviso, identidad y plegado comparten una única barra')
+  assert.match(css, /body\.is-panel-hidden \.viewer-sidebar\s*\{[^}]*display:\s*none/s,
+    'el panel plegado tiene que salir también del árbol de accesibilidad')
+
+  for (const page of ['player.html', 'pdf.html', 'collection.html']) {
+    const html = await readFile(path.join(uiDir, page), 'utf8')
+    assert.doesNotMatch(html, /class="legal-warning"/,
+      `${page}: el aviso legal ya no puede ocupar una franja propia`)
+    const aside = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'))
+    assert.match(aside, /id="title"/, `${page}: el título encabeza el panel, no la barra`)
+    assert.match(aside, /id="status"/,
+      `${page}: el estado no puede robarle una línea al contenido`)
+  }
+
   const html = await readFile(path.join(uiDir, 'collection.html'), 'utf8')
+  const aside = html.slice(html.indexOf('<aside'), html.indexOf('</aside>'))
+  for (const id of ['prev', 'position', 'next']) {
+    assert.ok(aside.includes(`id="${id}"`),
+      `la navegación entre materiales va junto a la lista que ya dice dónde estás`)
+  }
   assert.match(html, /id="resource-kind"\s+hidden/, 'el alumno no debe ver la etiqueta Colección')
   assert.doesNotMatch(html, />\s*Colección\s*</, 'Colección no es información útil para el alumno')
   assert.match(html, /Material de la actividad/, 'la navegación móvil debe hablar de la actividad')
@@ -258,16 +417,37 @@ test('la cabecera de una actividad compuesta prioriza el título y compacta la m
 
   const shell = await readFile(path.join(uiDir, 'assets/viewer-shell.js'), 'utf8')
   assert.match(shell, /kindEl\.hidden\s*=\s*!kindLabel/, 'una etiqueta vacía debe liberar su espacio')
+})
 
-  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
-  assert.match(css, /\.viewer-monitoring\s*\{[^}]*display:\s*flex/s,
-    'monitorización y usuario deben compartir una línea')
-  assert.match(css, /\.viewer-monitoring\s*\{[^}]*grid-column:\s*3/s,
-    'la monitorización debe conservar la columna derecha aunque Atrás esté oculto')
-  assert.match(css, /\.viewer-heading\s*\{[^}]*grid-column:\s*2/s,
-    'el título debe conservar la columna central aunque Atrás esté oculto')
-  assert.match(css, /\.viewer-monitoring strong::after\s*\{[^}]*content:\s*" ·"/s,
-    'falta el separador inline entre estado y usuario')
+test('el aviso legal completo está a un clic y trae los datos de la sesión', async () => {
+  // Encoger el aviso sólo es aceptable si la advertencia sigue permanentemente
+  // en pantalla y el texto completo está a un clic, acompañado de los datos
+  // concretos de esta sesión: eso es lo que lo hace verificable en vez de
+  // decorativo.
+  for (const page of ['player.html', 'pdf.html', 'collection.html']) {
+    const html = await readFile(path.join(uiDir, page), 'utf8')
+    assert.match(html, /id="legal-chip"[^>]*aria-haspopup="dialog"/,
+      `${page}: el chip debe anunciar que abre un diálogo`)
+    assert.match(html, /<dialog id="legal-dialog"/, `${page}: falta el diálogo del aviso`)
+    assert.ok(html.includes('id="legal-audit"'), `${page}: falta la lista de datos registrados`)
+  }
+
+  const shell = await readFile(path.join(uiDir, 'assets/viewer-shell.js'), 'utf8')
+  assert.match(shell, /abrirDialogo\(legalDialog\)/,
+    'el chip debe abrir por el helper que limpia returnValue')
+  for (const etiqueta of ['Dirección IP', 'Inicio de la sesión', 'Referencia de auditoría']) {
+    assert.ok(shell.includes(etiqueta), `el detalle de la sesión debe incluir «${etiqueta}»`)
+  }
+  // LTI 1.3 no tiene ningún claim de documento de identidad: si el Moodle no
+  // manda el parámetro personalizado, hay que decirlo en vez de dejar el hueco.
+  assert.match(shell, /No facilitado por el aula virtual/,
+    'sin identificador hay que decirlo, no enseñar un vacío')
+
+  const routes = await readFile(path.join(uiDir, '../lti/routes.js'), 'utf8')
+  assert.match(routes, /reference:\s*session\.jti/,
+    'la referencia que ve el alumno es el jti que se escribe en view_event.session_jti')
+  assert.equal((routes.match(/session: sessionAudit\(sessionToken\)/g) ?? []).length, 3,
+    'los tres lanzamientos de alumno deben enviar los datos de la sesión')
 })
 
 test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua calmada', async () => {
@@ -307,10 +487,13 @@ test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua ca
 
   assert.match(css, /container:\s*video-player\s*\/\s*inline-size/,
     'los controles deben adaptarse al ancho real del reproductor')
-  assert.match(css, /\.video-icon-button svg text\s*\{[^}]*fill:\s*currentColor[^}]*paint-order:\s*stroke fill/s,
-    'el número 10 debe conservar contraste sobre el fondo y sobre la flecha')
-  assert.doesNotMatch(css, /\.video-icon-button svg text\s*\{[^}]*fill:\s*#090b0f/s,
-    'el número 10 no puede volver a dibujarse negro sobre el reproductor')
+  // El «10» de los saltos va dibujado como trazados vectoriales: un <text> SVG
+  // a este tamaño depende de la fuente del sistema y renderiza distinto (y
+  // peor) en cada navegador.
+  assert.doesNotMatch(code, /ICONS\s*=[\s\S]*?<text/,
+    'los iconos del reproductor no deben volver a depender de <text> SVG')
+  assert.doesNotMatch(css, /\.video-icon-button svg text/,
+    'sin <text> en los iconos, su regla CSS es código muerto')
   assert.match(css, /@media \(pointer: coarse\)[\s\S]*?\.video-timeline\s*\{[^}]*height:\s*2rem/,
     'la barra necesita un objetivo táctil cómodo')
   assert.doesNotMatch(css, /\.video-volume-group\s*\{\s*display:\s*none/,
@@ -339,4 +522,11 @@ test('los imports transitivos de JavaScript se revalidan tras un despliegue', as
   const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
   assert.match(pdf, /from '\.\/pdf-download\.js\?v=[^']+'/)
   assert.match(collection, /from '\.\/pdf-download\.js\?v=[^']+'/)
+
+  // V-08/F-09: las URLs de /vendor no llevan `?v=` —PDF.js importa su propio
+  // módulo y fija workerSrc a una ruta fija—, así que NO pueden servirse como
+  // `immutable`: una versión vulnerable cacheada sobreviviría al despliegue de
+  // la corregida hasta que caducara la caché del navegador.
+  assert.doesNotMatch(app, /vendorOptions\s*=\s*\{[^}]*immutable/,
+    'los ficheros de /vendor deben revalidarse para que un parche de seguridad llegue el mismo día')
 })

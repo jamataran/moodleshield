@@ -6,7 +6,7 @@
 # Ambos comparten las capas de dependencias, así que la segunda imagen sale casi
 # gratis en tiempo de build y en registro.
 
-ARG NODE_VERSION=22-alpine
+ARG NODE_VERSION=22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
 
 # ---------------------------------------------------------------------------
 FROM node:${NODE_VERSION} AS deps
@@ -24,6 +24,15 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 RUN apk add --no-cache su-exec
+
+# npm no pinta nada en runtime: la app arranca con `node src/server.js`, el
+# worker con `node src/worker.js` y el entrypoint no lo llama. Pero sus
+# dependencias empaquetadas (tar, brace-expansion, ip-address, picomatch,
+# sigstore) sí cuentan para Trivy, y son las que tumban el gate de CVE del
+# CD sin que ninguna sea nuestra: `npm audit --omit=dev` da cero. Se borra
+# el código vulnerable en vez de excluir la ruta del análisis, que además
+# recorta superficie: ninguna imagen publicada puede instalar paquetes.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY migrations ./migrations
@@ -50,7 +59,8 @@ FROM base AS app
 
 # Cap de heap: por debajo de esto Node no reserva memoria que luego le hace
 # falta a ffmpeg en el mismo host.
-ENV NODE_OPTIONS="--max-old-space-size=192"
+ENV NODE_OPTIONS="--max-old-space-size=192" \
+    SERVICE_ROLE=app
 
 EXPOSE 3000
 
@@ -72,7 +82,8 @@ FROM base AS worker
 USER root
 RUN apk add --no-cache ffmpeg qpdf poppler-utils ghostscript
 
-ENV NODE_OPTIONS="--max-old-space-size=192"
+ENV NODE_OPTIONS="--max-old-space-size=192" \
+    SERVICE_ROLE=worker
 
 # El worker no escucha en ningún puerto: se comprueba que el proceso Node sigue
 # vivo. El patrón anclado evita que `pgrep` encuentre su propio shell.

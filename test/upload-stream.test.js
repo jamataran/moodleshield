@@ -6,9 +6,11 @@ import { randomUUID } from 'node:crypto'
 import { createHash } from 'node:crypto'
 import { receiveVideoUpload, receiveDocumentUpload, UploadError } from '../src/media/upload.js'
 
+const VALID_VIDEO = '\x00\x00\x00\x18ftypisomvideo-data'
+
 function multipartRequest ({
   filename = 'clase.mp4',
-  content = 'contenido-de-video',
+  content = VALID_VIDEO,
   delayMs = 0,
   folderId = null
 } = {}) {
@@ -53,13 +55,13 @@ test('la subida no resuelve hasta recibir y cerrar el último chunk', async (t) 
   t.after(() => rm(upload.destination, { force: true }))
 
   assert.equal(delivered(), true)
-  assert.equal(await readFile(upload.destination, 'utf8'), 'contenido-de-video')
+  assert.equal(await readFile(upload.destination, 'utf8'), VALID_VIDEO)
   assert.equal(upload.title, 'Cálculo I')
-  assert.equal(upload.size, Buffer.byteLength('contenido-de-video'))
+  assert.equal(upload.size, Buffer.byteLength(VALID_VIDEO))
 })
 
 test('el SHA-256 se calcula durante el streaming, sin releer el fichero', async (t) => {
-  const content = 'contenido-de-video'
+  const content = VALID_VIDEO
   const { req } = multipartRequest({ content })
   const upload = await receiveVideoUpload(req, { revisionId: randomUUID() })
   t.after(() => rm(upload.destination, { force: true }))
@@ -81,6 +83,14 @@ test('una extensión no permitida falla con 415 y no confirma fichero', async ()
   await assert.rejects(
     receiveVideoUpload(req, { revisionId: randomUUID() }),
     (err) => err instanceof UploadError && err.status === 415
+  )
+})
+
+test('un fichero arbitrario renombrado a .mp4 se rechaza por magic bytes', async () => {
+  const { req } = multipartRequest({ content: 'esto-no-es-un-contenedor-de-video' })
+  await assert.rejects(
+    receiveVideoUpload(req, { revisionId: randomUUID() }),
+    (err) => err instanceof UploadError && err.status === 415 && err.code === 'unsupported_media_type'
   )
 })
 
@@ -120,4 +130,3 @@ test('un vídeo no se cuela por la ruta de documentos', async () => {
     (err) => err instanceof UploadError && err.status === 415
   )
 })
-

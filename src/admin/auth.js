@@ -10,13 +10,22 @@ export const ADMIN_LOGIN_COOKIE = '__Host-moodleshield_admin_login'
 function parsePasswordHash (encoded) {
   const match = /^scrypt:(\d+):(\d+):(\d+):([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(encoded ?? '')
   if (!match) throw new Error('Hash scrypt inválido')
-  if (Number(match[1]) !== 16384 || Number(match[2]) !== 8 || Number(match[3]) !== 1) {
-    throw new Error('Parámetros scrypt no permitidos')
+  const N = Number(match[1])
+  const r = Number(match[2])
+  const p = Number(match[3])
+  // Suelo, no igualdad exacta (V-35): la comparación estricta anterior
+  // rechazaba un hash con parámetros MÁS fuertes, así que endurecerlos exigía
+  // tocar código. El techo evita que un hash disparatado agote la memoria del
+  // proceso al verificar (el coste de scrypt es ~128·N·r bytes).
+  if (!Number.isInteger(N) || N < 16384 || (N & (N - 1)) !== 0 || N > 131_072) {
+    throw new Error('Parámetro N de scrypt fuera de rango')
   }
+  if (!Number.isInteger(r) || r < 8 || r > 16) throw new Error('Parámetro r de scrypt fuera de rango')
+  if (!Number.isInteger(p) || p < 1 || p > 4) throw new Error('Parámetro p de scrypt fuera de rango')
   return {
-    N: Number(match[1]),
-    r: Number(match[2]),
-    p: Number(match[3]),
+    N,
+    r,
+    p,
     salt: Buffer.from(match[4], 'base64url'),
     digest: Buffer.from(match[5], 'base64url')
   }
@@ -112,12 +121,23 @@ export function clearLoginCsrf (res) {
 }
 
 export async function loginAdmin ({ username, password, ip, userAgent }) {
+  // El bloqueo cuenta por DIRECCIÓN, no por usuario (V-34). Contar por
+  // `username` permitía a cualquiera bloquear al administrador legítimo 15
+  // minutos con 5 intentos usando su usuario desde direcciones distintas: un
+  // secreto de baja entropía convertido en palanca de denegación de servicio.
+  // El `username` se sigue registrando (en el INSERT de abajo) para auditoría,
+  // pero no entra en el conteo.
+  //
+  // Aviso: la efectividad depende de que `req.ip` sea la IP real del cliente.
+  // Con un túnel delante mal configurado (ver V-13/T29) `req.ip` puede ser la
+  // del túnel, compartida: entonces este freno pasa a ser global. Fijar
+  // `TRUST_PROXY` al número exacto de saltos es requisito para que sea por IP.
   const recent = await one(
     `SELECT count(*)::int AS failures
        FROM admin_login_attempt
       WHERE succeeded=false AND created_at > now() - interval '15 minutes'
-        AND (username=$1 OR ($2::inet IS NOT NULL AND ip=$2::inet))`,
-    [String(username ?? ''), ip ?? null]
+        AND $1::inet IS NOT NULL AND ip=$1::inet`,
+    [ip ?? null]
   )
   if ((recent?.failures ?? 0) >= 5) return { ok: false, limited: true }
 

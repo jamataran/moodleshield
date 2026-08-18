@@ -6,22 +6,24 @@ import { requireCatalogInstructor } from '../src/routes/auth.js'
 function runMiddleware (context) {
   const token = issueSession(context)
   const req = {
+    app: { locals: { touchPlaybackGrant: async () => {} } },
     headers: { authorization: `Bearer ${token}` },
     query: {},
     get (name) { return this.headers[name.toLowerCase()] }
   }
   const response = { statusCode: 200, body: null }
-  const res = {
-    status (code) { response.statusCode = code; return this },
-    json (body) { response.body = body; return this }
-  }
   return new Promise((resolve, reject) => {
+    const res = {
+      status (code) { response.statusCode = code; return this },
+      json (body) {
+        response.body = body
+        resolve({ allowed: false, req, response })
+        return this
+      }
+    }
     requireCatalogInstructor(req, res, (err) => {
       if (err) reject(err)
       else resolve({ allowed: true, req, response })
-    })
-    queueMicrotask(() => {
-      if (response.statusCode !== 200) resolve({ allowed: false, req, response })
     })
   })
 }
@@ -52,4 +54,3 @@ test('el modo catálogo no eleva a un alumno a profesor', async () => {
   assert.equal(result.allowed, false)
   assert.equal(result.response.statusCode, 403)
 })
-

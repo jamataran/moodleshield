@@ -203,6 +203,9 @@ guárdalo en un gestor seguro y elimina la copia local cuando ya no la necesites
 En especial:
 
 - `DB_PASSWORD` debe seguir coincidiendo con el usuario persistido en `pgdata`;
+- `DB_APP_PASSWORD` y `DB_WORKER_PASSWORD` son independientes. El entrypoint usa las tres
+  durante el bootstrap y elimina del entorno web la propietaria y la del worker antes de
+  iniciar el servidor;
 - `WATERMARK_SECRET` es permanente: cambiarlo invalida la atribución histórica;
 - `MEDIA_LINK_SECRET` debe ser el mismo para `app` y `proxy`; el Compose ya lo
   comparte automáticamente.
@@ -287,7 +290,8 @@ No uses un `.env` de producción en test.
 | `app` no abre 3000 / `proxy` unhealthy | Mira primero los logs de `app`; el proxy suele ser sólo el síntoma |
 | Edge devuelve 502 | Comprueba `/readyz` en el puerto local y el caso host/contenedor de `HTTP_BIND_ADDRESS` |
 | Todos los segmentos responden 403 | `MEDIA_LINK_SECRET` cambió o las imágenes `app`/`proxy` no tienen la misma versión |
-| Subida troceada responde 413 | Comprueba que `UPLOAD_CHUNK_BYTES` sea menor que el máximo del edge; el valor por defecto es 16 MiB |
+| Subida troceada responde 413 | Comprueba que `UPLOAD_CHUNK_BYTES` (16 MiB por defecto) sea menor que `MAX_CHUNK_SIZE` en el proxy **y** que el máximo del edge |
+| Importar una carpeta responde 413 en cada fichero | Es el caso anterior: `MAX_CHUNK_SIZE` acota los PUT de `/uploads/` y de `/admin/platforms/*/import/`, y hereda 1m si no se declara |
 | `multipart` legado responde 413 | Sube juntos `client_max_body_size`, `MAX_UPLOAD_SIZE` (nginx interno) y `MAX_UPLOAD_BYTES` (Node) |
 | URLs generadas como HTTP | `PUBLIC_URL` o `X-Forwarded-Proto https` incorrectos |
 | Worker falla con `EACCES` en un árbol antiguo | Ejecuta `bootstrap-host.sh` sobre `DATA_ROOT` |
@@ -305,7 +309,9 @@ PR → main → sha-abc1234 → TEST
 ```
 
 La promoción se lanza desde *Actions → «Release · promoción manual de test a
-producción» → Run workflow*, escribiendo `vX.Y.Z`. **No crees el tag a mano**:
+producción» → Run workflow*, eligiendo el salto (SUBIR PARCHE, SUBIR MENOR o
+SUBIR MAYOR); la versión se deriva del último tag `vX.Y.Z` y sale en el resumen
+de la ejecución. **No crees el tag a mano**:
 el commit que queda arriba de `main` tras cada despliegue es
 `deploy(test): sha-* [skip ci]`, y etiquetar ahí no dispara nada (el `[skip ci]`
 salta también los pushes de tag) además de apuntar a una imagen que no existe.
@@ -316,6 +322,6 @@ Los detalles operativos de cada entorno están en
 
 Para este cambio de infraestructura el orden es obligatorio: push/merge a
 `main`, esperar a que CD publique y despliegue el nuevo `sha-*` en test, ejecutar
-el workflow manual de Release con una versión `vX.Y.Z` y sólo entonces
+el workflow manual de Release eligiendo el salto de versión y sólo entonces
 redesplegar producción. No despliegues producción con `latest` antiguo y el
 Compose nuevo.

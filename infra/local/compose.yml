@@ -19,32 +19,53 @@
 
 name: moodleshield-local
 
+x-runtime-hardening: &runtime-hardening
+  read_only: true
+  cap_drop: [ "ALL" ]
+  cap_add: [ "CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID" ]
+  security_opt: [ "no-new-privileges:true" ]
+
 x-app-env: &app-env
   # development: permite PUBLIC_URL http y secretos por defecto. La mecánica
   # (firma de segmentos, cifrado, LTI) es idéntica a producción.
   NODE_ENV: development
+  SERVICE_ROLE: app
   LOG_LEVEL: ${LOG_LEVEL:-debug}
   PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8088}
   # Con el túnel activo, PUBLIC_URL pasa a ser la URL pública y localhost se
   # queda aquí: en desarrollo la misma instancia se abre por los dos nombres.
   PUBLIC_URL_ALIASES: ${PUBLIC_URL_ALIASES:-http://localhost:${HTTP_PORT:-8088},http://127.0.0.1:${HTTP_PORT:-8088}}
+  TRUST_PROXY: ${TRUST_PROXY:-1}
   DB_HOST: db
   DB_PORT: "5432"
   DB_NAME: moodleshield
   DB_USER: moodleshield
   DB_PASSWORD: ${DB_PASSWORD:-moodleshield-local}
+  DB_APP_USER: moodleshield_app
+  DB_APP_PASSWORD: ${DB_APP_PASSWORD:-moodleshield-app-local}
+  DB_WORKER_USER: moodleshield_worker
+  DB_WORKER_PASSWORD: ${DB_WORKER_PASSWORD:-moodleshield-worker-local}
+  DB_PROVISION_SERVICE_ROLES: "true"
   SESSION_SECRET: ${SESSION_SECRET:-local-inseguro-session-00000000000000000000}
   WATERMARK_SECRET: ${WATERMARK_SECRET:-local-inseguro-watermark-00000000000000000000}
   MEDIA_KEY_SECRET: ${MEDIA_KEY_SECRET:-local-inseguro-mediakey-00000000000000000000}
   # ⚠️ Debe coincidir con el MEDIA_LINK_SECRET del servicio proxy (abajo).
   MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:-local-inseguro-medialink-00000000000000000000}
-  LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-local-admin}
+  # Mínimo 32 caracteres: la validación de V-06 rechaza tokens cortos y la app
+  # no arranca con ellos, también en desarrollo.
+  LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-local-inseguro-ltiadmin-00000000000000000000}
+  CONTENT_API_TOKEN: ${CONTENT_API_TOKEN:-local-content-api-token-0000000000000000}
   ADMIN_USERNAME: ${ADMIN_USERNAME:-}
   ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
   ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}
   ADMIN_SESSION_TTL_SECONDS: ${ADMIN_SESSION_TTL_SECONDS:-28800}
   ADMIN_ALLOW_PRIVATE_LTI_HOSTS: ${ADMIN_ALLOW_PRIVATE_LTI_HOSTS:-false}
   LTI_IDENTITY_CUSTOM_PARAM: ${LTI_IDENTITY_CUSTOM_PARAM:-username}
+  LTI_IDENTITY_MOODLE_SOURCE: ${LTI_IDENTITY_MOODLE_SOURCE:-$$User.username}
+  # T24: verificación de la referencia firmada del material en el launch.
+  # `warn` (por defecto) sirve el launch sin firma y deja aviso en el log;
+  # pásalo a `enforce` cuando el aviso deje de aparecer.
+  LAUNCH_RESOURCE_SIGNATURE: ${LAUNCH_RESOURCE_SIGNATURE:-warn}
   # IP real del alumno tras un CDN (ADR-019): auto | always | never.
   TRUST_CLOUDFLARE_CLIENT_IP: ${TRUST_CLOUDFLARE_CLIENT_IP:-auto}
   CDN_TRUSTED_RANGES: ${CDN_TRUSTED_RANGES:-}
@@ -55,6 +76,13 @@ x-app-env: &app-env
   MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
   UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-16777216}
   UPLOAD_SESSION_TTL_SECONDS: ${UPLOAD_SESSION_TTL_SECONDS:-86400}
+  STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-1073741824}
+  MAX_ACTIVE_UPLOADS_PER_OWNER: ${MAX_ACTIVE_UPLOADS_PER_OWNER:-5}
+  MAX_PENDING_JOBS_PER_OWNER: ${MAX_PENDING_JOBS_PER_OWNER:-10}
+  MAX_RESERVED_UPLOAD_BYTES_PER_OWNER: ${MAX_RESERVED_UPLOAD_BYTES_PER_OWNER:-4294967296}
+  MAX_STORED_BYTES_PER_OWNER: ${MAX_STORED_BYTES_PER_OWNER:-53687091200}
+  PLAYBACK_MAX_DISTINCT_IPS: ${PLAYBACK_MAX_DISTINCT_IPS:-3}
+  PLAYBACK_REVOKE_ON_SUSPICION: ${PLAYBACK_REVOKE_ON_SUSPICION:-false}
   SEGMENT_SECONDS: ${SEGMENT_SECONDS:-4}
   OUTPUT_FPS: ${OUTPUT_FPS:-24}
   OUTPUT_CRF: ${OUTPUT_CRF:-23}
@@ -68,6 +96,15 @@ x-app-env: &app-env
   MAX_PDF_BYTES: ${MAX_PDF_BYTES:-104857600}
   MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
   PDF_PROCESS_TIMEOUT_SECONDS: ${PDF_PROCESS_TIMEOUT_SECONDS:-180}
+  TRANSCODE_PROBE_TIMEOUT_SECONDS: ${TRANSCODE_PROBE_TIMEOUT_SECONDS:-30}
+  TRANSCODE_PROCESS_TIMEOUT_SECONDS: ${TRANSCODE_PROCESS_TIMEOUT_SECONDS:-21600}
+  VIDEO_MAX_OUTPUT_BITRATE_KBPS: ${VIDEO_MAX_OUTPUT_BITRATE_KBPS:-8000}
+  VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-14400}
+  VIDEO_MAX_PIXELS: ${VIDEO_MAX_PIXELS:-8294400}
+  VIDEO_MAX_DIMENSION: ${VIDEO_MAX_DIMENSION:-4096}
+  VIDEO_MAX_STREAMS: ${VIDEO_MAX_STREAMS:-16}
+  VIDEO_MAX_SOURCE_FPS: ${VIDEO_MAX_SOURCE_FPS:-120}
+  VIDEO_MAX_AUDIO_CHANNELS: ${VIDEO_MAX_AUDIO_CHANNELS:-8}
   MAX_FOLDERS_PER_OWNER: ${MAX_FOLDERS_PER_OWNER:-100}
   MAX_COLLECTION_ITEMS: ${MAX_COLLECTION_ITEMS:-50}
   MATERIAL_REVISION_ACTIVATION: ${MATERIAL_REVISION_ACTIVATION:-auto}
@@ -75,10 +112,57 @@ x-app-env: &app-env
   MATERIAL_REVISION_KEEP_MIN: ${MATERIAL_REVISION_KEEP_MIN:-2}
   MATERIAL_ARCHIVE_RETENTION_DAYS: ${MATERIAL_ARCHIVE_RETENTION_DAYS:-90}
 
+x-worker-env: &worker-env
+  NODE_ENV: development
+  SERVICE_ROLE: worker
+  LOG_LEVEL: ${LOG_LEVEL:-debug}
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: moodleshield
+  DB_WORKER_USER: moodleshield_worker
+  DB_WORKER_PASSWORD: ${DB_WORKER_PASSWORD:-moodleshield-worker-local}
+  WATERMARK_SECRET: ${WATERMARK_SECRET:-local-inseguro-watermark-00000000000000000000}
+  MEDIA_ROOT: /data/media
+  UPLOAD_ROOT: /data/uploads
+  SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-14400}
+  MEDIA_LINK_TTL_SECONDS: ${MEDIA_LINK_TTL_SECONDS:-14400}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
+  UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-16777216}
+  UPLOAD_SESSION_TTL_SECONDS: ${UPLOAD_SESSION_TTL_SECONDS:-86400}
+  SEGMENT_SECONDS: ${SEGMENT_SECONDS:-4}
+  OUTPUT_FPS: ${OUTPUT_FPS:-24}
+  OUTPUT_CRF: ${OUTPUT_CRF:-23}
+  OUTPUT_PRESET: ${OUTPUT_PRESET:-veryfast}
+  MARK_ALPHA: ${MARK_ALPHA:-0.5}
+  TRANSCODE_CONCURRENCY: "1"
+  TRANSCODE_LEASE_SECONDS: ${TRANSCODE_LEASE_SECONDS:-90}
+  TRANSCODE_HEARTBEAT_MS: ${TRANSCODE_HEARTBEAT_MS:-20000}
+  FFMPEG_NICE: "10"
+  MAX_PDF_BYTES: ${MAX_PDF_BYTES:-104857600}
+  MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
+  PDF_PROCESS_TIMEOUT_SECONDS: ${PDF_PROCESS_TIMEOUT_SECONDS:-180}
+  TRANSCODE_PROBE_TIMEOUT_SECONDS: ${TRANSCODE_PROBE_TIMEOUT_SECONDS:-30}
+  TRANSCODE_PROCESS_TIMEOUT_SECONDS: ${TRANSCODE_PROCESS_TIMEOUT_SECONDS:-21600}
+  VIDEO_MAX_OUTPUT_BITRATE_KBPS: ${VIDEO_MAX_OUTPUT_BITRATE_KBPS:-8000}
+  VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-14400}
+  VIDEO_MAX_PIXELS: ${VIDEO_MAX_PIXELS:-8294400}
+  VIDEO_MAX_DIMENSION: ${VIDEO_MAX_DIMENSION:-4096}
+  VIDEO_MAX_STREAMS: ${VIDEO_MAX_STREAMS:-16}
+  VIDEO_MAX_SOURCE_FPS: ${VIDEO_MAX_SOURCE_FPS:-120}
+  VIDEO_MAX_AUDIO_CHANNELS: ${VIDEO_MAX_AUDIO_CHANNELS:-8}
+  MATERIAL_REVISION_RETENTION_DAYS: ${MATERIAL_REVISION_RETENTION_DAYS:-30}
+  MATERIAL_REVISION_KEEP_MIN: ${MATERIAL_REVISION_KEEP_MIN:-2}
+  MATERIAL_ARCHIVE_RETENTION_DAYS: ${MATERIAL_ARCHIVE_RETENTION_DAYS:-90}
+
 services:
   db:
-    image: postgres:16-alpine
+    <<: *runtime-hardening
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     restart: unless-stopped
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,size=16m
     environment:
       POSTGRES_DB: moodleshield
       POSTGRES_USER: moodleshield
@@ -94,12 +178,16 @@ services:
       retries: 10
 
   app:
+    <<: *runtime-hardening
     build:
       context: ../..
       dockerfile: docker/Dockerfile
       target: app
     image: moodleshield/app:local
     restart: unless-stopped
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     init: true
     depends_on:
       db:
@@ -116,12 +204,16 @@ services:
       start_period: 30s
 
   worker:
+    <<: *runtime-hardening
     build:
       context: ../..
       dockerfile: docker/Dockerfile
       target: worker
     image: moodleshield/worker:local
     restart: unless-stopped
+    pids_limit: 1024
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
     init: true
     stop_grace_period: 45s
     depends_on:
@@ -129,7 +221,7 @@ services:
         condition: service_healthy
       app:
         condition: service_healthy
-    environment: *app-env
+    environment: *worker-env
     volumes:
       - "${DATA_ROOT:-./data}/media:/data/media:z"
       - "${DATA_ROOT:-./data}/uploads:/data/uploads:z"
@@ -139,11 +231,18 @@ services:
   # exactamente el artefacto que se despliega: si tocas infra/nginx/, reconstruye
   # con `docker compose up -d --build proxy`.
   proxy:
+    <<: *runtime-hardening
     build:
       context: ../..
       dockerfile: docker/Dockerfile.proxy
     image: moodleshield/proxy:local
     restart: unless-stopped
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=32m
+      - /var/run:rw,noexec,nosuid,nodev,size=4m
+      - /etc/nginx/conf.d:rw,noexec,nosuid,nodev,size=4m
     depends_on:
       app:
         condition: service_started
@@ -152,6 +251,7 @@ services:
       # los segmentos devuelven 403.
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:-local-inseguro-medialink-00000000000000000000}
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
+      MAX_CHUNK_SIZE: ${MAX_CHUNK_SIZE:-32m}
     volumes:
       - "${DATA_ROOT:-./data}/media:/srv/media:ro,z"
     ports:

@@ -6,20 +6,33 @@
  *   node tools/trace.mjs --video <videoId> --pattern-of <userSub>
  *
  * Cómo funciona: cada segmento del vídeo lleva la marca A (recuadro tenue abajo
- * a la derecha) o la B (abajo a la izquierda). Se muestrea un fotograma por
- * segmento, se mide la luminancia media de ambos recuadros y el más claro
- * decide el bit. La secuencia resultante se compara con el patrón HMAC de cada
- * alumno que abrió el vídeo.
+ * a la derecha) o la B (abajo a la izquierda). Se muestrean varios fotogramas
+ * por segmento y cada región se clasifica contra su propia distribución
+ * temporal (modo autocontenido) o, mejor, contra los artefactos A/B originales
+ * de la revisión en disco (modo referencia, el usado por defecto cuando
+ * existen). La secuencia de bits resultante se compara con el patrón HMAC de
+ * cada alumno que abrió el vídeo.
  *
- * La medición es diferencial (BR menos BL) a propósito: así sobrevive a cambios
- * globales de brillo, recompresión y reescalado, que es justo lo que hace una
- * grabación de pantalla.
+ * El lector anterior restaba una esquina de la otra; como el contenido de las
+ * dos esquinas es distinto, esa resta aplastaba la marca y clasificaba mal
+ * (ficha T13). La clasificación por región evita ese error de raíz y descarta
+ * sola la región saturada o sin señal, en vez de dejarla votar.
  */
 
-import { spawn } from 'node:child_process'
 import { parseArgs } from 'node:util'
+import { spawn } from 'node:child_process'
+import { readdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
 import config from '../src/config.js'
-import { readMediaMeta, revisionDir } from '../src/media/storage.js'
+import { readMediaMeta, revisionDir, keyPath, variantPlaylistPath, exists, tombstonePath } from '../src/media/storage.js'
+import { MARK_GEOMETRY } from '../src/media/transcode.js'
+import {
+  classifySelf,
+  classifyWithReference,
+  measureReferenceSeries,
+  regionBox,
+  sampleRegionSeries
+} from '../src/media/trace-reader.js'
 import { patternFor, comparePatterns, patternToString, falsePositiveProbability } from '../src/media/watermark.js'
 import { listViewers } from '../src/services/videos.js'
 import { listRevisions } from '../src/services/revisions.js'
@@ -31,7 +44,10 @@ const { values } = parseArgs({
     revision: { type: 'string' },
     input: { type: 'string' },
     'pattern-of': { type: 'string' },
-    threshold: { type: 'string', default: '0.35' },
+    mode: { type: 'string', default: 'auto' },
+    'frames-per-segment': { type: 'string', default: '3' },
+    'min-margin': { type: 'string', default: '2' },
+    threshold: { type: 'string', default: '1.5' },
     json: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false }
   }
@@ -43,11 +59,47 @@ if (values.help || !values.video) {
   node tools/trace.mjs --video <videoId> [--revision <revisionId>] --pattern-of <userSub>
 
 Opciones:
-  --revision <id>   Revisión contra la que comparar. Si se omite y hay varias con
-                    artefactos, hay que elegir: cada revisión tiene su propio patrón.
-  --threshold <n>   Diferencia mínima de luminancia para aceptar un bit (por defecto 0.35)
-  --json            Salida en JSON en vez de tabla`)
+  --revision <id>          Revisión contra la que comparar. Si se omite y hay varias con
+                           artefactos, hay que elegir: cada revisión tiene su propio patrón.
+  --mode <auto|reference|self>
+                           reference: clasifica contra los artefactos A/B en disco (robusto).
+                           self: cada región contra su propia distribución — para cuando los
+                           artefactos ya no existen; exige esquinas de contenido estable.
+                           auto (por defecto): reference si hay artefactos, si no self.
+  --frames-per-segment <n> Fotogramas medidos por segmento, mediana (por defecto 3)
+  --min-margin <n>         Modo reference: margen mínimo de la marca (YAVG) para que un
+                           segmento puntúe en una región (por defecto 2)
+  --threshold <n>          Modo self: separación mínima entre los dos grupos de una región
+                           para considerarla legible (por defecto 1.5)
+  --json                   Salida en JSON en vez de tabla`)
   process.exit(values.help ? 0 : 1)
+}
+
+if (!['auto', 'reference', 'self'].includes(values.mode)) {
+  console.error(`Modo desconocido: ${values.mode} (usa auto, reference o self)`)
+  process.exit(1)
+}
+
+/**
+ * Lápidas forenses del vídeo (F-14): revisiones ya purgadas cuyo sobre
+ * autocontenido —ámbito del patrón, geometría y lista de espectadores—
+ * permite seguir trazando en modo autocontenido.
+ */
+async function listTombstones () {
+  const dir = path.dirname(tombstonePath('video', values.video, values.video))
+  let files
+  try {
+    files = await readdir(dir)
+  } catch {
+    return []
+  }
+  const tombstones = []
+  for (const file of files.filter((f) => f.endsWith('.json'))) {
+    try {
+      tombstones.push(JSON.parse(await readFile(path.join(dir, file), 'utf8')))
+    } catch { /* una lápida corrupta no invalida las demás */ }
+  }
+  return tombstones
 }
 
 /**
@@ -57,10 +109,47 @@ Opciones:
  * una produce un patrón distinto (`pattern_scope`). Comparar contra la que no
  * es da un resultado no concluyente sin decir por qué, así que si hay ambigüedad
  * se exige elegir en vez de adivinar.
+ *
+ * Una revisión purgada ya no tiene fila: se busca su lápida (F-14) y se traza
+ * en modo autocontenido con la lista de espectadores que la lápida conserva.
  */
 async function resolveRevision () {
   const revisions = await listRevisions({ kind: 'video', materialId: values.video })
+  if (values.revision) {
+    const purged = (await listTombstones()).find((t) => t.revisionId === values.revision)
+    if (purged && !revisions.some((r) => r.id === values.revision)) {
+      console.error('La revisión está purgada: se traza desde su lápida forense (modo autocontenido).')
+      return {
+        id: purged.revisionId,
+        revision_number: purged.revisionNumber,
+        status: 'purged',
+        pattern_scope: purged.patternScope,
+        storage_layout: 'revision',
+        tombstone: purged
+      }
+    }
+  }
   if (revisions.length === 0) {
+    const tombstones = await listTombstones()
+    if (tombstones.length === 1) {
+      const purged = tombstones[0]
+      console.error('Sólo queda la lápida forense de una revisión purgada: se usa (modo autocontenido).')
+      return {
+        id: purged.revisionId,
+        revision_number: purged.revisionNumber,
+        status: 'purged',
+        pattern_scope: purged.patternScope,
+        storage_layout: 'revision',
+        tombstone: purged
+      }
+    }
+    if (tombstones.length > 1) {
+      console.error('Este vídeo sólo conserva lápidas de revisiones purgadas. Indica cuál con --revision:\n')
+      for (const t of tombstones) {
+        console.error(`  ${t.revisionId}  revisión ${t.revisionNumber ?? '?'}  purgada ${String(t.purgedAt).slice(0, 10)}`)
+      }
+      process.exit(1)
+    }
     console.error(`El vídeo ${values.video} no tiene ninguna revisión registrada.`)
     process.exit(1)
   }
@@ -93,19 +182,25 @@ async function resolveRevision () {
 }
 
 const revision = await resolveRevision()
-const meta = await readMediaMeta(
-  revisionDir('video', values.video, revision.id, revision.storage_layout)
-)
+const dir = revisionDir('video', values.video, revision.id, revision.storage_layout)
+// De una revisión purgada, la lápida es el meta (F-14).
+const meta = revision.tombstone ?? await readMediaMeta(dir)
 if (!meta) {
   console.error(
-    `No hay meta.json para la revisión ${revision.id}. ¿Se purgaron sus artefactos?`
+    `No hay meta.json ni lápida forense para la revisión ${revision.id}. ¿Se purgó antes de F-14?`
   )
+  process.exit(1)
+}
+if (!meta.segmentCount || !meta.segmentSeconds) {
+  console.error(`La información de la revisión ${revision.id} no trae segmentos: no se puede trazar.`)
   process.exit(1)
 }
 
 // El ámbito del patrón lo dicta la fila de la revisión: las revisiones
 // anteriores a T21 se derivaban sólo del UUID del vídeo y siguen trazándose.
 const patternScope = revision.pattern_scope ?? values.video
+// Metas anteriores a la geometría versionada usaban la actual.
+const geometry = meta.markGeometry ?? MARK_GEOMETRY
 
 if (values['pattern-of']) {
   const bits = patternFor(values['pattern-of'], patternScope, meta.segmentCount)
@@ -117,56 +212,6 @@ if (values['pattern-of']) {
 if (!values.input) {
   console.error('Falta --input con el fichero filtrado')
   process.exit(1)
-}
-
-/** Región de la marca, en píxeles, para un fotograma de w×h. */
-function region (variant, width, height) {
-  const g = meta.markGeometry
-  const bw = Math.max(2, Math.round(width * g.widthRatio))
-  const bh = Math.max(2, Math.round(height * g.heightRatio))
-  const mx = Math.round(width * g.marginXRatio)
-  const my = Math.round(height * g.marginYRatio)
-  const y = height - bh - my
-  const x = variant === 'A' ? width - bw - mx : mx
-  return { w: bw, h: bh, x, y }
-}
-
-/**
- * Un pase de ffmpeg por región: muestrea un fotograma por segmento, recorta el
- * recuadro y saca su luminancia media. Dos pases en total, independientemente
- * de lo que dure el vídeo.
- */
-function sampleRegion (input, box, segmentSeconds) {
-  const filter = [
-    `fps=1/${segmentSeconds}`,
-    `crop=${box.w}:${box.h}:${box.x}:${box.y}`,
-    'signalstats',
-    'metadata=print:file=-'
-  ].join(',')
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(config.transcode.ffmpegPath, [
-      '-hide_banner', '-nostdin',
-      '-ss', String(segmentSeconds / 2),
-      '-i', input,
-      '-vf', filter,
-      '-an', '-f', 'null', '-'
-    ])
-
-    let out = ''
-    child.stdout.on('data', (c) => { out += c })
-    child.stderr.resume()
-    child.on('error', reject)
-    child.on('close', (code) => {
-      if (code !== 0) return reject(new Error(`ffmpeg salió con código ${code}`))
-      const values = []
-      for (const line of out.split('\n')) {
-        const match = /lavfi\.signalstats\.YAVG=([\d.]+)/.exec(line)
-        if (match) values.push(Number.parseFloat(match[1]))
-      }
-      resolve(values)
-    })
-  })
 }
 
 async function probeSize (input) {
@@ -188,31 +233,103 @@ async function probeSize (input) {
 }
 
 const { width, height } = await probeSize(values.input)
-const threshold = Number.parseFloat(values.threshold)
+const framesPerSegment = Math.max(1, Number.parseInt(values['frames-per-segment'], 10) || 3)
+const minSeparation = Number.parseFloat(values.threshold)
+const minMargin = Number.parseFloat(values['min-margin'])
 
-console.error(`Analizando ${values.input} (${width}×${height}), ${meta.segmentCount} segmentos esperados…`)
-
-const [avgA, avgB] = await Promise.all([
-  sampleRegion(values.input, region('A', width, height), meta.segmentSeconds),
-  sampleRegion(values.input, region('B', width, height), meta.segmentSeconds)
-])
-
-const sampleCount = Math.min(avgA.length, avgB.length, meta.segmentCount)
-const observed = new Int8Array(meta.segmentCount).fill(-1)
-let measured = 0
-
-for (let i = 0; i < sampleCount; i++) {
-  const delta = avgA[i] - avgB[i]
-  if (Math.abs(delta) < threshold) continue // demasiado ambiguo: se deja como hueco
-  observed[i] = delta > 0 ? 0 : 1 // A más clara → bit 0
-  measured++
+const hasArtifacts = !revision.tombstone &&
+  (await exists(variantPlaylistPath(dir, 'A'))) &&
+  (await exists(variantPlaylistPath(dir, 'B'))) &&
+  (await exists(keyPath(dir)))
+let mode = values.mode
+if (mode === 'auto') {
+  mode = hasArtifacts ? 'reference' : 'self'
+  if (!hasArtifacts) {
+    console.error(
+      'No hay artefactos de la revisión en disco; se usa el modo autocontenido (menos robusto).'
+    )
+  }
+} else if (mode === 'reference' && !hasArtifacts) {
+  console.error('El modo reference necesita los artefactos A/B y key.bin de la revisión en disco.')
+  process.exit(1)
 }
 
-console.error(`Bits legibles: ${measured} de ${sampleCount} muestreados\n`)
+console.error(
+  `Analizando ${values.input} (${width}×${height}), ${meta.segmentCount} segmentos esperados, ` +
+  `modo ${mode}, ${framesPerSegment} fotogramas por segmento…`
+)
+
+// Las dos regiones del vídeo filtrado, a su propia escala.
+const [leakBR, leakBL] = await Promise.all([
+  sampleRegionSeries({
+    input: values.input,
+    box: regionBox('A', width, height, geometry),
+    segmentSeconds: meta.segmentSeconds,
+    framesPerSegment
+  }),
+  sampleRegionSeries({
+    input: values.input,
+    box: regionBox('B', width, height, geometry),
+    segmentSeconds: meta.segmentSeconds,
+    framesPerSegment
+  })
+])
+
+let observed
+let regionsReport
+if (mode === 'reference') {
+  if (!meta.width || !meta.height) {
+    console.error('El meta.json no guarda el tamaño del vídeo; usa --mode self.')
+    process.exit(1)
+  }
+  const refs = await measureReferenceSeries({
+    dir,
+    boxes: {
+      BR: regionBox('A', meta.width, meta.height, geometry),
+      BL: regionBox('B', meta.width, meta.height, geometry)
+    },
+    segmentSeconds: meta.segmentSeconds,
+    framesPerSegment
+  })
+  const result = classifyWithReference({ leak: { BR: leakBR, BL: leakBL }, refs, minMargin })
+  observed = result.observed
+  regionsReport = Object.fromEntries(Object.entries(result.perRegion).map(([r, info]) => [r, {
+    scored: info.scored,
+    offset: Number(info.offset.toFixed(2))
+  }]))
+} else {
+  const result = classifySelf({ seriesBR: leakBR, seriesBL: leakBL, minSeparation })
+  observed = result.observed
+  regionsReport = Object.fromEntries(Object.entries(result.regions).map(([r, stats]) => [r, {
+    valid: stats.valid,
+    reason: stats.reason,
+    separation: Number.isFinite(stats.separation) ? Number(stats.separation.toFixed(2)) : null
+  }]))
+}
+
+// La comparación siempre trabaja sobre el número de segmentos de la revisión:
+// una grabación más corta deja huecos, que comparePatterns ignora.
+const bits = new Int8Array(meta.segmentCount).fill(-1)
+bits.set(observed.slice(0, meta.segmentCount))
+let measured = 0
+for (const bit of bits) if (bit !== -1) measured++
+
+console.error(`Bits legibles: ${measured} de ${Math.min(observed.length, meta.segmentCount)} muestreados`)
+for (const [region, info] of Object.entries(regionsReport)) {
+  const detail = mode === 'reference'
+    ? `${info.scored} segmentos puntuados, desplazamiento ${info.offset}`
+    : (info.valid ? `separación ${info.separation}` : `descartada: ${info.reason}`)
+  console.error(`  región ${region}: ${detail}`)
+}
+console.error('')
 
 // Sólo los alumnos que cargaron ESTA revisión: incluir a los de otra produciría
-// candidatos que, por construcción, no pueden coincidir.
-const viewers = await listViewers(values.video, { revisionId: revision.id })
+// candidatos que, por construcción, no pueden coincidir. Si la revisión está
+// purgada, la lista viene de su lápida: la FK dejó los view_event sin
+// revision_id al borrar la fila, y la lápida es quien la conserva.
+const viewers = revision.tombstone
+  ? revision.tombstone.viewers ?? []
+  : await listViewers(values.video, { revisionId: revision.id })
 if (viewers.length === 0) {
   console.error(
     `No hay visionados registrados para la revisión ${revision.id}: no hay candidatos que comparar.`
@@ -224,7 +341,7 @@ if (viewers.length === 0) {
 const results = viewers
   .map((viewer) => {
     const candidate = patternFor(viewer.user_sub, patternScope, meta.segmentCount)
-    const { matches, compared, score } = comparePatterns(observed, candidate)
+    const { matches, compared, score } = comparePatterns(bits, candidate)
     return {
       userSub: viewer.user_sub,
       name: viewer.user_name,
@@ -243,8 +360,10 @@ if (values.json) {
     videoId: values.video,
     revisionId: revision.id,
     revisionNumber: revision.revision_number,
+    mode,
+    regions: regionsReport,
     measured,
-    sampleCount,
+    sampleCount: Math.min(observed.length, meta.segmentCount),
     results
   }, null, 2))
 } else {
@@ -266,7 +385,7 @@ if (values.json) {
       `${(best.score * 100).toFixed(1)}% de coincidencia, 1 entre ${best.oneInN.toLocaleString('es-ES')} por azar.`)
   } else {
     console.log('Resultado no concluyente: ningún candidato destaca lo suficiente. ' +
-      'Prueba con más metraje, baja --threshold o revisa si el vídeo está recortado.')
+      'Prueba con más metraje, con --mode reference si hay artefactos, o revisa si el vídeo está recortado.')
   }
 }
 

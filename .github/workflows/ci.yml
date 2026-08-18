@@ -21,15 +21,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
 
       - name: Instalar dependencias
         run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Dependencias sin vulnerabilidades conocidas
+        run: npm audit --audit-level=low
 
       - name: Lint
         run: npm run lint
@@ -42,11 +45,11 @@ jobs:
       # paso las ejecuta donde de verdad se van a ejecutar en producción.
       - name: Pruebas de PDF con las herramientas del worker
         run: |
-          docker run --rm -v "$PWD":/src:ro -w /work node:22-alpine sh -c '
-            apk add --no-cache -q qpdf poppler-utils ghostscript
+          docker run --rm -v "$PWD":/src:ro -w /work node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 sh -c '
+            apk add --no-cache -q ffmpeg qpdf poppler-utils ghostscript
             cp -r /src/src /src/test /src/package.json /work/
             mkdir -p /work/node_modules && cp -r /src/node_modules/. /work/node_modules/
-            node --test --test-reporter=spec test/pdf-processing.test.js
+            node --test --test-reporter=spec test/pdf-processing.test.js test/trace-reader.test.js
           '
 
       - name: Verificar migraciones contra Postgres real
@@ -54,7 +57,7 @@ jobs:
           trap 'docker rm -f pg >/dev/null 2>&1 || true' EXIT
           docker run -d --name pg \
             -e POSTGRES_DB=moodleshield -e POSTGRES_USER=moodleshield \
-            -e POSTGRES_PASSWORD=moodleshield -p 5432:5432 postgres:16-alpine
+            -e POSTGRES_PASSWORD=moodleshield -p 5432:5432 postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
           for i in $(seq 1 30); do docker exec pg pg_isready -U moodleshield && break; sleep 2; done
           DB_HOST=127.0.0.1 DB_PASSWORD=moodleshield npm run migrate
           DB_HOST=127.0.0.1 DB_PASSWORD=moodleshield npm run migrate   # idempotencia
@@ -84,7 +87,16 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for f in infra/*/.env.sample; do
+          # V-23: antes sólo recorría `.env.sample`, así que un token real en un
+          # `.env` o `.env.example` versionado por error no lo veía. Ahora recorre
+          # todos los ficheros con formato KEY=VALUE que git tenga trackeados
+          # bajo infra/, SALVO los `.env.ci`: ésos llevan valores de relleno de CI
+          # a propósito (DB_PASSWORD=ci, …) que el paso «Validar compose»
+          # necesita, y son de baja entropía, no secretos reales. (Los compose.yml
+          # son YAML y no pasan por este parser; su saneado se documenta en
+          # docs/auditoria-seguridad.md.)
+          for f in $(git ls-files 'infra/*/.env' 'infra/*/.env.sample' 'infra/*/.env.example'); do
+            [ -f "$f" ] || continue
             while IFS= read -r line; do
               case "$line" in \#*|'') continue ;; esac
               key=${line%%=*}; value=${line#*=}
@@ -105,19 +117,50 @@ jobs:
     timeout-minutes: 20
     needs: verify
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Bake (app + worker + proxy)
-        uses: docker/bake-action@v6
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b # v7.3.0
         with:
+          # Sin esto bake construye desde el contexto git REMOTO
+          # (…git#refs/pull/N/merge), que GitHub borra al cerrar la PR: una
+          # reejecución posterior muere con «repository does not contain ref».
+          source: .
           files: docker/docker-bake.hcl
           targets: default
           push: false
           set: |
             *.platform=linux/amd64
+            *.output=type=docker
         env:
           APP_VERSION: ${{ github.sha }}
           # Los ámbitos de caché los declara cada target en docker-bake.hcl: uno
           # por imagen. Con un `*.cache-to` comodín las tres compartían ámbito y
           # se peleaban por reservar la misma entrada («failed to reserve cache»).
           CACHE: gha
+
+      # v0.36.0 es posterior a la incidencia de credenciales de Trivy de marzo
+      # de 2026 y se fija al commit firmado, no a un tag mutable.
+      - name: CVE altas/críticas · app
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/moodleshield/app:dev
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          exit-code: '1'
+
+      - name: CVE altas/críticas · worker
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/moodleshield/worker:dev
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          exit-code: '1'
+
+      - name: CVE altas/críticas · proxy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/moodleshield/proxy:dev
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          exit-code: '1'

@@ -10,8 +10,10 @@ const ICONS = Object.freeze({
   play: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5.5v13l11-6.5z"/></svg>',
   pause: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>',
   replay: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5a7 7 0 1 1-6.65 9.18l1.9-.62A5 5 0 1 0 8.1 8.15L11 11H4V4l2.68 2.68A6.96 6.96 0 0 1 12 5z"/></svg>',
-  rewind: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M11.4 4a8 8 0 1 1-6.9 4L2 10.5V4h6.5L6 6.5A6 6 0 1 0 11.4 6z"/><text x="12" y="15.2" text-anchor="middle">10</text></svg>',
-  forward: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M12.6 4a8 8 0 1 0 6.9 4l2.5 2.5V4h-6.5L18 6.5A6 6 0 1 1 12.6 6z"/><text x="12" y="15.2" text-anchor="middle">10</text></svg>',
+  // El «10» va trazado como vectores, sin texto SVG: el renderizado de fuentes
+  // dentro de un SVG de 24px varía entre navegadores y se veía tosco.
+  rewind: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5.5A7.5 7.5 0 1 1 5.5 9.25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12.6 2.7 8.2 5.5l4.4 2.8z"/><path d="M7.9 11.6l1.7-1.5v6.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="13.9" cy="13.25" rx="1.8" ry="3.15" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
+  forward: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5.5A7.5 7.5 0 1 0 18.5 9.25" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M11.4 2.7l4.4 2.8-4.4 2.8z"/><path d="M7.9 11.6l1.7-1.5v6.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="13.9" cy="13.25" rx="1.8" ry="3.15" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
   volume: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9v6h4l5 4V5L8 9zm11.5-.8v7.6a4.5 4.5 0 0 0 0-7.6zm0-3.2v2.1a6.5 6.5 0 0 1 0 9.8V19a8.5 8.5 0 0 0 0-14z"/></svg>',
   muted: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9v6h4l5 4V5L8 9zm12.3 3 2.35-2.35-1.3-1.3L15 10.7l-2.35-2.35-1.3 1.3L13.7 12l-2.35 2.35 1.3 1.3L15 13.3l2.35 2.35 1.3-1.3z"/></svg>',
   capture: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M8.6 5 10 3.5h4L15.4 5H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9m0-2a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5"/></svg>',
@@ -74,6 +76,71 @@ export function mediaShortcut (rawKey, { onButton = false } = {}) {
   })[key] ?? null
 }
 
+/**
+ * Decide qué hacer ante un ERROR de hls.js. Función pura para poder probarla.
+ *
+ * La distinción importante es el 401/403: hls.js lo clasifica como error de red,
+ * pero reintentar una sesión caducada es un bucle infinito con un mensaje
+ * engañoso («problema de red»). Se corta y se dice la verdad. El resto de
+ * errores de red reintenta con retardo creciente y cupo, y los de medio siguen
+ * el protocolo de hls.js: recuperar, luego cambiar el códec de audio, rendirse.
+ */
+export function classifyHlsError (data, {
+  networkRetries = 0,
+  mediaRecoveries = 0,
+  maxNetworkRetries = 3,
+  maxMediaRecoveries = 2
+} = {}) {
+  if (!data?.fatal) return { action: 'ignore', message: null }
+  const httpCode = data.response?.code
+  if (data.type === 'networkError') {
+    if (httpCode === 401 || httpCode === 403) {
+      return {
+        action: 'auth',
+        message: 'Tu sesión ha caducado. Vuelve a abrir la actividad en Moodle.'
+      }
+    }
+    if (networkRetries < maxNetworkRetries) {
+      return {
+        action: 'retry',
+        delayMs: 1000 * 2 ** networkRetries,
+        message: `Problema de red; reintentando (${networkRetries + 1} de ${maxNetworkRetries})…`
+      }
+    }
+    return {
+      action: 'fatal',
+      message: 'No se pudo recuperar la conexión. Comprueba tu red y vuelve a abrir la actividad.'
+    }
+  }
+  if (data.type === 'mediaError') {
+    if (mediaRecoveries === 0) return { action: 'recover', message: 'Recuperando la reproducción…' }
+    if (mediaRecoveries < maxMediaRecoveries) return { action: 'swap', message: 'Recuperando la reproducción…' }
+    return { action: 'fatal', message: 'No se pudo reproducir el vídeo. Vuelve a abrir la actividad.' }
+  }
+  return { action: 'fatal', message: 'No se pudo reproducir el vídeo. Vuelve a abrir la actividad.' }
+}
+
+/**
+ * Decide qué hacer ante un `error` del <video> en HLS nativo (Safari/iOS).
+ * Un error de descodificación (código 3) no se arregla pidiendo otro ticket:
+ * gastarlo sólo consumiría el cupo. Los de red (2) y de origen (4, que es como
+ * aflora un 401 de playlist en iOS) sí justifican re-pedir el ticket.
+ */
+export function classifyNativeError (mediaErrorCode, { attempts = 0, maxAttempts = 3 } = {}) {
+  if (mediaErrorCode === 1) return { action: 'ignore', message: null }
+  if (mediaErrorCode === 3) {
+    return {
+      action: 'fatal',
+      message: 'No se pudo descodificar el vídeo en este navegador. Vuelve a abrir la actividad.'
+    }
+  }
+  if (attempts < maxAttempts) return { action: 'reticket', message: null }
+  return {
+    action: 'fatal',
+    message: 'No se pudo iniciar la reproducción. Vuelve a abrir la actividad.'
+  }
+}
+
 function iconButton (doc, icon, label, className = '') {
   const element = doc.createElement('button')
   element.type = 'button'
@@ -101,7 +168,8 @@ export function createVideoView ({
   video,
   user,
   onStatus,
-  globalShortcuts = false
+  globalShortcuts = false,
+  startAtSeconds = 0
 }) {
   const doc = container.ownerDocument ?? document
   const win = doc.defaultView ?? window
@@ -199,7 +267,10 @@ export function createVideoView ({
   container.replaceChildren(root)
 
   const status = (text, isError = false) => onStatus?.(text, isError)
-  const playlistUrl = `${video.playlistUrl}?st=${encodeURIComponent(sessionToken)}`
+  // El token de sesión NO viaja en la URL (T23): la playlist se pide con la
+  // cabecera Authorization (hls.js `xhrSetup`) o, en el HLS nativo que no puede
+  // poner cabeceras, con un ticket corto en `?pt=`.
+  const playlistUrl = video.playlistUrl
   const cleanups = []
   let hls = null
   let watermarkIndex = 0
@@ -452,7 +523,22 @@ export function createVideoView ({
     }
   }
 
+  // La reanudación se aplica UNA vez, en cuanto se conoce la duración: el
+  // mismo handler atiende también durationchange y no debe volver a saltar.
+  // Cerca del final no se restaura: reabrir un vídeo terminado empieza de cero.
+  let startApplied = false
+  const applyStartAt = () => {
+    if (startApplied) return
+    const total = duration()
+    if (total === null) return
+    startApplied = true
+    if (startAtSeconds >= 5 && startAtSeconds < total - 5) {
+      element.currentTime = Math.min(startAtSeconds, total - 2)
+    }
+  }
+
   const onLoadedMetadata = () => {
+    applyStartAt()
     updateTimeline({ preserveThumb: false })
     updatePip()
     status('')
@@ -580,40 +666,136 @@ export function createVideoView ({
   updatePip()
   updateFullscreen()
 
-  if (element.canPlayType('application/vnd.apple.mpegurl')) {
-    // Safari e iOS reproducen HLS de forma nativa, incluido AES-128.
-    element.src = playlistUrl
-  } else if (win.Hls?.isSupported()) {
+  // Pide un ticket corto (POST /hls/<id>/ticket con Authorization) y arranca el
+  // HLS NATIVO con `?pt=`. Es el único camino que no puede poner cabeceras.
+  //
+  // El ticket dura segundos, y iOS suele aplazar la carga de la playlist hasta
+  // el gesto de play: si el alumno tarda en pulsar, el ticket caduca y la
+  // playlist da 401, que el elemento emite como `error`. Por eso el ticket se
+  // vuelve a pedir (acotado) ante un `error` de red, reanudando en la posición
+  // actual en vez de volver al principio. Cubre también una caducación a mitad.
+  //
+  // La reanudación usa UN listener permanente con `pendingResumeAt` en vez de
+  // un `{ once: true }` por reintento: aquéllos apilaban su limpieza en
+  // `cleanups` para siempre y podían encolar seeks duplicados.
+  let nativeAttempts = 0
+  let pendingResumeAt = 0
+  const NATIVE_MAX_ATTEMPTS = 3
+  listen(element, 'loadedmetadata', () => {
+    if (pendingResumeAt > 0) {
+      try { element.currentTime = pendingResumeAt } catch { /* posición fuera de rango */ }
+      pendingResumeAt = 0
+    }
+  })
+  const loadNativeHls = async ({ resumeAt = 0 } = {}) => {
+    if (destroyed) return
+    if (nativeAttempts >= NATIVE_MAX_ATTEMPTS) {
+      status('No se pudo iniciar la reproducción. Vuelve a abrir la actividad.', true)
+      return
+    }
+    nativeAttempts++
+    try {
+      const ticketUrl = playlistUrl.replace(/\/index\.m3u8(\?.*)?$/, '/ticket')
+      const res = await win.fetch(ticketUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}` }
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const { ticket } = await res.json()
+      if (destroyed || !ticket) return
+      pendingResumeAt = resumeAt
+      element.src = `${playlistUrl}?pt=${encodeURIComponent(ticket)}`
+    } catch {
+      status('No se pudo iniciar la reproducción. Vuelve a abrir la actividad.', true)
+    }
+  }
+  const onNativeError = () => {
+    if (destroyed) return
+    const decision = classifyNativeError(element.error?.code, {
+      attempts: nativeAttempts,
+      maxAttempts: NATIVE_MAX_ATTEMPTS
+    })
+    if (decision.action === 'ignore') return
+    if (decision.action === 'fatal') return status(decision.message, true)
+    const resumeAt = Number.isFinite(element.currentTime) ? element.currentTime : 0
+    void loadNativeHls({ resumeAt })
+  }
+
+  // Un tropiezo superado devuelve el cupo de reintentos: la reproducción que se
+  // recupera a mitad de vídeo no debe agotar el presupuesto para el siguiente.
+  let networkRetries = 0
+  let mediaRecoveries = 0
+  let retryTimer = null
+  cleanups.push(() => clearTimeout(retryTimer))
+  listen(element, 'canplay', () => {
+    networkRetries = 0
+    mediaRecoveries = 0
+    nativeAttempts = 0
+  })
+
+  // Se prefiere hls.js cuando existe (T23): sus peticiones llevan la cabecera
+  // Authorization y NINGÚN token viaja en la URL. El HLS nativo queda de
+  // respaldo para los navegadores sin Media Source (iOS antiguo), y es el único
+  // que usa el ticket.
+  if (win.Hls?.isSupported()) {
     const HlsClass = win.Hls
+    // Reintentos internos acotados: sin esto, hls.js martillea también los 4xx
+    // a nivel de loader antes de emitir el error fatal que corta el bucle.
+    const loadPolicy = (maxLoadTimeMs, maxNumRetry) => ({
+      default: {
+        maxTimeToFirstByteMs: 10000,
+        maxLoadTimeMs,
+        timeoutRetry: { maxNumRetry: 1, retryDelayMs: 0, maxRetryDelayMs: 0 },
+        errorRetry: { maxNumRetry, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
+      }
+    })
     hls = new HlsClass({
       enableWorker: true,
       lowLatencyMode: false,
       maxBufferLength: 30,
-      backBufferLength: 30
+      backBufferLength: 30,
+      manifestLoadPolicy: loadPolicy(20000, 2),
+      playlistLoadPolicy: loadPolicy(20000, 2),
+      fragLoadPolicy: loadPolicy(60000, 3),
+      xhrSetup: (xhr) => xhr.setRequestHeader('Authorization', `Bearer ${sessionToken}`)
     })
     hls.loadSource(playlistUrl)
     hls.attachMedia(element)
     hls.on(HlsClass.Events.MANIFEST_PARSED, () => status(''))
     hls.on(HlsClass.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return
-      if (data.type === HlsClass.ErrorTypes.NETWORK_ERROR) {
-        status('Problema de red; reintentando…', true)
-        hls.startLoad()
-      } else if (data.type === HlsClass.ErrorTypes.MEDIA_ERROR) {
-        status('Recuperando la reproducción…', true)
+      if (destroyed || !hls) return
+      const decision = classifyHlsError(data, { networkRetries, mediaRecoveries })
+      if (decision.action === 'ignore') return
+      if (decision.message) status(decision.message, true)
+      if (decision.action === 'retry') {
+        networkRetries++
+        retryTimer = setTimeout(() => {
+          if (!destroyed && hls) hls.startLoad()
+        }, decision.delayMs)
+      } else if (decision.action === 'recover') {
+        mediaRecoveries++
+        hls.recoverMediaError()
+      } else if (decision.action === 'swap') {
+        mediaRecoveries++
+        hls.swapAudioCodec()
         hls.recoverMediaError()
       } else {
-        status('No se pudo reproducir el vídeo. Vuelve a abrir la actividad.', true)
+        // auth | fatal: no hay nada que reintentar con esta sesión.
         hls.destroy()
         hls = null
       }
     })
+  } else if (element.canPlayType('application/vnd.apple.mpegurl')) {
+    listen(element, 'error', onNativeError)
+    void loadNativeHls()
   } else {
     status('Este navegador no puede reproducir HLS.', true)
   }
 
   return {
     element,
+    get currentTime () { return element.currentTime },
+    get duration () { return duration() },
     focus () { root.focus({ preventScroll: true }) },
     destroy () {
       if (destroyed) return

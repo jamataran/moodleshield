@@ -19,6 +19,7 @@ import { UploadError } from '../src/media/upload.js'
 config.media.uploadChunkBytes = 5
 
 const owner = { platformId: randomUUID(), ownerSub: 'teacher-42' }
+const VALID_VIDEO = Buffer.from('\x00\x00\x00\x0cftypisom')
 
 function requestFor (content) {
   const body = Buffer.from(content)
@@ -40,7 +41,7 @@ async function sessionFor (content, overrides = {}) {
 }
 
 test('reintegra en orden un fichero recibido con fragmentos desordenados', async (t) => {
-  const content = 'abcdefghijkl'
+  const content = VALID_VIDEO
   const session = await sessionFor(content)
   let assembled = null
   t.after(async () => {
@@ -59,7 +60,7 @@ test('reintegra en orden un fichero recibido con fragmentos desordenados', async
   })
 
   assembled = await assembleChunkedUpload(session.id, owner)
-  assert.equal(await readFile(assembled.destination, 'utf8'), content)
+  assert.deepEqual(await readFile(assembled.destination), content)
   assert.equal(assembled.size, content.length)
   assert.equal(assembled.sha256, createHash('sha256').update(content).digest('hex'))
 })

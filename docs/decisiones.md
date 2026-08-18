@@ -238,7 +238,12 @@ repositorio; el CI comprueba que no se cuela ninguno. El commit del bump lleva
 
 **Estado**: aceptada · **Fecha**: 2026-08
 
-**Decisión.** Un solo nivel de calidad (CRF 21, 24 fps).
+**Decisión.** Un solo nivel de calidad (CRF 21). Los fps de salida siguen a la
+fuente (redondeados a entero para que el GOP sea exacto y limitados a 30:
+60→30, 50→25); si la fuente no declara fps fiables se cae a `OUTPUT_FPS` (24).
+El color se normaliza siempre a BT.709 SDR etiquetado, con tonemapping cuando
+la fuente es HDR (HLG/PQ): sin él, los vídeos de móvil salían con los colores
+lavados, y sin etiquetas cada navegador adivinaba la matriz.
 
 **Razones.** El multibitrate multiplica el número de variantes: con tres niveles
 serían seis transcodificaciones por vídeo en vez de dos, sobre el recurso más
@@ -592,3 +597,367 @@ los dos nombres a la vez. Añadir un alias es declarar que ese nombre apunta a
 esta instancia: si alguna vez apuntara a otra cosa, habría que quitarlo. La
 configuración que se copia en Moodle sigue siendo la canónica a propósito,
 para no registrar por error una URL de desarrollo.
+
+## ADR-021 · El marcador «reanudar donde lo dejó» vive en el servidor, con un solo UPSERT
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** Al reabrir una actividad, el visor arrancaba siempre desde cero:
+primer elemento de la colección, segundo 0 del vídeo, página 1 del PDF. Para
+un curso que se consume por entregas eso obliga al alumno a buscar a mano el
+punto donde iba. Se quiere reanudación automática con la solución más simple
+posible: el despliegue actual sirve a ~20 alumnos y debe aguantar ~100 accesos
+simultáneos sin tocar la infraestructura.
+
+**Decisión.** Una tabla `learner_progress` con una fila por alumno y recurso
+lanzado —`(platform_id, user_sub, resource_kind, resource_id)` como PK— que se
+machaca con un único `INSERT … ON CONFLICT DO UPDATE`. La fila de una colección
+guarda además qué elemento estaba abierto (`item_id` manda; `item_position` es
+el plan B si el material salió de la colección). La lectura no tiene endpoint:
+viaja embebida en el bootstrap del launch, que ya hace una petición a la base
+de datos de todos modos. La escritura es un solo `PUT /progress/:kind/:id`
+autorizado con el mismo `authorizeResource`/`authorizeCollection` de siempre,
+que el visor lanza cada 15 segundos si la posición cambió y al ocultarse la
+página (`fetch` con `keepalive`). La clave `progress` del bootstrap sólo existe
+para alumnos: el profesor ni guarda ni restaura.
+
+**Razones.** `localStorage` era la alternativa sin servidor, pero el visor
+corre en un iframe cross-origin dentro de Moodle: el almacenamiento de terceros
+está particionado o directamente bloqueado según navegador y modo, así que el
+marcador se perdería de forma errática; en el servidor además sobrevive al
+cambio de dispositivo. Los `view_event` no valen como soporte: son registro
+forense append-only deduplicado por sesión, no «último estado». Y no hay colas
+ni eventos porque no hacen falta: 100 alumnos guardando cada 15 s son ~7
+escrituras por segundo contra una PK — ruido para el pool actual de 6
+conexiones.
+
+**Consecuencias.** La tabla no tiene FK, a propósito: `resource_id` e `item_id`
+son polimórficos y el dato es consultivo y desechable — una fila huérfana es
+inofensiva y no debe impedir borrar un material. Un vídeo visto hasta el final
+guarda `0` (reabrir empieza de cero) por el mismo camino UPSERT, sin rama de
+borrado. El marcador es por recurso lanzado, no por material: navegar dentro de
+una colección sólo recuerda el último elemento, no la posición de cada uno.
+Revertirlo es dejar de escribir y de leer; la tabla puede quedarse donde está.
+
+---
+
+## ADR-022 · El aviso legal del visor se colapsa a un chip, y el texto completo abre un diálogo
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** El visor del alumno gastaba tres franjas de pantalla antes de
+llegar al material: cabecera con el título, banda de monitorización y banner
+legal de cuatro líneas; la colección añadía además un pie con
+Anterior/Siguiente y la línea de estado. Medido, unos **174 px** —el 17 % de una
+ventana de 1030 px— en la única pantalla donde el alumno estudia, y el visor
+asume `100dvh` sin negociar nada con el padre: dentro de un iframe corto de
+Moodle lo que sobra no hace scroll, se corta.
+
+**Decisión.** Una sola fila de cromo. El banner y la monitorización se funden en
+un chip ámbar permanente —`⚠ Sesión monitorizada · identidad · IP · Ver
+detalles`— que abre un `<dialog>` con el aviso legal ampliado **y los datos
+concretos de esa sesión**: nombre, identidad, IP, hora de inicio y de
+caducidad, referencia de auditoría, material y navegador. El título del material
+encabeza el panel lateral, la navegación entre materiales baja junto a la lista
+que ya dice dónde estás, y el estado (`Página 3 de 9`) se va al pie del panel.
+Se añade un botón que pliega el panel entero. Para poder enseñar las horas y la
+referencia, `verifySession` devuelve además `issuedAt` y el bootstrap de los
+tres lanzamientos de alumno lleva `session: { issuedAt, expiresAt, reference }`.
+
+**Razones.** La disuasión nunca estuvo en el banner: está en la identidad
+sobreimpresa en cada página del PDF y en cada fotograma del vídeo, que no se
+tocan, y en la marca forense A/B del vídeo (ADR-005). Lo que el banner aportaba
+—«se le advirtió»— se conserva con el chip, que sigue en pantalla el 100 % del
+tiempo con el símbolo de aviso y las palabras «Sesión monitorizada». Lo que
+gana el diálogo es lo que un muro de texto nunca consiguió: la
+`reference` que enseña es el `jti` de la sesión, **el mismo que se escribe en
+`view_event.session_jti`**, así que lo que el alumno lee se puede cotejar con lo
+registrado. Convence más un dato verificable que un párrafo más largo.
+
+**Consecuencias.** El aviso completo pasa a requerir un clic; se descartó
+abrirlo automáticamente una vez por sesión para no cobrar peaje al entrar, y
+queda como un `if` sobre `sessionStorage` en `viewer-shell.js` si algún día se
+quiere endurecer. El diálogo sólo puede prometer lo que el sistema tiene: LTI
+1.3 no trae ningún claim de documento de identidad —sólo el parámetro
+personalizado configurable (`docs/moodle-setup.md`)—, así que cuando no llega se
+dice «No facilitado por el aula virtual» en vez de enseñar un hueco; y no hay
+correo, ni título del curso, ni historial de accesos, porque hoy no existen en
+la sesión ni en ningún endpoint. El helper que limpia `returnValue` antes de
+`showModal()` se extrae a `src/ui/assets/dialog.js` para que el visor no arrastre
+el catálogo del profesor. Revertirlo es restaurar `.legal-warning` como tercera
+fila de `body.viewer`; el diálogo puede quedarse donde está.
+
+---
+
+## ADR-023 · El material desplegado en un curso lo ven los profesores de ese curso
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Amplía a ADR-018 · Acota a T24
+
+**Contexto.** En un aula con dos profesores, uno subía el material y lo insertaba
+en la actividad; el otro abría la biblioteca y **no veía nada**. `owner_sub` los
+separa y nadie había marcado la carpeta como pública, así que
+`services/sharing.js` devolvía cero filas. Los alumnos sí lo veían, porque su
+acceso va por el `resource_link` ya ligado, y eso hacía el fallo más
+desconcertante: «funciona para todos menos para mí, que soy el profesor».
+
+Marcar la carpeta como pública a mano existe (ADR-018), pero exige acordarse, y
+comparte con **todo** el claustro de la instancia algo cuyo ámbito real era un
+aula.
+
+**Decisión.** Una tercera vía de visibilidad, además de propio y compartido: el
+material **desplegado en el curso desde el que entra** ese profesor. La condición
+no sale del UUID sino de una fila de `resource_placement` no revocada que ligue
+ese material a ese `platform_id` + `context_id`. Vive en el mismo sitio único que
+las otras dos, `placedInContextSql()` en `services/sharing.js`, y se activa
+pasando el `contextId` de la sesión a las consultas del catálogo.
+
+Una colección desplegada arrastra sus elementos a través del snapshot
+`resource_placement_item`, igual que para los alumnos.
+
+Los permisos son los de ADR-018 sin cambios: ver, abrir, insertar en su curso,
+editar título y descripción, componer y reordenar. Archivar, borrar, purgar,
+subir una versión nueva y mover de carpeta siguen siendo del autor.
+
+En la interfaz es una vista propia, «Material de este curso», **plana**: ese
+material vive en las carpetas de su autor y esas carpetas no se enseñan.
+Compartir el material de un aula no es abrir la biblioteca ajena.
+
+**Razones.** El acto de insertar material en un curso ya es, por parte del autor,
+una decisión de ponerlo a disposición de ese curso. Extender esa decisión a los
+demás profesores del mismo curso no inventa un permiso nuevo: hace explícito el
+que ya se tomó. Y lo hace con el alcance correcto —el aula— en vez del alcance
+disponible —la instancia entera—.
+
+Derivarlo de `resource_placement` en vez de una bandera tiene tres consecuencias
+que se buscaron: no muta nada del autor, así que no hay nada que deshacer;
+revocar el placement cierra también esta puerta; y **no reabre lo que cerró
+T24**, porque teclear un UUID ajeno sigue devolviendo 404 — sin una fila de
+placement para el curso del que vienes, no hay nada que encaje.
+
+**Alternativas descartadas.**
+
+- *Marcar `is_public` automáticamente al insertar.* Es lo primero que se pensó.
+  Publica a todo el claustro por abrir una actividad de un curso, y pisa una
+  bandera que ADR-018 reserva al autor.
+- *Biblioteca común de la instancia.* Más simple, pero convierte `owner_sub` en
+  mera autoría y contradice T24 de frente. Si algún día se quiere, es un cambio
+  consciente, no el efecto lateral de arreglar esto.
+- *Recordar todos los cursos donde alguien ha dado clase.* Exigiría una tabla de
+  pertenencia alimentada por los launches y ampliaría el alcance con el tiempo,
+  sin que nadie lo decida.
+
+**Cómo revertirlo.** Dejar de pasar `contextId` desde las rutas: sin `context` la
+cláusula no añade nada y el comportamiento vuelve exactamente al anterior. La
+vista «Material de este curso» se queda sin filas y se puede ocultar quitando su
+botón. No hay migración que deshacer: no se añadió ni una columna.
+
+---
+
+## ADR-024 · El selector de contenido gasta una sola franja de cromo, y la explicación vive en un diálogo
+
+**Contexto.** La biblioteca del profesor se abre dentro de un iframe de Moodle
+—el modal de «Seleccionar contenido»—, y **el alto de ese iframe lo decide
+Moodle**: el navegador impide que la herramienta cargada dentro modifique la
+ventana padre, porque están en orígenes distintos. Lo único que existe es el
+SCSS opcional del lado de Moodle que documenta `docs/moodle-setup.md`, y depende
+de que el administrador quiera aplicarlo.
+
+Sobre ese presupuesto ajeno, el catálogo gastaba cuatro franjas antes de enseñar
+nada: cabecera con eyebrow, `h1` y subtítulo; fila de buscador; fila de migas;
+fila de pestañas Todo/Colecciones/Materiales; y encima una cabecera de sección
+por grupo («Una actividad con varios recursos / Colecciones»).
+
+Medido conduciendo Chrome sobre un iframe cross-origin de 1140×513 —el que deja
+el modal por defecto de Moodle en la pantalla de un portátil—:
+
+| | Antes | Después |
+|---|---|---|
+| Cromo hasta el primer elemento | **326 px** | **82 px** |
+| Alto de una fila | 96 px | 44 px |
+| Elementos completamente visibles | **1** | **9** |
+
+Además, el `100dvh` de la página no cabía en el marco y aparecía una segunda
+barra de desplazamiento, la del propio modal.
+
+Dos detalles agravaban el desperdicio. El `h1` decía «Seleccionar contenido»,
+que es **literalmente el título que Moodle ya pone al modal**. Y el eyebrow
+«Configurando una actividad de Moodle» describía algo que el profesor acababa de
+hacer con sus propias manos.
+
+**Decisión.** La misma operación que ADR-022 hizo con el visor del alumno,
+aplicada al catálogo:
+
+- **Fuera la cabecera y la barra de herramientas.** `body.catalog-page` pasa de
+  `grid-template-rows: auto auto minmax(0, 1fr)` a **una sola fila**.
+- **Una única franja de cromo** dentro del panel principal: ubicaciones (sólo en
+  pantalla estrecha), atrás, migas, buscador, conmutador lista/cuadrícula,
+  actualizar, ayuda y un menú **＋ Nuevo** que agrupa las tres formas de crear
+  contenido —subir material, nueva carpeta, nueva colección— que antes eran tres
+  botones repartidos por dos filas y el lateral.
+- **Fuera las pestañas.** No filtraban nada en el servidor: eran un `hidden`
+  sobre dos listas ya cargadas. Los tres tipos conviven ahora en una sola lista
+  separada por etiquetas de grupo pegajosas de una línea, y **las subcarpetas
+  del nivel abierto entran en esa lista**, que es lo que hace un explorador de
+  archivos: enseñar el contenido de la carpeta, subcarpetas incluidas.
+- **Filas densas de 2,75 rem** en lugar de tarjetas de 5 rem, con conmutador a
+  cuadrícula para cuando se busca por póster. La elección se recuerda en
+  `sessionStorage`.
+- **El lateral se pliega** por debajo de 720 px: era una banda horizontal de
+  10,5 rem —168 px de alto en la pantalla donde menos hay— y pasa a ser un cajón
+  superpuesto. La barra de comandos queda por encima del cajón para que el botón
+  que lo abre siga sirviendo para cerrarlo.
+- **Toda explicación va al diálogo de ayuda**, a un clic desde el icono `?`.
+
+Presupuesto resultante: **82 px** frente a 326 px, y nueve elementos completos en
+lugar de uno.
+
+**Alternativas descartadas.** *Encoger la tipografía y los paddings* daba unos
+40 px y dejaba la misma estructura de cuatro franjas. *Mover los botones al
+lateral* (estilo Drive) los perdía justo cuando el lateral se pliega, que es
+cuando más falta hacen. *Mantener las pestañas como filtro compacto en la barra*
+conservaba un control que sólo servía para esconder contenido ya descargado.
+
+**Consecuencias.** La ayuda deja de abrirse sola en modo `deeplink`: el profesor
+acaba de pulsar «Seleccionar contenido» y sabe a qué viene, así que abrirle un
+modal encima es el mismo peaje que ADR-022 rechazó. En modo `manage` sí se
+mantiene, porque ahí ha abierto una actividad sin material y necesita que le
+expliquen qué hacer. Las acciones secundarias de cada fila (`Editar`, `⋯`)
+aparecen al apuntar o al tabular; `Insertar` no, porque en el selector es la
+tarea. Ordenar por nombre o fecha sigue sin ser posible: `/materials` y
+`/collections` paginan con cursor keyset sobre `created_at DESC` y no aceptan
+parámetro de ordenación, así que ordenar en cliente rompería la paginación.
+Revertirlo es devolver `.catalog-header`, `.catalog-toolbar` y `.content-tabs` a
+`catalog.html` y las tres filas a `body.catalog-page`; lo vigila el test
+«el catálogo reserva el alto de la pantalla para la lista» en
+`test/ui-iframe.test.js`.
+
+---
+
+## ADR-025 · Importar una carpeta es un plan del servidor y N subidas normales; repetir un fichero es una revisión, no un duplicado
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** Un profesor que llega con el material de un curso entero no tiene
+un fichero: tiene una carpeta con subcarpetas, decenas de vídeos y PDF, y basura
+del sistema de ficheros por medio. Subir de uno en uno, creando a mano cada
+carpeta destino, es la diferencia entre usar la herramienta y no usarla. El
+administrador tiene el mismo problema a otra escala: quiere dejar preparado el
+material común del centro antes de que ningún profesor entre.
+
+**Decisión.** Dos fases y ningún pipeline nuevo.
+
+1. El navegador —único que puede leer un directorio del disco— manda **sólo la
+   lista de rutas relativas** (`File.webkitRelativePath`) a `POST /imports/plan`.
+   El servidor clasifica cada ruta, construye el árbol de carpetas que falte y
+   devuelve, por fichero, **en qué carpeta cae, con qué título y si es alta o
+   revisión**.
+2. El navegador sube los bytes fichero a fichero por el **mismo protocolo
+   troceado de siempre** (`/uploads`), con el `folderId` o el `materialId` que
+   le dio el plan.
+
+Un fichero cuyo título ya existe en su carpeta destino **no se duplica ni se
+omite: se sube como revisión nueva del material que ya está ahí**. Se omiten los
+ocultos (cualquier tramo de la ruta que empiece por `.`, más la basura conocida)
+y todo lo que no sea vídeo o PDF. **No se crean colecciones**: una carpeta del
+ordenador es una carpeta de la biblioteca y nada más.
+
+El plan admite `dryRun`, que resuelve el mismo reparto **sin crear nada**, para
+que el diálogo pueda decir «6 carpetas nuevas, 4 como versión, 2 omitidos» antes
+de que el profesor confirme.
+
+**Razones.** Un segundo camino de carga habría duplicado la validación de
+extensión y contenido, los límites de tamaño, la reanudación y la cola —cuatro
+sitios donde divergir—. Aquí lo único que añade la importación es *a dónde va
+cada fichero*, que es exactamente lo que hace el plan.
+
+Que repetir sea revisión y no duplicado es la decisión que más consecuencias
+tiene, y sale directamente del invariante del proyecto: **el UUID lógico es la
+identidad que Moodle lleva incrustada**. Reimportar la carpeta con un vídeo
+corregido actualiza el contenido de todas las actividades ya creadas sin tocar
+ninguna. Duplicar habría dejado dos materiales y las actividades apuntando al
+viejo; omitir habría hecho que la corrección no llegara nunca.
+
+La clasificación vive en un módulo puro (`services/import-plan.js`): las reglas
+raras —`.DS_Store`, `__MACOSX`, `._fichero.mp4`, nombres en NFD de macOS,
+rutas de Windows— se prueban sin levantar base de datos ni disco.
+
+**Consecuencias.** Reimportar mientras la importación anterior sigue en cola
+responde **409 `revision_in_progress`** por fichero: un material sólo admite una
+revisión candidata a la vez. Es correcto y se informa fichero a fichero; la
+importación no se detiene por ello. Con `MATERIAL_REVISION_ACTIVATION=manual`,
+las revisiones importadas quedan esperando publicación en vez de sustituir a la
+activa.
+
+La comparación de títulos es `lower(btrim(...))` sobre NFC, la misma regla que
+el índice único de carpetas: «Clase 3» y «CLASE 3» son el mismo material. Dos
+ficheros distintos con el mismo nombre en la misma carpeta del ordenador no
+pueden existir, así que el caso no se da al importar; sí puede darse contra
+material creado a mano con títulos repetidos, y entonces gana el más antiguo.
+
+El plan crea las carpetas antes de subir un solo byte. Si el árbol se rechaza
+—demasiado profundo, cupo agotado—, no se ha subido nada; las carpetas que sí
+cupieron quedan creadas y vacías, y la siguiente importación las reutiliza.
+
+Y la consecuencia que más se nota en una biblioteca de verdad: **una importación
+grande agota las cuotas por propietario** (F-12), normalmente
+`MAX_PENDING_JOBS_PER_OWNER`, porque la cola procesa de uno en uno. Eso es lo
+correcto —las cuotas existen para que un profesor no monopolice el worker— y el
+importador lo trata como lo que es: **se detiene y dice cuántos ficheros
+quedan**, en vez de marcar como fallidos los que ni siquiera intentó. Al retomar,
+las carpetas se reutilizan y sólo entra lo que falta; los que ya estaban se
+vuelven a subir como revisión, porque saltarlos exigiría comparar el contenido y
+el navegador no puede calcular el SHA-256 de un fichero de varios GB sin leerlo
+entero. Dividir una biblioteca grande en varias importaciones evita ese coste.
+
+Revertirlo es quitar el botón, el diálogo y `routes/imports.js`: `/uploads` y el
+árbol de carpetas siguen exactamente como estaban.
+
+---
+
+## ADR-026 · Lo que importa el administrador es de una biblioteca institucional compartida, no de un profesor
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** La consola de administración era, hasta ahora, de sólo lectura
+(`/admin/platforms/:id/contenido`). Para que el administrador pueda importar
+material hace falta responder a una pregunta que el resto del sistema nunca se
+había planteado: **de quién es lo que sube**. No tiene launch, no tiene `sub` de
+Moodle y no debería aparecer como autor de nada; pero `owner_sub` es NOT NULL y
+las FK compuestas `(folder_id, platform_id, owner_sub)` exigen que una carpeta
+contenga sólo material de su autor.
+
+**Decisión.** Un propietario **sintético por instancia**,
+`ADMIN_LIBRARY_OWNER_SUB` (por defecto `moodleshield:biblioteca`), y la carpeta
+más alta de cada importación se marca **compartida**. Lo importado por el
+administrador es, por tanto, la biblioteca del centro: todos los profesores de
+esa instancia la ven, la abren y la insertan en sus cursos; archivarla, borrarla
+o subirle una versión nueva sigue siendo imposible para ellos, porque compartir
+da acceso de trabajo y no de propiedad (ADR-018). El único que la gestiona es el
+administrador, desde la consola.
+
+Se descartó la alternativa de que el administrador eligiera un profesor de la
+lista y le colocara el material dentro. Es más simple de implementar, pero
+convierte al administrador en un usuario capaz de escribir en la biblioteca
+privada de cualquiera, que es justo la frontera que `owner_sub` defiende.
+
+**Razones.** El prefijo `moodleshield:` garantiza que el propietario sintético
+no colisione jamás con el `sub` de un profesor real, que sale del `id_token`.
+`platform_id` sigue siendo frontera dura: la biblioteca del centro de una
+instancia no es visible desde otra. Y compartir la carpeta raíz no es un extra:
+una carpeta privada de un propietario que nunca abre sesión **no la vería
+nadie**, ni siquiera él. Por eso la importación institucional también comparte
+una carpeta raíz que ya existiera sin compartir.
+
+**Consecuencias.** La consola gana su primer camino de escritura de contenido.
+Se protege con la cookie de administrador (`SameSite=Strict`) más un token CSRF
+**por cabecera** (`X-MoodleShield-Csrf`), porque un PUT de fragmento lleva bytes
+crudos y no un cuerpo donde quepa un campo `_csrf`; el token va atado a
+`POST /platforms/<id>/import`, así que el de una instancia no vale para otra. El
+limitador general de la consola (120 peticiones/minuto) ahogaría una
+importación, que son cientos de PUT legítimos: el ámbito de importación tiene el
+suyo, más holgado y todavía acotado. Cada importación deja un evento
+`content.import` en `admin_audit_event` con lo que realmente ocurrió.
+
+**Cambiar `ADMIN_LIBRARY_OWNER_SUB` con contenido ya importado lo esconde**: las
+carpetas y el material siguen en la base de datos, pero cuelgan de un
+propietario que ya no se consulta. Se decide antes de importar nada.
