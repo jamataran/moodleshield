@@ -13,7 +13,18 @@
 # Con la configuración horneada aquí, el stack no depende de nada del host: se
 # despliega eligiendo el compose y pegando el .env, que es como se opera.
 
-FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+# La rama 1.27 dejó de reconstruirse: su tag sigue apuntando al mismo digest
+# sobre Alpine 3.21, con 35 CVE altas/críticas acumuladas (dos de OpenSSL).
+# 1.29 es la rama viva, sobre Alpine 3.23, y sigue trayendo `secure_link`,
+# que es el módulo del que depende la firma de segmento.
+FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+
+# La imagen oficial se reconstruye más despacio de lo que Alpine publica
+# parches, así que al construir arrastra paquetes con CVE altas ya
+# corregidas aguas arriba (openssl, curl, expat, libxml2, nghttp2…). Este
+# upgrade las recoge. Es la única capa no reproducible de las tres
+# imágenes, y se acepta a propósito: es un proxy que termina TLS.
+RUN apk upgrade --no-cache
 
 # Lo pasa el bake para las tres imágenes; aquí sólo sirve para que la etiqueta
 # de versión de la imagen coincida con la de app y worker.

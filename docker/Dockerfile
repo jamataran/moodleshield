@@ -24,6 +24,15 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 RUN apk add --no-cache su-exec
+
+# npm no pinta nada en runtime: la app arranca con `node src/server.js`, el
+# worker con `node src/worker.js` y el entrypoint no lo llama. Pero sus
+# dependencias empaquetadas (tar, brace-expansion, ip-address, picomatch,
+# sigstore) sí cuentan para Trivy, y son las que tumban el gate de CVE del
+# CD sin que ninguna sea nuestra: `npm audit --omit=dev` da cero. Se borra
+# el código vulnerable en vez de excluir la ruta del análisis, que además
+# recorta superficie: ninguna imagen publicada puede instalar paquetes.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY migrations ./migrations
