@@ -122,6 +122,10 @@ jobs:
       - name: Bake (app + worker + proxy)
         uses: docker/bake-action@5be5f02ff8819ecd3092ea6b2e6261c31774f2b4 # v6
         with:
+          # Sin esto bake construye desde el contexto git REMOTO
+          # (…git#refs/pull/N/merge), que GitHub borra al cerrar la PR: una
+          # reejecución posterior muere con «repository does not contain ref».
+          source: .
           files: docker/docker-bake.hcl
           targets: default
           push: false
