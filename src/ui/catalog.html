@@ -254,32 +254,37 @@
   <dialog id="import-dialog" aria-labelledby="import-heading">
     <div>
       <h2 id="import-heading">Importar una carpeta</h2>
-      <p class="muted">
-        Se sube la carpeta entera <strong>respetando su estructura interna</strong>:
-        cada subcarpeta pasa a ser una carpeta de tu biblioteca. No se crean
-        colecciones — para agrupar materiales en una sola actividad, usa
-        <strong>Nueva colección</strong> cuando termine.
-      </p>
-      <p>
-        <label for="import-picker">Carpeta del ordenador</label>
-        <input type="file" id="import-picker" webkitdirectory directory multiple>
-      </p>
-      <p class="muted" id="import-target"></p>
-      <div id="import-preview" class="import-preview" hidden>
-        <p id="import-summary"></p>
-        <details id="import-skipped-box" hidden>
-          <summary id="import-skipped-summary">Ficheros omitidos</summary>
-          <ul id="import-skipped" class="import-skipped"></ul>
-        </details>
+      <!-- Todo lo que sirve para PREPARAR la importación vive aquí dentro, y se
+           oculta en bloque mientras sube: una vez pulsado el botón, lo único que
+           el profesor necesita mirar es cuánto queda. -->
+      <div id="import-setup">
+        <p class="muted">
+          Se sube la carpeta entera <strong>respetando su estructura interna</strong>:
+          cada subcarpeta pasa a ser una carpeta de tu biblioteca. No se crean
+          colecciones — para agrupar materiales en una sola actividad, usa
+          <strong>Nueva colección</strong> cuando termine.
+        </p>
+        <p>
+          <label for="import-picker">Carpeta del ordenador</label>
+          <input type="file" id="import-picker" webkitdirectory directory multiple>
+        </p>
+        <p class="muted" id="import-target"></p>
+        <div id="import-preview" class="import-preview" hidden>
+          <p id="import-summary"></p>
+          <details id="import-skipped-box" hidden>
+            <summary id="import-skipped-summary">Ficheros omitidos</summary>
+            <ul id="import-skipped" class="import-skipped"></ul>
+          </details>
+        </div>
+        <p class="muted">
+          Se omiten los ficheros ocultos (<code>.DS_Store</code>, <code>Thumbs.db</code>,
+          carpetas que empiezan por punto) y todo lo que no sea vídeo o PDF. Un
+          fichero cuyo título ya exista en su carpeta se sube como
+          <strong>versión nueva</strong> del material que ya está ahí: no se
+          duplica y <strong>no cambia</strong> el identificador que Moodle guardó
+          en las actividades ya creadas.
+        </p>
       </div>
-      <p class="muted">
-        Se omiten los ficheros ocultos (<code>.DS_Store</code>, <code>Thumbs.db</code>,
-        carpetas que empiezan por punto) y todo lo que no sea vídeo o PDF. Un
-        fichero cuyo título ya exista en su carpeta se sube como
-        <strong>versión nueva</strong> del material que ya está ahí: no se
-        duplica y <strong>no cambia</strong> el identificador que Moodle guardó
-        en las actividades ya creadas.
-      </p>
       <div id="import-progress" class="import-progress" hidden>
         <progress id="import-bar" max="100" value="0"></progress>
         <p class="muted" id="import-current"></p>
