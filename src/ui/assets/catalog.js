@@ -2023,7 +2023,7 @@ function schedulePoll () {
 async function loadMaterialWindow (baseParams, wanted) {
   const materials = []
   let cursor = null
-  let nextCursor = null
+  let nextCursor
   do {
     const params = new URLSearchParams(baseParams)
     if (cursor) params.set('cursor', cursor)
