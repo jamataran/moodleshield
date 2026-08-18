@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { closeDatabase, query } from '../../src/db/index.js'
 import { runMigrations } from '../../src/db/migrate.js'
 import { createVideoAndJob, updateVideoMetadata } from '../../src/services/videos.js'
-import { createCollection } from '../../src/services/collections.js'
+import { createCollection, duplicateCollection } from '../../src/services/collections.js'
 import { listMaterials } from '../../src/services/materials.js'
 import { getVisibleMaterial, getVisibleCollection } from '../../src/services/sharing.js'
 import { createResourcePlacements } from '../../src/services/resource-placements.js'
@@ -211,4 +211,60 @@ test('ver no es poseer: Luis edita metadatos pero no recoloca material ajeno', a
   })
   assert.equal(movido.status, 'not_owned',
     'mover de carpeta sigue siendo del autor: la carpeta es de Ana')
+})
+
+/**
+ * La puerta del aula no puede convertirse en una salida del aula.
+ *
+ * Es el peligro real de ADR-023 y por poco se cuela: la puerta da acceso de
+ * trabajo DENTRO de un curso, pero una colección es un objeto de su autor que
+ * VIAJA —quien la compone la inserta luego en cualquier curso suyo, y ahí nadie
+ * revalida los elementos—. Componer o duplicar con material admitido por la
+ * puerta del aula lo sacaba de ella, y con él la visibilidad de biblioteca que
+ * concede `placedInContextSql`: encadenando profesores y cursos, el conjunto de
+ * quien acaba viendo un material era la componente conexa del claustro.
+ *
+ * Por eso `assertItemsUsable` y `duplicateCollection` NO abren la puerta del
+ * curso: componer y duplicar son adquisición, no trabajo.
+ */
+test('el material del aula no sale de ella componiendo una colección', async () => {
+  const id = await videoDeAna({ title: 'Privado de Ana' })
+  await desplegar({ id, contextId: CURSO })
+
+  assert.ok((await luisVeEnCurso(CURSO)).includes(id), 'precondición: Luis lo ve en el aula')
+
+  await assert.rejects(
+    () => createCollection({
+      platformId: PLATFORM_A,
+      ownerSub: LUIS,
+      ownerName: 'Luis',
+      contextId: CURSO,
+      title: 'Colección de Luis',
+      items: [{ kind: 'video', id }]
+    }),
+    (err) => err.code === 'items_unavailable',
+    'verlo en el aula no da derecho a meterlo en una colección propia, que viaja'
+  )
+})
+
+test('tampoco duplicando la colección que otro desplegó en el aula', async () => {
+  const video = await videoDeAna({ title: 'Dentro de la colección de Ana' })
+  const coleccion = await createCollection({
+    platformId: PLATFORM_A,
+    ownerSub: ANA,
+    ownerName: 'Ana',
+    title: 'Temario de Ana',
+    items: [{ kind: 'video', id: video }]
+  })
+  await desplegar({ id: coleccion.id, kind: 'collection' })
+
+  assert.ok(await getVisibleCollection({
+    id: coleccion.id, platformId: PLATFORM_A, ownerSub: LUIS, contextId: CURSO
+  }), 'precondición: Luis la ve, porque el aula la está usando')
+
+  const copia = await duplicateCollection({
+    id: coleccion.id, platformId: PLATFORM_A, ownerSub: LUIS, ownerName: 'Luis'
+  })
+  assert.equal(copia.status, 'not_found',
+    'duplicar es adquirir: sólo desde lo compartido de verdad (is_public), no desde el aula')
 })

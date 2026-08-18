@@ -88,7 +88,9 @@ export async function createResourcePlacements ({
 
 /**
  * Valida el placement y, en su primer launch, lo liga atómicamente a la
- * actividad. Sólo puede hacerlo el mismo profesor y dentro del mismo curso.
+ * actividad desde la que se entra. Dentro del mismo curso, deployment,
+ * plataforma, tipo, recurso y propietario: eso es lo que autoriza. Quién sea el
+ * primero en abrirla no —ver el bloque de abajo.
  */
 export async function authorizeResourcePlacement ({ placementId, context, kind, resourceId, ownerSub }) {
   if (!isUuid(placementId)) {
@@ -111,21 +113,42 @@ export async function authorizeResourcePlacement ({ placementId, context, kind, 
       throw new ResourcePlacementError('La actividad no está autorizada para este contexto')
     }
     if (placement.resource_link_id === null) {
-      if (!context.isInstructor || context.sub !== placement.created_by_sub) {
-        throw new ResourcePlacementError(
-          'El profesor que insertó el material debe abrir primero la actividad para activarla',
-          { status: 409, code: 'placement_pending_instructor' }
-        )
-      }
+      // Ligar NO es autorizar: es anotar un hecho que Moodle ya decidió.
+      //
+      // El `resource_link_id` no existe cuando se responde al Deep Linking —la
+      // actividad aún no está creada—, así que se aprende en el primer launch.
+      // Pero quién sea ese primero da igual: el `id_token` lo firma la
+      // plataforma, y en él viene tanto el placement (por `custom`, escrito por
+      // Moodle al guardar la selección) como la actividad desde la que se entra.
+      // La fila sólo confirma lo que Moodle ya emparejó.
+      //
+      // Antes esto exigía que ligara el mismo profesor que insertó, siendo
+      // Instructor. Rompía el caso normal de un equipo docente: un profesor crea
+      // la actividad, otro le pone material, y hasta que ESE otro no la abría los
+      // alumnos recibían un 409 que ni siquiera decía a quién avisar. Peor: la
+      // actividad parecía configurada en Moodle y estaba muerta.
+      //
+      // Lo que de verdad impide reutilizar una actividad ajena sigue en pie: el
+      // exact-match de arriba (plataforma, deployment, curso, tipo, recurso y
+      // propietario), `resourcesig`, y que un placement YA ligado a otra
+      // actividad da `placement_link_mismatch`. Lo que se pierde es estrecho:
+      // un profesor con edición EN ESE MISMO CURSO podía, copiando los `custom`
+      // antes de que nadie abriera la actividad, quedarse el placement de un
+      // compañero. Sigue siendo el mismo curso y el mismo material que sus
+      // alumnos ya tenían delante, así que no gana audiencia: molesta.
+      //
       // Reinsertar sobre una actividad que ya existe: Moodle conserva el
       // `resource_link` y el Deep Linking crea un placement nuevo. El anterior
       // queda superado —esa actividad ya no sirve aquel material— y se revoca en
       // la MISMA transacción que liga al sustituto. Sin esto, el índice único
       // rechazaba el UPDATE y el profesor veía un 500 de Postgres.
       //
-      // Sólo llega aquí quien insertó el material, siendo profesor y con
-      // plataforma, deployment, curso, tipo, recurso y propietario cuadrando, así
-      // que esto no da a nadie una forma nueva de tumbar el placement de otro.
+      // Que ahora pueda desencadenarlo el launch de un alumno no lo afloja: lo
+      // que se revoca es el placement que Moodle ya dejó de referenciar en esa
+      // actividad. El alumno no elige nada —entra por donde le mandan— y el
+      // exact-match exige que el placement entrante encaje en curso, tipo,
+      // recurso y propietario. Quien decidió el cambio fue el profesor, al
+      // guardar la nueva selección; aquí sólo se ejecuta.
       //
       // Revocar corta también los grants hijos: si un alumno estaba viendo el
       // material anterior, deja de servirse. Es lo correcto —el profesor acaba
@@ -154,6 +177,19 @@ export async function authorizeResourcePlacement ({ placementId, context, kind, 
         `UPDATE resource_placement SET resource_link_id=$2, bound_at=now()
           WHERE id=$1 AND resource_link_id IS NULL RETURNING *`,
         [placementId, context.resourceLinkId]
+      )
+      // Quién ligó queda en el registro aunque no sea quien insertó: es la única
+      // forma de reconstruir después por qué una actividad quedó atada a la que
+      // quedó.
+      logger.info(
+        {
+          placementId,
+          resourceLinkId: context.resourceLinkId,
+          boundBy: context.sub,
+          createdBy: placement.created_by_sub,
+          instructor: Boolean(context.isInstructor)
+        },
+        'Placement ligado a la actividad en su primer launch'
       )
       return bound.rows[0]
     }

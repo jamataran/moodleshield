@@ -97,17 +97,8 @@ test('F-05: el token Deep Linking se consume una sola vez', async () => {
   )
 })
 
-test('F-05: sólo el profesor emisor liga el primer resource_link y una copia falla', async () => {
+test('F-05: el primer launch liga el resource_link y una copia falla', async () => {
   const placed = await place({ id: VIDEO_A, kind: 'video', owner_sub: OWNER })
-
-  await assert.rejects(
-    authorizeResourcePlacement({
-      placementId: placed.placementId,
-      context: placementContext({ sub: 'student', isInstructor: false }),
-      kind: 'video', resourceId: VIDEO_A, ownerSub: OWNER
-    }),
-    (err) => err.code === 'placement_pending_instructor' && err.status === 409
-  )
 
   const bound = await authorizeResourcePlacement({
     placementId: placed.placementId,
@@ -129,6 +120,74 @@ test('F-05: sólo el profesor emisor liga el primer resource_link y una copia fa
     }),
     (err) => err.code === 'placement_link_mismatch'
   )
+})
+
+// Un profesor crea la actividad, OTRO le pone el material, y quien llega primero
+// es un alumno. Antes eso devolvía 409 `placement_pending_instructor` y la
+// actividad quedaba muerta con aspecto de estar configurada.
+test('el alumno que llega primero liga el placement que le insertó otro profesor', async () => {
+  const [placed] = await createResourcePlacements({
+    deepLinkJti: randomUUID(),
+    platformId: PLATFORM_ID,
+    deploymentId: 'deployment-1',
+    contextId: 'course-1',
+    createdBySub: 'teacher-que-subio-el-material',
+    materials: [{ id: VIDEO_A, kind: 'video', owner_sub: OWNER }]
+  })
+
+  const bound = await authorizeResourcePlacement({
+    placementId: placed.placementId,
+    context: placementContext({ sub: 'alumno-1', isInstructor: false }),
+    kind: 'video', resourceId: VIDEO_A, ownerSub: OWNER
+  })
+  assert.equal(bound.resource_link_id, 'resource-link-1')
+  assert.ok(bound.bound_at, 'queda anotado cuándo se ligó')
+  assert.equal(bound.created_by_sub, 'teacher-que-subio-el-material',
+    'ligar no cambia de quién es la inserción: sólo aprende a qué actividad va')
+
+  // Y ligar sigue sin abrir la puerta a otro curso ni a otra actividad.
+  await assert.rejects(
+    authorizeResourcePlacement({
+      placementId: placed.placementId,
+      context: placementContext({ sub: 'alumno-2', isInstructor: false, contextId: 'course-9' }),
+      kind: 'video', resourceId: VIDEO_A, ownerSub: OWNER
+    }),
+    (err) => err.code === 'placement_invalid'
+  )
+  await assert.rejects(
+    authorizeResourcePlacement({
+      placementId: placed.placementId,
+      context: placementContext({ sub: 'alumno-2', isInstructor: false, resourceLinkId: 'otra-actividad' }),
+      kind: 'video', resourceId: VIDEO_A, ownerSub: OWNER
+    }),
+    (err) => err.code === 'placement_link_mismatch'
+  )
+})
+
+// Reinsertar contenido y que el primero en abrir sea un alumno: el placement
+// nuevo gana, el anterior se revoca, y no hay 500 del índice único (016).
+test('cambiar el material de una actividad no espera al profesor', async () => {
+  const viejo = await place({ id: VIDEO_A, kind: 'video', owner_sub: OWNER })
+  await authorizeResourcePlacement({
+    placementId: viejo.placementId,
+    context: placementContext(),
+    kind: 'video', resourceId: VIDEO_A, ownerSub: OWNER
+  })
+
+  const nuevo = await place({ id: VIDEO_B, kind: 'video', owner_sub: OWNER })
+  const bound = await authorizeResourcePlacement({
+    placementId: nuevo.placementId,
+    context: placementContext({ sub: 'alumno-1', isInstructor: false }),
+    kind: 'video', resourceId: VIDEO_B, ownerSub: OWNER
+  })
+  assert.equal(bound.resource_link_id, 'resource-link-1')
+
+  const { rows } = await query(
+    'SELECT revoked_at, revoked_reason FROM resource_placement WHERE id=$1',
+    [viejo.placementId]
+  )
+  assert.ok(rows[0].revoked_at, 'el placement anterior queda revocado')
+  assert.equal(rows[0].revoked_reason, 'superseded')
 })
 
 test('F-11: una colección no amplía actividades antiguas con elementos nuevos', async () => {

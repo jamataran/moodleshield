@@ -153,7 +153,7 @@ for (const file of DEPLOYABLES) {
 
     if (blocks.worker.includes('*app-env # WORKER_ENV_ACTIVATION')) {
       const workflow = file.includes('/test/')
-        ? '.github/workflows/cd-main.yml'
+        ? '.github/workflows/cd-test.yml'
         : '.github/workflows/release.yml'
       const workflowText = await readFile(path.join(root, workflow), 'utf8')
       assert.match(workflowText,
