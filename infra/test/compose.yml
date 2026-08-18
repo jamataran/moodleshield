@@ -189,7 +189,7 @@ services:
 
   app:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/app:sha-5ae33b4
+    image: ghcr.io/jamataran/moodleshield/app:sha-acaac2b
     restart: unless-stopped
     init: true
     depends_on:
@@ -214,7 +214,7 @@ services:
 
   worker:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/worker:sha-5ae33b4
+    image: ghcr.io/jamataran/moodleshield/worker:sha-acaac2b
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -240,7 +240,7 @@ services:
   # y se etiqueta a la vez que app y worker.
   proxy:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/proxy:sha-5ae33b4
+    image: ghcr.io/jamataran/moodleshield/proxy:sha-acaac2b
     restart: unless-stopped
     depends_on:
       app:
