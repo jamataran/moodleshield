@@ -138,7 +138,7 @@ jobs:
       # de app. `proxy` es nginx + la configuración de infra/nginx. Se publican
       # manifiestos amd64 y arm64 para servidores y NAS de ambas arquitecturas.
       - name: Bake y push (app + worker + proxy)
-        uses: docker/bake-action@5be5f02ff8819ecd3092ea6b2e6261c31774f2b4 # v6
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b # v7.3.0
         with:
           # Sin esto bake construye desde el contexto git REMOTO
           # (…git#refs/pull/N/merge), que GitHub borra al cerrar la PR: una
