@@ -193,18 +193,25 @@ Lo que la importación **no** hace: crear colecciones. Una carpeta del ordenador
 es una carpeta de la biblioteca. Agrupar varios materiales en una sola actividad
 sigue siendo una decisión explícita en el editor de colecciones.
 
-### La importación choca con las cuotas, y eso es correcto
+### La cola no tiene tope; el disco sí
 
 Las cuotas por propietario (F-12, `src/services/upload-limits.js`) no distinguen
-una importación de cuarenta subidas a mano, y no deben: existen para que un
-profesor no monopolice el worker. La que se alcanza primero es
-`MAX_PENDING_JOBS_PER_OWNER` (10 por defecto), porque la cola procesa de uno en
-uno y un vídeo tarda minutos.
+una importación de cuarenta subidas a mano, y no deben. Pero **la cola de
+procesado va sin límite** (`MAX_PENDING_JOBS_PER_OWNER=-1`): encolar no consume
+disco ni CPU —el worker sigue procesando de uno en uno, tarde lo que tarde— y
+poner número ahí no protegía nada, sólo convertía importar una carpeta grande en
+varias pasadas manuales esperando a que la cola bajara. Lo que de verdad guarda
+la máquina sigue en pie: `STORAGE_MIN_FREE_BYTES` (margen libre en disco) y
+`MAX_STORED_BYTES_PER_OWNER` (cuota del profesor).
 
-Cuando eso ocurre, el importador **se detiene** —no marca como fallidos los
-ficheros que quedaban— y dice cuántos faltan. Reimportar la misma carpeta más
-tarde retoma el trabajo: las carpetas se reutilizan y sólo se suben los ficheros
-que aún no estaban.
+**`-1` es «sin límite» en los cuatro cupos por propietario**, y volver a poner un
+número es cambiar una variable de entorno, sin desplegar nada.
+
+Si aun así se alcanza una cuota —el disco, o un tope repuesto a mano—, el
+importador **se detiene** en vez de marcar como fallidos los ficheros que
+quedaban, y dice cuántos faltan. Reimportar la misma carpeta más tarde retoma el
+trabajo: las carpetas se reutilizan y sólo se suben los ficheros que aún no
+estaban.
 
 El coste que hay que conocer: los ficheros que **sí** entraron se reconocen por
 título y se vuelven a subir **como revisión**, no se saltan. Saltarlos exigiría

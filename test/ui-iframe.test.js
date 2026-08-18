@@ -327,8 +327,17 @@ test('el catálogo importa una carpeta entera y avisa antes de escribir nada', a
   assert.match(code, /dryRun: true/, 'la previsión debe pedirse en seco')
   const confirmar = code.indexOf("el('import-btn').addEventListener")
   assert.notEqual(confirmar, -1, 'falta el botón que confirma la importación')
-  assert.match(code.slice(confirmar, confirmar + 900), /requestImportPlan\(files, \{ signal/,
+  assert.match(code.slice(confirmar, confirmar + 1500), /requestImportPlan\(files, \{ signal/,
     'el plan real (el que crea carpetas) sólo se pide al confirmar')
+
+  // Pulsado «Importar», el diálogo se queda sólo con el progreso: el
+  // explicativo, el selector, la previsión y los omitidos ya no sirven de nada
+  // y empujan la barra fuera de la vista justo cuando es lo único que se mira.
+  assert.ok(html.includes('id="import-setup"'),
+    'lo que sirve para preparar la importación debe poder ocultarse en bloque')
+  assert.match(code.slice(confirmar, confirmar + 1500),
+    /el\('import-setup'\)\.hidden = true/,
+    'al confirmar hay que ocultar todo lo que no sea el progreso')
 
   // Un fichero que falla no puede tumbar la importación entera.
   assert.match(code, /fallidos\.push/, 'los errores por fichero se acumulan y se informan')

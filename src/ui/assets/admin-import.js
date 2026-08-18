@@ -127,9 +127,11 @@ async function runImport () {
   let omitidos = 0
   let detenidaPorCuota = null
   let pendientes = []
+  let carpetasCreadas = 0
 
   try {
     const plan = await requestPlan(files, { signal: controller.signal })
+    carpetasCreadas = plan.summary?.foldersCreated ?? 0
     pendientes = plan.entries.filter((entry) => entry.status === 'upload')
     omitidos = plan.summary.skipped
     if (pendientes.length === 0) {
@@ -179,20 +181,26 @@ async function runImport () {
     el('current').textContent = ''
 
     const restantes = pendientes.length - hechos
-    if (creados || versiones || fallidos.length || detenidaPorCuota) {
+    if (creados || versiones || fallidos.length || detenidaPorCuota || carpetasCreadas) {
+      // Las carpetas cuentan en el resumen: el plan las crea antes de subir un
+      // solo byte, así que «no se subió nada» sería falso en cuanto el árbol
+      // quedó puesto.
       const resumen = [
         creados ? `${creados} material(es) nuevo(s)` : '',
         versiones ? `${versiones} versión(es) nueva(s)` : '',
+        carpetasCreadas ? `${carpetasCreadas} carpeta(s) nueva(s)` : '',
         fallidos.length ? `${fallidos.length} con error` : ''
       ].filter(Boolean).join(' · ')
+      const subidos = creados + versiones
       const cabecera = detenidaPorCuota
         ? 'Importación detenida'
         : cancelada ? 'Importación cancelada' : 'Importación terminada'
       setStatus(
-        `${cabecera}: ${resumen || 'no se subió nada'}. ` +
+        `${cabecera}: ${resumen || 'no se subió ningún fichero'}` +
+        (resumen && !subidos ? ', pero ningún fichero llegó a subirse. ' : '. ') +
         (detenidaPorCuota
-          ? `${detenidaPorCuota} Quedan ${restantes} fichero(s): espera a que el procesado ` +
-            'avance y vuelve a importar la misma carpeta.'
+          ? `${detenidaPorCuota} Quedan ${restantes} fichero(s) sin subir: resuelto el aviso, ` +
+            'vuelve a importar la misma carpeta y sólo entrará lo que falta.'
           : 'El procesado (transcodificación y normalización) sigue en cola.'),
         fallidos.length || detenidaPorCuota ? 'error' : 'ok'
       )

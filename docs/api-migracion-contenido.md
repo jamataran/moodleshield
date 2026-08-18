@@ -128,11 +128,14 @@ carpeta: entonces **es una revisión y el UUID no cambia**).
 - Reimportar un fichero cuya revisión anterior sigue en cola responde `409
   revision_in_progress` **en el `complete` de ese fichero**: un material sólo
   admite una candidata a la vez. Espera a que termine o descarta la candidata.
-- Un árbol grande **agotará las cuotas por propietario** antes de terminar: la
-  primera suele ser `MAX_PENDING_JOBS_PER_OWNER` (10), porque la cola procesa de
-  uno en uno. La reserva responde entonces `429` con `too_many_pending_jobs`.
-  Trátalo como espera, no como error: para, deja que la cola avance y vuelve a
-  pedir el plan — las carpetas se reutilizan y sólo subirás lo que falte.
+- La cola de procesado **no tiene tope** (`MAX_PENDING_JOBS_PER_OWNER=-1`, y
+  `-1` significa «sin límite» en los cuatro cupos por propietario): un árbol
+  grande se encola entero y el worker lo va procesando. Lo que sí puede agotarse
+  es el disco (`STORAGE_MIN_FREE_BYTES`) o la cuota de almacenamiento del
+  profesor (`MAX_STORED_BYTES_PER_OWNER`). Si alguna reserva responde `429` o
+  `507`, trátalo como espera, no como error: para, resuelve lo que dice el
+  aviso y vuelve a pedir el plan — las carpetas se reutilizan y sólo subirás lo
+  que falte.
 - **Si un `complete` falla, cancela la sesión** (`DELETE /api/v1/uploads/{id}`).
   Un `complete` fallido no libera la reserva, y unas pocas sesiones abandonadas
   agotan `MAX_ACTIVE_UPLOADS_PER_OWNER` hasta que caducan.

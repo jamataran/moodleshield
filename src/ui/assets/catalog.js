@@ -1426,6 +1426,8 @@ function renderImportPreview (plan) {
 function openImport () {
   const folderId = destinationFolderId()
   el('import-picker').value = ''
+  el('import-setup').hidden = false
+  el('import-btn').hidden = false
   el('import-btn').disabled = false
   el('import-preview').hidden = true
   el('import-skipped-box').hidden = true
@@ -1463,19 +1465,30 @@ el('import-btn').addEventListener('click', async () => {
 
   const controller = new AbortController()
   importAbort = controller
+  // Pulsado el botón, lo único que importa es cuánto queda: el explicativo, el
+  // selector, la previsión y la lista de omitidos ya no se pueden usar y sólo
+  // empujan el progreso fuera de la vista. Vuelven en el `finally` si hay que
+  // reintentar.
+  el('import-setup').hidden = true
+  el('import-btn').hidden = true
   el('import-btn').disabled = true
+  el('import-progress').hidden = false
+  el('import-bar').value = 0
+  el('import-current').textContent = 'Preparando la importación…'
   dialogStatus('import-status', 'Preparando la importación…')
   const fallidos = []
   let nuevos = 0
   let versiones = 0
   let hechos = 0
   let pendientes = []
+  let carpetasCreadas = 0
   let detenidaPorCuota = null
 
   try {
     // La creación del árbol va aquí y no en la previsión: es la confirmación
     // del profesor lo que autoriza a escribir en su biblioteca.
     const plan = await requestImportPlan(files, { signal: controller.signal })
+    carpetasCreadas = plan.summary?.foldersCreated ?? 0
     pendientes = plan.entries.filter((entry) => entry.status === 'upload')
     if (pendientes.length === 0) {
       dialogStatus('import-status', 'No hay ningún vídeo ni PDF que importar en esa carpeta.',
@@ -1483,7 +1496,6 @@ el('import-btn').addEventListener('click', async () => {
       return
     }
 
-    el('import-progress').hidden = false
     for (const item of pendientes) {
       if (controller.signal.aborted) break
       el('import-current').textContent = `(${hechos + 1}/${pendientes.length}) ${item.path}`
@@ -1525,18 +1537,30 @@ el('import-btn').addEventListener('click', async () => {
   } finally {
     const cancelada = controller.signal.aborted
     importAbort = null
+    // Se vuelve a poder elegir carpeta: el diálogo sigue abierto sólo cuando
+    // algo hay que reintentar o leer.
+    el('import-setup').hidden = false
+    el('import-btn').hidden = false
     el('import-btn').disabled = false
+    el('import-progress').hidden = true
     el('import-current').textContent = ''
 
     const restantes = pendientes.length - hechos
-    if (nuevos || versiones || fallidos.length || detenidaPorCuota) {
+    const algoPaso = nuevos || versiones || fallidos.length || detenidaPorCuota || carpetasCreadas
+    if (algoPaso) {
+      // El resumen enumera lo que de verdad pasó, y las carpetas cuentan: el
+      // plan las crea antes de subir un solo byte, así que decir «no se subió
+      // nada» con seis carpetas nuevas en la biblioteca es falso justo cuando
+      // el profesor está mirando si puede volver a intentarlo.
       const resumen = [
         nuevos ? `${nuevos} material(es) nuevo(s)` : '',
         versiones ? `${versiones} versión(es) nueva(s)` : '',
+        carpetasCreadas ? `${carpetasCreadas} carpeta(s) nueva(s)` : '',
         fallidos.length ? `${fallidos.length} con error` : ''
       ].filter(Boolean).join(' · ')
+      const subidos = nuevos + versiones
 
-      if (!fallidos.length && !detenidaPorCuota && !cancelada) {
+      if (!fallidos.length && !detenidaPorCuota && !cancelada && subidos) {
         el('import-dialog').close()
         notify(`Importación terminada: ${resumen}. El procesado sigue en cola.`)
       } else {
@@ -1544,10 +1568,11 @@ el('import-btn').addEventListener('click', async () => {
           ? 'Importación detenida'
           : cancelada ? 'Importación cancelada' : 'Importación terminada'
         dialogStatus('import-status',
-          `${cabecera}: ${resumen || 'no se subió nada'}.` +
+          `${cabecera}: ${resumen || 'no se subió ningún fichero'}` +
+          (resumen && !subidos ? ', pero ningún fichero llegó a subirse.' : '.') +
           (detenidaPorCuota
-            ? ` ${detenidaPorCuota} Quedan ${restantes} fichero(s): espera a que el ` +
-              'procesado avance y vuelve a importar la misma carpeta.'
+            ? ` ${detenidaPorCuota} Quedan ${restantes} fichero(s) sin subir: resuelto ` +
+              'el aviso, vuelve a importar la misma carpeta y sólo entrará lo que falta.'
             : '') +
           (fallidos.length ? ` Fallaron: ${fallidos.slice(0, 5).join('; ')}` : ''),
           { error: Boolean(fallidos.length || detenidaPorCuota), focus: true })

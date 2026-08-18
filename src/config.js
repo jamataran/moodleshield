@@ -220,8 +220,19 @@ export const config = {
   uploads: {
     /** Margen que debe quedar libre incluso después de la subida reservada. */
     minFreeBytes: integer('STORAGE_MIN_FREE_BYTES', 5 * 1024 * 1024 * 1024),
+    /**
+     * Cupos por profesor. **`-1` es «sin límite»** en los cuatro.
+     *
+     * La cola de procesado viene sin límite (`-1`) a propósito: encolar no
+     * consume disco ni CPU —el worker sigue procesando de uno en uno— y el tope
+     * anterior convertía importar una carpeta grande en varias pasadas
+     * manuales, esperando a que la cola bajara. Quien de verdad protege el
+     * disco es `STORAGE_MIN_FREE_BYTES` junto con la cuota de almacenamiento,
+     * que siguen puestas. Volver a poner un número aquí es un cambio de
+     * variable de entorno, sin desplegar nada.
+     */
     maxActivePerOwner: integer('MAX_ACTIVE_UPLOADS_PER_OWNER', 5),
-    maxPendingJobsPerOwner: integer('MAX_PENDING_JOBS_PER_OWNER', 10),
+    maxPendingJobsPerOwner: integer('MAX_PENDING_JOBS_PER_OWNER', -1),
     maxReservedBytesPerOwner: integer('MAX_RESERVED_UPLOAD_BYTES_PER_OWNER', 8 * 1024 * 1024 * 1024),
     maxStoredBytesPerOwner: integer('MAX_STORED_BYTES_PER_OWNER', 100 * 1024 * 1024 * 1024)
   },
@@ -555,10 +566,15 @@ export function assertConfigValid () {
   if (config.playback.retentionSeconds < 0 || config.playback.purgeIntervalMs < 60_000) {
     errors.push('La retención de grants no puede ser negativa y su purga debe espaciarse al menos un minuto')
   }
-  if (config.uploads.minFreeBytes < 0 || config.uploads.maxActivePerOwner < 1 ||
-      config.uploads.maxPendingJobsPerOwner < 1 || config.uploads.maxReservedBytesPerOwner < 1 ||
-      config.uploads.maxStoredBytesPerOwner < 1) {
-    errors.push('Las cuotas de subida deben ser positivas (STORAGE_MIN_FREE_BYTES puede ser 0)')
+  // `-1` es «sin límite»; 0 no, porque un cupo de cero no deja subir nada y casi
+  // siempre sería una variable mal puesta, no una decisión.
+  const cuotaValida = (valor) => valor === -1 || valor >= 1
+  if (config.uploads.minFreeBytes < 0 || !cuotaValida(config.uploads.maxActivePerOwner) ||
+      !cuotaValida(config.uploads.maxPendingJobsPerOwner) ||
+      !cuotaValida(config.uploads.maxReservedBytesPerOwner) ||
+      !cuotaValida(config.uploads.maxStoredBytesPerOwner)) {
+    errors.push('Las cuotas de subida deben ser positivas o -1 para «sin límite» ' +
+      '(STORAGE_MIN_FREE_BYTES puede ser 0, pero no -1)')
   }
   if (Object.values(config.rateLimits).some((value) => value < 1)) {
     errors.push('Todos los RATE_LIMIT_* deben ser enteros positivos')
