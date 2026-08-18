@@ -229,13 +229,22 @@ variable separada, `DB_BIND_ADDRESS=127.0.0.1`, para no publicarlo por accidente
 
 *Stacks → Add stack → Repository*:
 
-| Campo | Valor |
-|---|---|
-| Repository URL | `https://github.com/jamataran/moodleshield` |
-| Reference | `refs/heads/main` |
-| Compose path | `infra/prod/compose.yml` o `infra/test/compose.yml` |
-| GitOps updates | Activado; polling o webhook |
-| Environment variables | *Advanced mode* → pegar el bloque guardado |
+**Cada entorno sigue SU rama.** Es la parte que no se puede improvisar: si los dos
+stacks apuntan a la misma referencia, cualquier commit los mueve a la vez y un
+cambio pensado para pruebas entra en producción sin que nadie lo decida. Pasó el 18
+de agosto de 2026 y de ahí sale el ADR-028.
+
+| Campo | Producción | Pruebas |
+|---|---|---|
+| Repository URL | `https://github.com/jamataran/moodleshield` | igual |
+| Reference | `refs/heads/main` | `refs/heads/test` |
+| Compose path | `infra/prod/compose.yml` | `infra/test/compose.yml` |
+| GitOps updates | Activado; polling o webhook | igual |
+| Environment variables | *Advanced mode* → pegar el bloque guardado | igual |
+
+`main` sólo lo mueve `cd-promote.yml` al crear un tag `vX.Y.Z`; el trabajo del día
+a día se mergea a `test`. Comprueba las dos referencias antes de dar por buena la
+instalación: es el único campo que separa producción de pruebas.
 
 Si GHCR es privado, registra `ghcr.io` en Portainer con un token que tenga
 `read:packages`. Se descargan tres imágenes: `app`, `worker` y `proxy`.

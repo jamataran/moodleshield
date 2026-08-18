@@ -1,6 +1,6 @@
 name: 'CI · PR: validar código, infraestructura y build'
 
-# Sólo en pull requests. Los pushes a main los cubre cd-main.yml (que ya
+# Sólo en pull requests. Los pushes a `test` los cubre cd-test.yml (que ya
 # verifica antes de publicar): así cada commit se construye UNA vez, no dos.
 
 on:
@@ -16,6 +16,37 @@ permissions:
   contents: read
 
 jobs:
+  # El 18 de agosto de 2026 una rama de features traía cambios en
+  # infra/prod/compose.yml; al mergear, Portainer los recogió e intentó
+  # redesplegar producción con un Compose que exigía secretos que aún no
+  # existían. Producción no se toca trabajando: se toca al promocionar, y de
+  # eso se encarga cd-promote.yml (ADR-028). Aquí se cierra la puerta.
+  frontera-entornos:
+    name: Frontera entre entornos
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.base_ref == 'test'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: infra/prod sólo cambia al promocionar
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE"
+          tocados=$(git diff --name-only "origin/${BASE}...HEAD" -- infra/prod/)
+          if [ -n "$tocados" ]; then
+            echo "::error::Esta PR cambia infra/prod/, y hacia \`test\` eso no se permite:"
+            echo "$tocados"
+            echo "Producción sólo se mueve promocionando (tag vX.Y.Z sobre \`test\`)."
+            echo "Si el cambio es del Compose de producción, va en la PR de promoción."
+            exit 1
+          fi
+          echo "Sin cambios en infra/prod/."
+
   verify:
     name: Lint, tests e infraestructura
     runs-on: ubuntu-latest

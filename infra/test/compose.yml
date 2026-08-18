@@ -223,7 +223,7 @@ services:
         condition: service_healthy
       app:
         condition: service_healthy
-    # cd-main.yml activa el entorno mínimo a la vez que publica la imagen nueva.
+    # cd-test.yml activa el entorno mínimo a la vez que publica la imagen nueva.
     environment: *worker-env # WORKER_ENV_ACTIVATION
     volumes:
       - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
