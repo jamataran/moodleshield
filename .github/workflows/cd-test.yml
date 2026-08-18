@@ -1,22 +1,24 @@
-name: 'CD · main: publicar imágenes y desplegar en test'
+name: 'CD · test: publicar imágenes y desplegar en test'
 
-# Cada push a main: verifica, construye UNA vez, publica :sha-<commit> y :edge,
-# y escribe la etiqueta directamente en infra/test/compose.yml. Portainer
-# (GitOps) sólo necesita leer el Compose para redesplegar test.
+# Cada push a `test`: verifica, construye UNA vez, publica :sha-<commit> y
+# :edge, y escribe la etiqueta en infra/test/compose.yml DE LA PROPIA RAMA
+# `test`. Portainer de test sigue esa rama (GitOps) y sólo necesita leer el
+# Compose para redesplegar.
 #
-# La promoción a prod NO pasa por aquí: cd-promote.yml re-etiqueta este mismo
-# digest cuando se crea un tag vX.Y.Z. Misma imagen hacia arriba.
+# `main` es producción y no se toca desde aquí: la promoción es crear un tag
+# vX.Y.Z sobre `test`, y cd-promote.yml re-etiqueta ESTE MISMO digest y mueve
+# main. Nunca se reconstruye para subir de entorno (ADR-028).
 
 on:
   push:
-    branches: [main]
+    branches: [test]
     paths-ignore: ['docs/**', '**/*.md', 'LICENSE', 'infra/local/**', '.idea/**']
   workflow_dispatch:
 
 # Los despliegues se encolan, no se cancelan: un deploy a medias es peor que
 # uno tardío.
 concurrency:
-  group: cd-main
+  group: cd-test
   cancel-in-progress: false
 
 permissions:
@@ -211,10 +213,10 @@ jobs:
           # aterrizó otro push, hacer el sed sobre esa base antigua y rebasar
           # después provoca conflicto en las MISMAS líneas (image:) y el deploy
           # falla sin posibilidad de recuperarlo con un re-run. Por eso se parte
-          # siempre de la punta real de main, y se reintenta si nos adelantan.
+          # siempre de la punta real de `test`, y se reintenta si nos adelantan.
           for intento in 1 2 3; do
-            git fetch origin main
-            git checkout -B main origin/main
+            git fetch origin test
+            git checkout -B test origin/test
 
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${SHA_TAG}|"       infra/test/compose.yml
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${SHA_TAG}|" infra/test/compose.yml
@@ -231,11 +233,11 @@ jobs:
             # Los pushes con GITHUB_TOKEN no disparan workflows; el [skip ci] es
             # el cinturón además de los tirantes.
             git commit -m "deploy(test): ${SHA_TAG} [skip ci]"
-            if git push origin main; then
+            if git push origin test; then
               echo "Desplegado ${SHA_TAG} en test"; exit 0
             fi
-            echo "main se movió durante el push; reintento $intento"
-            git reset --hard origin/main
+            echo "test se movió durante el push; reintento $intento"
+            git reset --hard origin/test
           done
           echo "::error::No se pudo empujar el bump tras 3 intentos"; exit 1
 

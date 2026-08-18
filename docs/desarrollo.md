@@ -409,27 +409,37 @@ las herramientas reales, migraciones idempotentes contra Postgres, validación d
 Compose, comprobación de que no hay secretos en los `.env` versionados y una construcción
 Docker sin publicar.
 
+**El entorno es la rama** (ADR-028). `test` es el entorno de pruebas y `main` es
+producción; cada Portainer sigue la suya. Todo el trabajo —features y dependabot—
+se mergea a `test`, y **a `main` no se mergea a mano nunca**: sólo lo mueve la
+promoción.
+
 Qué pasa después del merge (esto sólo aplica al repositorio canónico):
 
 ```text
-feature/* ── PR ──▶ CI ──▶ merge a main
+feature/* ── PR ──▶ CI ──▶ merge a test
                               │
-                              ├─ cd-main.yml: verifica y construye una vez
+                              ├─ cd-test.yml: verifica y construye una vez
                               ├─ publica app/worker/proxy:sha-<commit> en GHCR
-                              ├─ actualiza infra/test/compose.yml
-                              └─ Portainer detecta el commit y despliega TEST
+                              ├─ actualiza infra/test/compose.yml EN `test`
+                              └─ Portainer (refs/heads/test) despliega TEST
 
-main ── tag vX.Y.Z ──▶ cd-promote.yml
+test ── tag vX.Y.Z ──▶ cd-promote.yml
                        ├─ comprueba que existe :sha-<commit> en GHCR
                        ├─ re-etiqueta el MISMO digest como :vX.Y.Z y :latest
-                       ├─ actualiza infra/prod/compose.yml
-                       └─ Portainer despliega PROD
+                       ├─ avanza `main` HASTA el commit etiquetado
+                       ├─ actualiza infra/prod/compose.yml EN `main`
+                       └─ Portainer (refs/heads/main) despliega PROD
 ```
 
-Es *build once, promote up*: crear el tag **no reconstruye nada**, sólo re-etiqueta. El
-rollback es un `git revert` del commit de despliegue. Los commits `deploy(test): …` y
-`deploy(prod): …` son automáticos: no los edites ni los borres a mano, son lo que activa
-GitOps.
+Es *build once, promote up*: crear el tag **no reconstruye nada**, sólo re-etiqueta, y
+producción acaba corriendo el mismo digest que se ensayó en test. El rollback es un
+`git revert` del commit de despliegue. Los commits `deploy(test): …` y `deploy(prod): …`
+son automáticos: no los edites ni los borres a mano, son lo que activa GitOps.
+
+Sólo se etiqueta un commit que ya esté desplegado en test: si no existe su
+`:sha-<commit>` en GHCR, `cd-promote` falla en cerrado. Y una PR hacia `test` que
+toque `infra/prod/` la rechaza el job `frontera-entornos` de `ci.yml`.
 
 Los cambios que sólo tocan documentación, `LICENSE`, `.idea/` o `infra/local/` no publican
 imágenes ni despliegan.

@@ -40,7 +40,7 @@ este documento estén firmados, es:
 | F-02 | Cerrado | Sesión sólo en `Authorization`; ticket Safari corto; tokens de clave acotados al padre; todos dependen de un grant revocable |
 | F-03 | Cerrado | Node y nginx eliminan queries sensibles de los logs |
 | F-04 | Cerrado | Producción exige `MEDIA_DELIVERY=signed`; nginx valida HMAC y grant antes de cada segmento |
-| F-05 | Cerrado en candidata | Cada Deep Linking crea un `resource_placement` server-side ligado a plataforma, deployment y curso; el primer launch del profesor lo liga a una única actividad. Copiar todos los `custom` falla |
+| F-05 | Cerrado en candidata | Cada Deep Linking crea un `resource_placement` server-side ligado a plataforma, deployment y curso; el primer launch lo liga a una única actividad, y copiar todos los `custom` falla. **Quién sea ese primer launch dejó de importar (ADR-027)**: exigir al profesor emisor dejaba muertas las actividades de un equipo docente |
 | F-06 | Riesgo de producto aceptado | AES-HLS no es DRM; el cliente autorizado recibe la clave |
 | F-07 | Riesgo de producto aceptado | Lector fail-closed corregido; recorte, colusión y audio siguen pudiendo impedir atribución |
 | F-08 | Riesgo de producto aceptado | El PDF autorizado llega completo al navegador; el sello visible es removible y no es forense |

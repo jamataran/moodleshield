@@ -961,3 +961,109 @@ suyo, más holgado y todavía acotado. Cada importación deja un evento
 **Cambiar `ADMIN_LIBRARY_OWNER_SUB` con contenido ya importado lo esconde**: las
 carpetas y el material siguen en la base de datos, pero cuelgan de un
 propietario que ya no se consulta. Se decide antes de importar nada.
+
+## ADR-027 · Ligar un placement a su actividad es anotar un hecho, no autorizar: lo hace el primer launch, sea quien sea
+
+**Estado**: aceptada · **Fecha**: 2026-08 · **Sustituye a** la condición de bind
+descrita en `auditoria-seguridad-contenido-y-plan.md` (F-05)
+
+**Contexto.** Un `resource_placement` nace en el Deep Linking, cuando la
+actividad de Moodle **todavía no existe**: no hay `resource_link_id` que
+guardar. Se aprende en el primer launch. La auditoría F-05 pidió además que ese
+primer launch fuera del **mismo profesor que insertó** y con rol Instructor,
+para que «no se confíe en el primero gana»; hasta entonces los alumnos recibían
+un 409 `placement_pending_instructor`.
+
+En Moodle real eso rompe el caso normal de un equipo docente: un profesor crea
+la actividad, otro le pone el material, y el primero en abrirla es un alumno. La
+actividad **parecía configurada** —contenido elegido, guardado, visible en el
+curso— y estaba muerta. El mensaje pedía avisar a «el profesor que insertó el
+material» sin decir quién era, porque el sistema tampoco lo enseña.
+
+**Decisión.** Cualquier launch liga un placement sin ligar. El resto de
+condiciones no se toca: plataforma, `deployment_id`, `context_id`, tipo, recurso
+y `owner_sub` tienen que cuadrar con la fila, y un placement **ya ligado** a otra
+actividad sigue dando `placement_link_mismatch`.
+
+**Razones.** Ligar no es una decisión de autorización: es registrar un
+emparejamiento que **Moodle ya hizo** al guardar la selección de contenido. El
+`id_token` lo firma la plataforma y trae las dos mitades —el placement en
+`custom` y la actividad en `resource_link.id`—, así que quien abre la actividad
+no elige nada; sólo es la primera persona que pasa por delante. Exigir que sea
+una concreta convierte a esa persona en un paso manual invisible.
+
+**Consecuencias.** Se pierde una propiedad estrecha: un profesor **con edición
+en ese mismo curso** puede, copiando los `custom` de una actividad ajena antes
+de que nadie la abra, quedarse el placement de un compañero y dejarle la
+actividad rota. No gana audiencia —mismo curso, mismo material que sus alumnos
+ya tenían delante— y para llegar ahí ya necesita permisos de edición sobre el
+curso: el daño es molestia, no fuga. A cambio, las actividades dejan de nacer
+muertas.
+
+`created_by_sub` se conserva y sigue escribiéndose: ya no es una condición, pero
+es la traza de quién insertó. El log de bind anota además **quién ligó**, que es
+lo único que permite reconstruir después por qué una actividad quedó atada a la
+que quedó.
+
+**Cómo revertirlo.** Reponer en `authorizeResourcePlacement` la guarda
+`!context.isInstructor || context.sub !== placement.created_by_sub`. Antes de
+hacerlo, resolver el problema de producto que la hacía inviable: que el profesor
+sepa que su actividad está pendiente de activación y quién puede activarla.
+
+## ADR-028 · El entorno es la rama: `test` y `main` son dos entornos, no dos etapas de revisión
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** Los dos stacks de Portainer seguían la **misma** referencia,
+`refs/heads/main`, y se distinguían sólo por el `Compose path`:
+`infra/prod/compose.yml` uno, `infra/test/compose.yml` el otro. Con ese montaje
+no existe frontera entre probar y publicar. Cualquier commit en `main` llega a
+los dos entornos a la vez, y basta con que una rama de trabajo toque el Compose
+de producción para que producción se redespliegue al mergear, sin que nadie lo
+haya decidido.
+
+Ocurrió el 18 de agosto de 2026. Una rama de features traía, junto a su trabajo,
+el `infra/prod/compose.yml` endurecido de la revisión de seguridad. Al mergear,
+Portainer lo recogió e intentó redesplegar producción con un Compose que exigía
+dos secretos que aún no existían en su `.env`, `DB_APP_PASSWORD` y
+`DB_WORKER_PASSWORD`. Falló al interpolar, antes de tocar ningún contenedor, así
+que el servicio siguió en pie; pero el margen entre eso y una caída real lo
+puso el azar, no el diseño. La «Transición obligatoria desde `v1.0.5`» de
+[`revision-seguridad-2026-08-10.md`](revision-seguridad-2026-08-10.md) son nueve
+pasos con copia de seguridad y reinserción por Deep Linking: exactamente el tipo
+de cosa que no puede dispararla un merge.
+
+**Decisión.** Una rama por entorno, y cada Portainer sigue la suya.
+
+- `test` es el entorno de pruebas. **Todo** se mergea aquí: features y también
+  dependabot, que apunta a esta rama. `cd-test.yml` verifica, construye una vez,
+  publica `sha-<commit>`, lo firma, lo escanea y escribe la etiqueta en
+  `infra/test/compose.yml` **de la propia rama `test`**.
+- `main` es producción. **No se mergea a mano.** Sólo la mueve `cd-promote.yml`
+  al crear un tag `vX.Y.Z` sobre un commit de `test`: re-etiqueta ese mismo
+  digest, avanza `main` hasta el commit etiquetado y escribe
+  `infra/prod/compose.yml`.
+
+Sigue siendo *build once, promote up*, que ya era la intención: promocionar no
+reconstruye nada. Lo que cambia es que ahora producción corre **el mismo árbol y
+el mismo digest** que se ensayaron en test, y no una mezcla del Compose de una
+rama con el código de otra.
+
+Se mantiene la organización por entorno, `infra/{test,prod}/`. Unificar los dos
+Compose en uno solo parametrizado por `.env` eliminaría la divergencia por
+construcción, pero pierde la separación visible entre lo que toca a producción y
+lo que no; con la frontera puesta en la rama, la divergencia deja de ser el
+riesgo que era.
+
+Dos cierres más, porque una convención que sólo vive en la cabeza de alguien no
+es un control:
+
+- El job `frontera-entornos` de `ci.yml` rechaza toda PR hacia `test` que toque
+  `infra/prod/`. Producción no se edita trabajando.
+- `cd-promote.yml` falla en cerrado si no existe el `:sha-<commit>` del commit
+  etiquetado: no se promociona nada que no haya pasado por test.
+
+**Cómo revertirlo.** Devolver los dos stacks de Portainer a `refs/heads/main`,
+volver a disparar `cd-test.yml` con `branches: [main]` y quitar el job
+`frontera-entornos`. La rama `test` puede quedarse donde está; no la lee nadie
+más. Conviene no hacerlo: es volver a la situación que causó el incidente.

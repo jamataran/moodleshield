@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 test('las acciones de GitHub están ancladas a commits completos', async () => {
-  const files = ['ci.yml', 'cd-main.yml', 'release.yml', 'cd-promote.yml', 'codeql.yml']
+  const files = ['ci.yml', 'cd-test.yml', 'release.yml', 'cd-promote.yml', 'codeql.yml']
   for (const file of files) {
     const text = await readFile(path.join(root, '.github/workflows', file), 'utf8')
     for (const line of text.match(/^\s*(?:-\s+)?uses:\s*[^\s]+/gm) ?? []) {
@@ -34,7 +34,7 @@ test('las imágenes base desplegables están ancladas por digest', async () => {
 })
 
 test('CD publica SBOM, provenance y firma; release verifica la firma', async () => {
-  const cd = await readFile(path.join(root, '.github/workflows/cd-main.yml'), 'utf8')
+  const cd = await readFile(path.join(root, '.github/workflows/cd-test.yml'), 'utf8')
   const release = await readFile(path.join(root, '.github/workflows/release.yml'), 'utf8')
   assert.match(cd, /\*\.attest=type=sbom/)
   assert.match(cd, /\*\.attest=type=provenance,mode=max/)
@@ -53,7 +53,7 @@ test('el CI de PR también bloquea CVE altas/críticas en las tres imágenes', a
 })
 
 test('npm ci nunca se ejecuta con un token de escritura disponible', async () => {
-  const cd = await readFile(path.join(root, '.github/workflows/cd-main.yml'), 'utf8')
+  const cd = await readFile(path.join(root, '.github/workflows/cd-test.yml'), 'utf8')
   const verify = cd.match(/^ {2}verify:\n([\s\S]*?)^ {2}release:\n/m)?.[1] ?? ''
   const release = cd.match(/^ {2}release:\n([\s\S]*)/m)?.[1] ?? ''
 
