@@ -256,7 +256,6 @@ export async function assembleChunkedUpload (uploadId, owner) {
   await lock.close()
 
   const temp = uploadTempPath()
-  let destination = null
   try {
     await mkdir(path.dirname(temp), { recursive: true })
     for (let index = 0; index < manifest.chunkCount; index++) {
@@ -305,7 +304,7 @@ export async function assembleChunkedUpload (uploadId, owner) {
         'assembled_size_mismatch')
     }
 
-    destination = uploadPath(manifest.assemblyId, manifest.originalFilename, settings.fallbackExt)
+    const destination = uploadPath(manifest.assemblyId, manifest.originalFilename, settings.fallbackExt)
     await rename(temp, destination)
     return {
       ...manifest,
