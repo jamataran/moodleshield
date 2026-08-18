@@ -2,6 +2,7 @@
 // servicio compartido por la API bearer y la consola web.
 export { getJwks, invalidateJwksCache } from './jwks-cache.js'
 export {
+  diagnosePlatformMiss,
   findPlatform,
   getPlatformById,
   listPlatforms,

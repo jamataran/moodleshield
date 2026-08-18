@@ -47,10 +47,10 @@ server {
 
 Casos de red:
 
+- nginx/Nginx Proxy Manager en un contenedor —el caso normal—:
+  `HTTP_BIND_ADDRESS=0.0.0.0`, con el puerto filtrado; o, si prefieres acotar, la
+  IP LAN concreta del host, usando `IP-PRIVADA-DEL-HOST:43128` como upstream;
 - nginx nativo en el host: `HTTP_BIND_ADDRESS=127.0.0.1`;
-- nginx/Nginx Proxy Manager en un contenedor: liga `HTTP_BIND_ADDRESS` a la IP
-  LAN concreta del host y usa `IP-PRIVADA-DEL-HOST:43128` como upstream; usa
-  `0.0.0.0` sólo con firewall;
 - no cambies `DB_BIND_ADDRESS=127.0.0.1`: publicar el HTTP no debe exponer
   PostgreSQL.
 

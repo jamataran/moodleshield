@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import config from '../config.js'
+import logger from '../logger.js'
 import { query } from '../db/index.js'
 import { renderPage } from '../ui/render.js'
 import { isAllowedOrigin } from '../security/public-origin.js'
@@ -131,8 +132,25 @@ adminRouter.post('/login', async (req, res, next) => {
   const origin = req.get('origin')
   // Antes se comparaba sólo contra PUBLIC_URL: entrar por el otro nombre de la
   // misma instancia —el túnel en desarrollo— devolvía 403 al iniciar sesión.
-  if (origin && !isAllowedOrigin(origin)) return res.sendStatus(403)
-  if (!verifyLoginCsrf(req, req.body?._csrf)) return res.sendStatus(403)
+  //
+  // Los dos rechazos se registran porque desde fuera son indistinguibles: un
+  // «Forbidden» de nueve bytes que el operador confunde sin remedio con una
+  // contraseña mal puesta —la contraseña mal puesta responde 401 con el
+  // formulario, no esto—. Al log va el origen rechazado y la lista que se
+  // esperaba, que es exactamente lo que hay que corregir en PUBLIC_URL_ALIASES.
+  if (origin && !isAllowedOrigin(origin)) {
+    logger.warn(
+      { origin, publicOrigins: config.publicOrigins, host: req.get('x-forwarded-host') || req.get('host') },
+      'Login de admin rechazado: el Origin no está en PUBLIC_URL ni en PUBLIC_URL_ALIASES'
+    )
+    return res.sendStatus(403)
+  }
+  if (!verifyLoginCsrf(req, req.body?._csrf)) {
+    logger.warn({ origin },
+      'Login de admin rechazado: el testigo CSRF no cuadra (cookie caducada, perdida o ' +
+      'ADMIN_SESSION_SECRET cambiado entre pintar el formulario y enviarlo)')
+    return res.sendStatus(403)
+  }
   try {
     const result = await loginAdmin({
       username: req.body?.username,

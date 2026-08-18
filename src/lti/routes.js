@@ -5,7 +5,7 @@ import config from '../config.js'
 import logger from '../logger.js'
 import { one } from '../db/index.js'
 import { getPublicJwks } from './keys.js'
-import { findPlatform, listPlatforms } from './platform.js'
+import { diagnosePlatformMiss, findPlatform, listPlatforms } from './platform.js'
 import { assertLaunchTargetAllowed, saveOidcState, validateLaunch, LtiError } from './validate.js'
 import { MESSAGE_TYPE } from './claims.js'
 import { issueSession, issueToken, verifySession, verifyToken } from '../session.js'
@@ -110,6 +110,17 @@ async function handleLogin (req, res, next) {
 
     const platform = await findPlatform({ issuer: params.iss, clientId: params.clientId })
     if (!platform) {
+      // El 404 hacia fuera no distingue el motivo, y así debe seguir. Pero al
+      // log va cuál de las tres causas es: issuer sin registrar, client_id
+      // distinto o plataforma deshabilitada. Sin esto, el operador sólo ve un
+      // 404 en el POST de Moodle y no tiene por dónde empezar.
+      const diagnostico = await diagnosePlatformMiss({
+        issuer: params.iss, clientId: params.clientId
+      }).catch(() => ({ reason: 'no_diagnosticado' }))
+      logger.warn(
+        { issuer: params.iss, clientId: params.clientId ?? null, ...diagnostico },
+        'Login LTI rechazado: ninguna plataforma registrada encaja'
+      )
       throw new LtiError(
         `Plataforma no registrada: ${params.iss}${params.clientId ? ` / ${params.clientId}` : ''}`,
         { status: 404, code: 'unknown_platform' }
@@ -806,7 +817,7 @@ ltiRouter.get('/config', (_req, res) => {
 
 export function ltiErrorHandler (err, req, res, next) {
   if (!(err instanceof LtiError)) return next(err)
-  logger.warn({ code: err.code, msg: err.message, path: req.path }, 'Error LTI')
+  logger.warn({ code: err.code, msg: err.message, path: req.path, detail: err.detail ?? undefined }, 'Error LTI')
   const wantsJson = req.accepts(['html', 'json']) === 'json'
   if (wantsJson) return res.status(err.status).json({ error: err.message, code: err.code })
   res
