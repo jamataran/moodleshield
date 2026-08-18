@@ -7,10 +7,15 @@
 #   ./scripts/generate-env.sh prod --public-url https://video.midominio.com \
 #                                  --admin-user profesor --bind-address 192.168.1.20
 #
-# Sólo el bloque `CLAVE=valor` sale por stdout; los avisos y las preguntas van
-# por stderr. Así, redirigir la salida da un fichero limpio y el copiar-pegar no
-# arrastra comentarios: Portainer los interpretaría como variables con nombres
-# absurdos.
+# Sólo el bloque `CLAVE=valor` sale por stdout; los avisos, las preguntas y los
+# delimitadores de «copia desde aquí» van por stderr. Así, redirigir la salida a
+# un fichero lo deja limpio, y quien copia y pega en Portainer ve exactamente
+# dónde empieza y dónde acaba lo que tiene que llevarse.
+#
+# En el bloque no va NI UNA línea de comentario: Portainer no interpreta un
+# fichero .env, mantiene una lista de pares, y un `# nota` acaba convertido en
+# una variable con nombre absurdo. Lo que haya que explicar se explica por
+# stderr, fuera de los delimitadores.
 #
 # ⚠️ WATERMARK_SECRET es permanente. Este script genera secretos NUEVOS cada
 # vez: ejecutarlo otra vez contra un stack que ya rodó y pegar el resultado
@@ -24,7 +29,11 @@ ENVIRONMENT=prod
 PUBLIC_URL=""
 ADMIN_USER=""
 DATA_ROOT=""
-HTTP_BIND_ADDRESS="127.0.0.1"
+# 0.0.0.0 porque el caso normal es un nginx/Nginx Proxy Manager EN CONTENEDOR:
+# desde ahí, 127.0.0.1 es el loopback del propio contenedor y el upstream nunca
+# llega. Con nginx nativo en el host, o para ligarlo a una IP concreta de la LAN,
+# está --bind-address.
+HTTP_BIND_ADDRESS="0.0.0.0"
 PEDIR_HASH=1
 
 uso () {
@@ -34,7 +43,8 @@ Uso: ./scripts/generate-env.sh [prod|test] [opciones]
   --public-url URL   URL pública del stack (la que verá Moodle)
   --admin-user NOMBRE  usuario de la consola de administración
   --data-root RUTA   raíz absoluta de todos los datos persistentes
-  --bind-address IP  IP donde publicar HTTP (por defecto 127.0.0.1)
+  --bind-address IP  IP donde publicar HTTP (por defecto 0.0.0.0; 127.0.0.1 con
+                     nginx nativo en el host)
   --sin-admin        no pedir contraseña: deja ADMIN_PASSWORD_HASH vacío
   -h, --help         esta ayuda
 EOF
@@ -132,9 +142,10 @@ fi
 
 gen () { openssl rand -hex 32; }
 
-cat <<EOF
+BLOQUE=$(cat <<EOF
 DATA_ROOT=$DATA_ROOT
 PUBLIC_URL=$PUBLIC_URL
+PUBLIC_URL_ALIASES=
 HTTP_BIND_ADDRESS=$HTTP_BIND_ADDRESS
 HTTP_PORT=$HTTP_PORT
 DB_NAME=moodleshield
@@ -148,8 +159,6 @@ SESSION_SECRET=$(gen)
 WATERMARK_SECRET=$(gen)
 MEDIA_KEY_SECRET=$(gen)
 MEDIA_LINK_SECRET=$(gen)
-# Deshabilitada por defecto; actívala sólo durante una migración y limita las
-# plataformas con CONTENT_API_ALLOWED_PLATFORM_IDS.
 CONTENT_API_TOKEN=
 CONTENT_API_ALLOWED_PLATFORM_IDS=
 ADMIN_USERNAME=$ADMIN_USER
@@ -166,12 +175,61 @@ MAX_UPLOAD_BYTES=$MAX_UPLOAD_BYTES
 UPLOAD_CHUNK_BYTES=16777216
 UPLOAD_SESSION_TTL_SECONDS=86400
 EOF
-[ "$ENVIRONMENT" = test ] && printf '%s\n' "DB_BIND_ADDRESS=127.0.0.1" "DB_PORT_HOST=55432"
+)
+
+# La base de test se publica en el host para poder diagnosticar; la de
+# producción no se publica en absoluto.
+if [ "$ENVIRONMENT" = test ]; then
+  BLOQUE="$BLOQUE
+DB_BIND_ADDRESS=127.0.0.1
+DB_PORT_HOST=55432"
+fi
+
+# Los delimitadores son para el ojo humano y van por stderr: con la salida
+# redirigida a un fichero el fichero queda con el bloque y nada más.
+if [ -t 1 ]; then
+  cat >&2 <<'EOF'
+
+╭──────────────────── COPIA DESDE LA LÍNEA SIGUIENTE ────────────────────╮
+EOF
+fi
+printf '%s\n' "$BLOQUE"
+if [ -t 1 ]; then
+  cat >&2 <<'EOF'
+╰──────────────────── HASTA LA LÍNEA ANTERIOR ───────────────────────────╯
+EOF
+fi
 
 cat >&2 <<EOF
 
-────────────────────────────────────────────────────────────────────────────
-Pega ese bloque en Portainer → Stack → Environment variables → Advanced mode.
+Pega ese bloque —y sólo ese bloque— en
+Portainer → Stack → Environment variables → Advanced mode.
+
+Algunos valores salen vacíos a propósito, porque este script no puede
+adivinarlos:
+
+  PUBLIC_URL_ALIASES   otros nombres por los que se alcanza ESTA instancia,
+                       separados por comas (https:// en producción). Si la
+                       instancia ya tenía alguno, VUELVE A PONERLO: sin él la
+                       consola responde 403 al iniciar sesión, porque el Origin
+                       del formulario no está en la lista blanca.
+  CONTENT_API_TOKEN    API de migración; se deja apagada. Actívala sólo durante
+                       una migración y acota con CONTENT_API_ALLOWED_PLATFORM_IDS.
+
+Y uno que conviene revisar:
+
+  HTTP_BIND_ADDRESS=$HTTP_BIND_ADDRESS
+$(if [ "$HTTP_BIND_ADDRESS" = "0.0.0.0" ]; then cat <<'AVISO'
+                       Publica el puerto en TODAS las interfaces del host, que
+                       es lo que necesita un nginx en contenedor. Detrás tiene
+                       que haber un cortafuegos: es HTTP sin cifrar. Con nginx
+                       nativo en el host, --bind-address 127.0.0.1.
+AVISO
+else cat <<'AVISO'
+                       Sólo esa interfaz. Si tu nginx corre EN UN CONTENEDOR,
+                       no llegará: necesita 0.0.0.0 o la IP LAN del host.
+AVISO
+fi)
 
 ⚠️  Guarda WATERMARK_SECRET en el gestor de contraseñas ANTES de desplegar.
     Es permanente: si se pierde o se cambia, ninguna filtración anterior se

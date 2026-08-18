@@ -214,13 +214,18 @@ No regeneres el bloque al actualizar un stack. Conserva siempre sus variables.
 
 ### 3. Elegir cómo llega el nginx externo
 
+- **Nginx/Nginx Proxy Manager en otro contenedor** —el caso normal, y el valor
+  que genera el script: `HTTP_BIND_ADDRESS=0.0.0.0`. Desde dentro de ese
+  contenedor, `127.0.0.1` es su propio loopback y el upstream nunca llega. Si
+  prefieres acotar, liga la IP LAN concreta del host y úsala como upstream. Con
+  `0.0.0.0` el puerto queda en todas las interfaces: restringe quién llega a él
+  en `DOCKER-USER`, firewall o security group, porque es HTTP sin cifrar.
 - Nginx nativo en el mismo host: `HTTP_BIND_ADDRESS=127.0.0.1`.
-- Nginx/Nginx Proxy Manager en otro contenedor: `127.0.0.1` apunta al propio
-  contenedor, no al host. Liga `HTTP_BIND_ADDRESS` a la IP LAN concreta del host
-  y úsala como upstream. Si necesitas `0.0.0.0`, restringe el puerto en
-  `DOCKER-USER`, firewall o security group.
 - Nginx en otra máquina: liga a la IP LAN del servidor Docker y permite el
   puerto sólo desde la IP del edge.
+
+El valor por defecto **del Compose** sigue siendo `127.0.0.1`: un stack ya
+desplegado que no declare la variable no cambia de comportamiento al actualizar.
 
 El generador acepta `--bind-address IP`. En test, PostgreSQL usa una
 variable separada, `DB_BIND_ADDRESS=127.0.0.1`, para no publicarlo por accidente.

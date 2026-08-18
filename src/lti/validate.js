@@ -5,11 +5,17 @@ import { getJwks, getPlatformById, rememberDeploymentId } from './platform.js'
 import { CLAIM, MESSAGE_TYPE, toLaunchContext } from './claims.js'
 
 export class LtiError extends Error {
-  constructor (message, { status = 400, code = 'lti_error' } = {}) {
+  /**
+   * `detail` no se le enseña a nadie: viaja al log del servidor. Sirve para los
+   * rechazos donde el mensaje público no puede decir contra qué se comparó —y
+   * sin eso el operador se queda con «desconocido: 6» y ningún «frente a qué».
+   */
+  constructor (message, { status = 400, code = 'lti_error', detail = null } = {}) {
     super(message)
     this.name = 'LtiError'
     this.status = status
     this.code = code
+    this.detail = detail
   }
 }
 
@@ -95,13 +101,15 @@ export function assertDeploymentAllowed (platform, deploymentId, {
   if (production && known.length !== 1) {
     throw new LtiError('El deployment_id debe registrarse antes del primer launch', {
       status: 401,
-      code: 'deployment_not_configured'
+      code: 'deployment_not_configured',
+      detail: { recibido: deploymentId, registrados: known }
     })
   }
   if (known.length > 0 && !known.includes(deploymentId)) {
     throw new LtiError(`deployment_id desconocido: ${deploymentId}`, {
       status: 401,
-      code: 'unknown_deployment_id'
+      code: 'unknown_deployment_id',
+      detail: { recibido: deploymentId, registrados: known }
     })
   }
   return { learn: !production && known.length === 0 }
