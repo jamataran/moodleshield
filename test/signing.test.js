@@ -29,6 +29,18 @@ test('cambiar la ruta invalida la firma', () => {
   assert.equal(verifyMediaUrl(otraVariante, { md5, expires, secret: SECRET }), false)
 })
 
+test('el jti de sesión forma parte de la firma y no se puede sustituir', () => {
+  const sessionJti = '11111111-1111-4111-8111-111111111111'
+  const { uri, md5, expires } = parse(signedMediaUrl(URI, { secret: SECRET, sessionJti }))
+  assert.ok(verifyMediaUrl(uri, { md5, expires, secret: SECRET, sessionJti }))
+  assert.equal(verifyMediaUrl(uri, {
+    md5,
+    expires,
+    secret: SECRET,
+    sessionJti: '22222222-2222-4222-8222-222222222222'
+  }), false)
+})
+
 test('cambiar la caducidad invalida la firma', () => {
   const { uri, md5, expires } = parse(signedMediaUrl(URI, { secret: SECRET }))
   assert.equal(

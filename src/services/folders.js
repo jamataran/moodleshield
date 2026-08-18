@@ -204,6 +204,136 @@ export function createFolder ({ platformId, ownerSub, ownerName = null, name, pa
 }
 
 /**
+ * Resuelve una ruta de carpetas SIN crear nada.
+ *
+ * Es la mitad de sólo lectura de `ensureFolderPath`, y existe para que el
+ * diálogo de importación pueda enseñar «6 carpetas nuevas, 4 ficheros pasarán a
+ * ser versión» ANTES de que el profesor confirme. Sin esto habría que elegir
+ * entre no dar previsión o crear el árbol al elegir la carpeta —es decir,
+ * ensuciar la biblioteca de quien sólo estaba mirando.
+ *
+ * Devuelve cuántos tramos existen ya (`depth`) y el id del más profundo
+ * encontrado. Si la cadena se rompe a mitad, los tramos restantes no existen:
+ * por construcción, un hijo no puede existir sin su padre.
+ */
+export async function resolveFolderPath ({ platformId, ownerSub, parentId = null, segments = [] }) {
+  const names = (Array.isArray(segments) ? segments : []).map((raw) => normalizeName(raw))
+  let parent = parentId ?? null
+  let depth = 0
+  for (const name of names) {
+    if (!name) break
+    const row = await one(
+      `SELECT id FROM catalog_folder
+        WHERE platform_id = $1 AND owner_sub = $2
+          AND COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid)
+              = COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+          AND lower(btrim(name)) = lower(btrim($4))`,
+      [platformId, ownerSub, parent, name]
+    )
+    if (!row) break
+    parent = row.id
+    depth++
+  }
+  return { depth, folderId: parent, complete: depth === names.length }
+}
+
+/**
+ * Asegura una ruta de carpetas bajo `parentId`, creando sólo lo que falte.
+ *
+ * Es la pieza que hace idempotente la importación de un árbol de directorios:
+ * reimportar «Álgebra/Tema 1» no crea una segunda «Tema 1», la reutiliza. La
+ * comparación es la misma que decide el índice único —`lower(btrim(name))` por
+ * nivel—, de modo que «TEMA 1» y «Tema 1» son la misma carpeta aquí y en la
+ * base de datos. Si se comprobara de otra forma, el SELECT diría «no existe» y
+ * el INSERT respondería 23505.
+ *
+ * Todo ocurre bajo el mismo advisory lock por (plataforma, profesor) que el
+ * resto de mutaciones del árbol: dos importaciones simultáneas de la misma
+ * carpeta se serializan en vez de pelearse por el índice único.
+ *
+ * `publicRoot` marca compartida la carpeta MÁS ALTA de las creadas. Lo usa la
+ * importación del administrador, cuya biblioteca sólo tiene sentido si la ven
+ * los profesores de la instancia; la publicación se hereda al subárbol, así que
+ * basta con la raíz. Nunca se despublica nada: si la carpeta ya existía, su
+ * visibilidad la decidió alguien y se respeta.
+ */
+export function ensureFolderPath ({
+  platformId, ownerSub, ownerName = null, parentId = null, segments = [], publicRoot = false
+}) {
+  const names = (Array.isArray(segments) ? segments : []).map(assertName)
+  return transaction(async (client) => {
+    await lockOwnerTree(client, { platformId, ownerSub })
+    let parent = await assertFolderInTransaction(client, { folderId: parentId, platformId, ownerSub })
+    const baseDepth = await folderDepth(client, parent)
+
+    // Se cuenta una vez y se lleva la cuenta en memoria: `maxFoldersPerOwner` es
+    // un techo del profesor, no de esta llamada, y recontar por segmento sólo
+    // añadiría consultas al bucle.
+    const { rows: counted } = await client.query(
+      'SELECT count(*)::int AS total FROM catalog_folder WHERE platform_id = $1 AND owner_sub = $2',
+      [platformId, ownerSub]
+    )
+    let total = counted[0].total
+
+    const chain = []
+    let created = 0
+    for (const name of names) {
+      const { rows: existing } = await client.query(
+        `SELECT * FROM catalog_folder
+          WHERE platform_id = $1 AND owner_sub = $2
+            AND COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                = COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+            AND lower(btrim(name)) = lower(btrim($4))
+          FOR UPDATE`,
+        [platformId, ownerSub, parent, name]
+      )
+      let folder = existing[0] ?? null
+
+      // La carpeta más alta de una importación institucional se comparte
+      // también si ya existía: una carpeta privada en esa biblioteca no la ve
+      // NADIE —no hay ningún profesor que sea su autor— y eso no es una
+      // decisión que nadie haya tomado, es un agujero.
+      if (folder && publicRoot && chain.length === 0 && !folder.is_public) {
+        const { rows: shared } = await client.query(
+          'UPDATE catalog_folder SET is_public = true, updated_at = now() WHERE id = $1 RETURNING *',
+          [folder.id]
+        )
+        folder = shared[0]
+      }
+
+      if (!folder) {
+        if (baseDepth + chain.length + 1 > config.catalog.maxFolderDepth) {
+          throw new FolderError(
+            `«${name}» quedaría por debajo del máximo de ${config.catalog.maxFolderDepth} niveles. ` +
+              'Importa desde una carpeta más profunda o aplana el origen.',
+            { status: 409, code: 'folder_too_deep' }
+          )
+        }
+        if (total >= config.catalog.maxFoldersPerOwner) {
+          throw new FolderError(
+            `La importación superaría el máximo de ${config.catalog.maxFoldersPerOwner} carpetas`,
+            { status: 409, code: 'too_many_folders' }
+          )
+        }
+        const { rows: inserted } = await client.query(
+          `INSERT INTO catalog_folder (platform_id, owner_sub, owner_name, name, parent_id, is_public)
+           VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+          [platformId, ownerSub, ownerName, name, parent, publicRoot && chain.length === 0]
+        )
+        folder = inserted[0]
+        created++
+        total++
+      }
+
+      chain.push(folder)
+      parent = folder.id
+    }
+
+    return { folders: chain, created, folderId: parent }
+  })
+}
+
+/**
  * Renombrar es la única mutación del árbol abierta a una carpeta compartida:
  * corrige una errata sin mover nada de sitio ni tocar el ciclo de vida. Mover,
  * borrar y publicar siguen siendo del autor.

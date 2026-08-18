@@ -148,6 +148,28 @@ test('sólo un PDF bajo el límite se anuncia como descargable', () => {
   assert.equal(publicItem({ kind: 'video', size_bytes: belowLimit }).downloadAvailable, false)
 })
 
+test('un ítem en cola se distingue de uno fallido: la espera es legítima', () => {
+  const queued = publicItem({ kind: 'video', status: 'queued', active_revision_id: null })
+  assert.equal(queued.available, false)
+  assert.equal(queued.processing, true)
+
+  const processing = publicItem({ kind: 'pdf', status: 'processing', active_revision_id: null })
+  assert.equal(processing.processing, true)
+
+  const failed = publicItem({ kind: 'video', status: 'failed', active_revision_id: null })
+  assert.equal(failed.available, false)
+  assert.equal(failed.processing, false)
+
+  const ready = publicItem({ kind: 'video', status: 'ready', active_revision_id: randomUUID() })
+  assert.equal(ready.available, true)
+  assert.equal(ready.processing, false)
+
+  // Una revisión en proceso sobre un material ya publicado no es «preparándose»:
+  // el alumno sigue viendo la revisión activa.
+  const republishing = publicItem({ kind: 'video', status: 'processing', active_revision_id: randomUUID() })
+  assert.equal(republishing.processing, false)
+})
+
 test('una colección conserva el orden explícito que le dio el profesor', () => {
   const a = item('video')
   const b = item('pdf')

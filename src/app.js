@@ -11,7 +11,8 @@ import { collectionsRouter } from './routes/collections.js'
 import { foldersRouter } from './routes/folders.js'
 import { materialsRouter } from './routes/materials.js'
 import { uploadsRouter } from './routes/uploads.js'
-import { hlsRouter, mediaRouter } from './routes/hls.js'
+import { importsRouter } from './routes/imports.js'
+import { hlsRouter, mediaGrantRouter, mediaRouter } from './routes/hls.js'
 import { progressRouter } from './routes/progress.js'
 import { contentApiRouter } from './routes/content-api.js'
 import { healthRouter } from './routes/health.js'
@@ -20,6 +21,15 @@ import { adminRouter } from './admin/routes.js'
 import { getFrameAncestors, refreshFrameAncestors } from './security/frame-ancestors.js'
 import { clientIpMiddleware } from './security/client-ip.js'
 import { publicOriginFor } from './security/public-origin.js'
+import { errorResponse } from './security/error-response.js'
+import { purgeExpiredPlaybackGrants } from './services/playback-grants.js'
+import { purgeExpiredUploadReservations } from './services/upload-limits.js'
+import {
+  catalogApiLimiter,
+  migrationApiLimiter,
+  playbackApiLimiter,
+  publicAuthLimiter
+} from './security/rate-limits.js'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -49,13 +59,20 @@ export async function createApp () {
 
   await refreshFrameAncestors()
   setInterval(refreshFrameAncestors, 60_000).unref()
+  setInterval(() => {
+    purgeExpiredPlaybackGrants().catch((err) => logger.error({ err }, 'Falló la purga de sesiones caducadas'))
+    purgeExpiredUploadReservations().catch((err) => logger.error({ err }, 'Falló la purga de reservas caducadas'))
+  }, config.playback.purgeIntervalMs).unref()
 
   app.use((_req, res, next) => {
     // Nada de X-Frame-Options: bloquearía justo el iframe de Moodle que
     // necesitamos. El control lo hace frame-ancestors, que es más fino.
     res.set('Content-Security-Policy', [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      // Sin 'unsafe-inline' (T32): no hay ni un <script> ejecutable en línea.
+      // Los bloques `type="application/json"` del bootstrap son datos y no los
+      // gobierna script-src; el código va siempre en módulos del mismo origen.
+      "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "media-src 'self' blob:",
@@ -83,12 +100,23 @@ export async function createApp () {
   app.use(express.urlencoded({ extended: false, limit: config.http.bodyLimit }))
   app.use(express.json({ limit: config.http.bodyLimit }))
 
+  // Límites en aplicación: siguen protegiendo si el proxy de borde se omite o
+  // cambia. Los endpoints autenticados se agrupan por jti verificado; un token
+  // inválido cae al límite por IP y no puede llenar el almacén con claves al azar.
+  app.use(['/lti/login', '/lti/launch'], publicAuthLimiter)
+  app.use('/api/v1', migrationApiLimiter)
+  app.use(['/materials', '/uploads', '/imports', '/folders', '/collections', '/videos', '/documents'],
+    catalogApiLimiter)
+  app.use(['/hls', '/progress', '/internal'], playbackApiLimiter)
+
   app.use(healthRouter)
   app.use('/api/v1', contentApiRouter)
   app.use('/admin', adminRouter)
   app.use('/lti', ltiRouter)
+  app.use('/internal', mediaGrantRouter)
   app.use('/materials', materialsRouter)
   app.use('/uploads', uploadsRouter)
+  app.use('/imports', importsRouter)
   app.use('/folders', foldersRouter)
   app.use('/collections', collectionsRouter)
   app.use('/videos', videosRouter)
@@ -128,7 +156,17 @@ export async function createApp () {
   )
   // hls.js y PDF.js se sirven desde node_modules: sin CDN, el despliegue es
   // autónomo y la CSP no necesita abrirse a ningún origen externo.
-  const vendorOptions = { maxAge: '7d', index: false, immutable: true }
+  //
+  // SIN `immutable` (V-08/F-09): estas URLs no llevan `?v=` —PDF.js las importa
+  // desde el propio módulo y fija `workerSrc` a una ruta fija—, así que con
+  // `immutable` un navegador que hubiera cacheado una versión vulnerable seguiría
+  // usándola hasta una semana DESPUÉS de desplegar la corregida. Actualizar la
+  // dependencia no puede depender de que caduque una caché ajena. `no-cache` no
+  // es «no cachees», es «pregunta antes de usarlo»: con ETag son 304 vacíos.
+  const vendorOptions = {
+    index: false,
+    setHeaders: (res) => res.set('Cache-Control', 'no-cache')
+  }
   app.use(
     '/vendor/pdfjs',
     express.static(path.join(rootDir, 'node_modules/pdfjs-dist/build'), vendorOptions)
@@ -156,10 +194,10 @@ export async function createApp () {
   app.use((err, req, res, _next) => {
     const status = err.status ?? 500
     if (status >= 500) req.log?.error({ err }, 'Error no controlado')
-    res.status(status).json({
-      error: status >= 500 && config.isProduction ? 'Error interno' : err.message,
-      code: status < 500 ? err.code : undefined
+    const { status: responseStatus, body } = errorResponse(err, {
+      isProduction: config.isProduction
     })
+    res.status(responseStatus).json(body)
   })
 
   return app

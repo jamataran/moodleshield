@@ -42,6 +42,17 @@ function bool (name, fallback = false) {
 
 const nodeEnv = optional('NODE_ENV', 'development')
 const isProduction = nodeEnv === 'production'
+const serviceRole = optional('SERVICE_ROLE', 'app')
+const isApp = serviceRole === 'app'
+const isWorker = serviceRole === 'worker'
+const isMigration = serviceRole === 'migrate'
+
+if (!['development', 'test', 'production'].includes(nodeEnv)) {
+  errors.push('NODE_ENV debe ser "development", "test" o "production"')
+}
+if (!['app', 'worker', 'migrate'].includes(serviceRole)) {
+  errors.push('SERVICE_ROLE debe ser "app", "worker" o "migrate"')
+}
 
 /** `https://EJEMPLO.com:443/x` → `https://ejemplo.com`. `null` si no es una URL. */
 export function normalizeOrigin (value) {
@@ -56,9 +67,16 @@ export function normalizeOrigin (value) {
 function looksLikeScryptHash (value) {
   const match = /^scrypt:(\d+):(\d+):(\d+):([A-Za-z0-9_-]+):([A-Za-z0-9_-]+)$/.exec(value)
   if (!match) return false
-  const [, n, r, p, salt, digest] = match
+  const [, rawN, rawR, rawP, salt, digest] = match
+  const n = Number(rawN)
+  const r = Number(rawR)
+  const p = Number(rawP)
   try {
-    return Number(n) === 16384 && Number(r) === 8 && Number(p) === 1 &&
+    // Suelo y techo, no igualdad exacta (V-35): un hash generado con
+    // parámetros más fuertes debe poder desplegarse sin tocar código. El mismo
+    // rango lo aplica src/admin/auth.js al verificar.
+    return Number.isInteger(n) && n >= 16384 && (n & (n - 1)) === 0 && n <= 131_072 &&
+      r >= 8 && r <= 16 && p >= 1 && p <= 4 &&
       Buffer.from(salt, 'base64url').length >= 16 &&
       Buffer.from(digest, 'base64url').length >= 32
   } catch {
@@ -72,8 +90,21 @@ const adminSessionSecret = optional('ADMIN_SESSION_SECRET')
 const anyAdminCredential = Boolean(adminUsername || adminPasswordHash || adminSessionSecret)
 const adminEnabled = Boolean(adminUsername && adminPasswordHash && adminSessionSecret)
 const contentApiToken = optional('CONTENT_API_TOKEN')
+const dbSslMode = optional('DB_SSL_MODE', bool('DB_SSL', false) ? 'require' : 'disable')
+const ownerDbUser = optional('DB_USER', 'moodleshield')
+const appDbUser = optional('DB_APP_USER', isProduction ? 'moodleshield_app' : ownerDbUser)
+const workerDbUser = optional('DB_WORKER_USER', 'moodleshield_worker')
+const ownerDbPassword = isProduction && isMigration
+  ? required('DB_PASSWORD')
+  : optional('DB_PASSWORD', isProduction ? '' : 'moodleshield')
+const appDbPassword = isProduction && (isApp || isMigration)
+  ? required('DB_APP_PASSWORD')
+  : optional('DB_APP_PASSWORD', ownerDbPassword)
+const workerDbPassword = isProduction && (isWorker || isMigration)
+  ? required('DB_WORKER_PASSWORD')
+  : optional('DB_WORKER_PASSWORD', isProduction ? '' : 'moodleshield-worker')
 
-if (isProduction || anyAdminCredential) {
+if (isApp && (isProduction || anyAdminCredential)) {
   if (!adminUsername) errors.push('Falta la variable de entorno obligatoria ADMIN_USERNAME')
   if (!adminPasswordHash) errors.push('Falta la variable de entorno obligatoria ADMIN_PASSWORD_HASH')
   if (!adminSessionSecret || adminSessionSecret.length < 32) {
@@ -86,14 +117,20 @@ if (isProduction || anyAdminCredential) {
 
 // En desarrollo permitimos secretos por defecto para que `npm run dev` arranque
 // sin ceremonia. En producción son obligatorios y de longitud mínima.
-function secret (name) {
-  if (isProduction) return required(name, { minLength: 32 })
+function secret (name, { workerRequired = false } = {}) {
+  if (isProduction && (isApp || (isWorker && workerRequired))) {
+    return required(name, { minLength: 32 })
+  }
+  // El worker procesa ficheros hostiles. No debe necesitar ni recibir los
+  // secretos que permiten acuñar sesiones o servir medios como un alumno.
+  if ((isWorker && !workerRequired) || isMigration) return optional(name, '')
   return optional(name, `dev-insecure-${name.toLowerCase()}-0000000000000000`)
 }
 
 export const config = {
   env: nodeEnv,
   isProduction,
+  serviceRole,
 
   /** URL pública de la herramienta, tal y como la ve Moodle. Sin barra final. */
   publicUrl: optional('PUBLIC_URL', 'http://localhost:3000').replace(/\/+$/, ''),
@@ -112,7 +149,7 @@ export const config = {
     port: integer('PORT', 3000),
     host: optional('HOST', '0.0.0.0'),
     /** Confiar en X-Forwarded-* porque siempre hay un proxy delante. */
-    trustProxy: optional('TRUST_PROXY', 'loopback,linklocal,uniquelocal'),
+    trustProxy: optional('TRUST_PROXY', '1'),
     bodyLimit: optional('BODY_LIMIT', '256kb')
   },
 
@@ -133,17 +170,25 @@ export const config = {
     host: optional('DB_HOST', 'localhost'),
     port: integer('DB_PORT', 5432),
     database: optional('DB_NAME', 'moodleshield'),
-    user: optional('DB_USER', 'moodleshield'),
-    password: isProduction ? required('DB_PASSWORD') : optional('DB_PASSWORD', 'moodleshield'),
+    user: isWorker ? workerDbUser : (isMigration ? ownerDbUser : appDbUser),
+    password: isWorker ? workerDbPassword : (isMigration ? ownerDbPassword : appDbPassword),
+    ownerUser: ownerDbUser,
+    ownerPassword: ownerDbPassword,
+    appUser: appDbUser,
+    appPassword: appDbPassword,
+    workerUser: workerDbUser,
+    workerPassword: workerDbPassword,
+    provisionServiceRoles: bool('DB_PROVISION_SERVICE_ROLES', bool('DB_PROVISION_WORKER_ROLE', false)),
     poolMax: integer('DB_POOL_MAX', 6),
-    ssl: bool('DB_SSL', false)
+    sslMode: dbSslMode,
+    sslCaFile: optional('DB_SSL_CA_FILE', '')
   },
 
   secrets: {
     /** Firma de los tokens de sesión de la aplicación (no confundir con la clave LTI). */
     session: secret('SESSION_SECRET'),
     /** Deriva el patrón A/B de cada alumno. Cambiarlo invalida las trazas antiguas. */
-    watermark: secret('WATERMARK_SECRET'),
+    watermark: secret('WATERMARK_SECRET', { workerRequired: true }),
     /** Firma los tokens que dan acceso a la clave AES de cada vídeo. */
     mediaKey: secret('MEDIA_KEY_SECRET'),
     /** Compartido con nginx para firmar las URLs de los segmentos (secure_link). */
@@ -160,6 +205,32 @@ export const config = {
      * playlist tras recibirlo.
      */
     playbackTicketTtlSeconds: integer('PLAYBACK_TICKET_TTL_SECONDS', 90)
+  },
+
+  playback: {
+    /** La cuarta IP distinta en una misma sesión se considera reutilización. */
+    maxDistinctIps: integer('PLAYBACK_MAX_DISTINCT_IPS', 3),
+    /** En producción corta automáticamente una sesión sospechosa. */
+    revokeOnSuspicion: bool('PLAYBACK_REVOKE_ON_SUSPICION', isProduction),
+    /** Conserva el rastro tras caducar para investigación y después lo purga. */
+    retentionSeconds: integer('PLAYBACK_GRANT_RETENTION_SECONDS', 7 * 24 * 60 * 60),
+    purgeIntervalMs: integer('PLAYBACK_GRANT_PURGE_INTERVAL_MS', 60 * 60 * 1000)
+  },
+
+  uploads: {
+    /** Margen que debe quedar libre incluso después de la subida reservada. */
+    minFreeBytes: integer('STORAGE_MIN_FREE_BYTES', 5 * 1024 * 1024 * 1024),
+    maxActivePerOwner: integer('MAX_ACTIVE_UPLOADS_PER_OWNER', 5),
+    maxPendingJobsPerOwner: integer('MAX_PENDING_JOBS_PER_OWNER', 10),
+    maxReservedBytesPerOwner: integer('MAX_RESERVED_UPLOAD_BYTES_PER_OWNER', 8 * 1024 * 1024 * 1024),
+    maxStoredBytesPerOwner: integer('MAX_STORED_BYTES_PER_OWNER', 100 * 1024 * 1024 * 1024)
+  },
+
+  rateLimits: {
+    publicAuthPer15Minutes: integer('RATE_LIMIT_PUBLIC_AUTH_15M', 120),
+    migrationPerMinute: integer('RATE_LIMIT_MIGRATION_PER_MINUTE', 300),
+    catalogPerMinute: integer('RATE_LIMIT_CATALOG_PER_MINUTE', 600),
+    playbackPerMinute: integer('RATE_LIMIT_PLAYBACK_PER_MINUTE', 1200)
   },
 
   media: {
@@ -210,7 +281,14 @@ export const config = {
     maxCollectionItems: integer('MAX_COLLECTION_ITEMS', 50),
     /** Página por defecto y techo duro del listado del catálogo. */
     defaultPageSize: integer('CATALOG_PAGE_SIZE', 200),
-    maxPageSize: integer('CATALOG_MAX_PAGE_SIZE', 500)
+    maxPageSize: integer('CATALOG_MAX_PAGE_SIZE', 500),
+    /**
+     * Ficheros por importación de carpeta. No es un límite técnico sino de
+     * paciencia: se suben en serie, y 500 vídeos son días de transcodificación.
+     * Pasado el tope se pide dividir en varias importaciones, que además deja
+     * puntos de control naturales.
+     */
+    maxImportEntries: integer('MAX_IMPORT_ENTRIES', 500)
   },
 
   revisions: {
@@ -243,6 +321,15 @@ export const config = {
     niceness: integer('FFMPEG_NICE', 10),
     ffmpegPath: optional('FFMPEG_PATH', 'ffmpeg'),
     ffprobePath: optional('FFPROBE_PATH', 'ffprobe'),
+    probeTimeoutSeconds: integer('TRANSCODE_PROBE_TIMEOUT_SECONDS', 30),
+    processTimeoutSeconds: integer('TRANSCODE_PROCESS_TIMEOUT_SECONDS', 6 * 60 * 60),
+    maxDurationSeconds: integer('VIDEO_MAX_DURATION_SECONDS', 4 * 60 * 60),
+    maxPixels: integer('VIDEO_MAX_PIXELS', 3840 * 2160),
+    maxDimension: integer('VIDEO_MAX_DIMENSION', 4096),
+    maxStreams: integer('VIDEO_MAX_STREAMS', 16),
+    maxSourceFps: integer('VIDEO_MAX_SOURCE_FPS', 120),
+    maxAudioChannels: integer('VIDEO_MAX_AUDIO_CHANNELS', 8),
+    maxOutputBitrateKbps: integer('VIDEO_MAX_OUTPUT_BITRATE_KBPS', 8000),
     /** Trabajos simultáneos del worker. Con ffmpeg por software, déjalo en 1. */
     concurrency: integer('TRANSCODE_CONCURRENCY', 1),
     /** Cada cuántos ms consulta el worker si hay trabajo nuevo. */
@@ -271,15 +358,27 @@ export const config = {
     identityMoodleSource: optional('LTI_IDENTITY_MOODLE_SOURCE', '$User.username'),
     /** Ventana de tolerancia al desfase de reloj al validar el id_token. */
     clockToleranceSeconds: integer('LTI_CLOCK_TOLERANCE', 60),
+    /** Antigüedad máxima del id_token aunque su `exp` sea más largo. */
+    maxTokenAgeSeconds: integer('LTI_MAX_TOKEN_AGE_SECONDS', 300),
     /** Minutos que vive un `state` OIDC antes de caducar. */
     stateTtlSeconds: integer('LTI_STATE_TTL_SECONDS', 600),
     /** Permite dar de alta plataformas vía API con este bearer token. */
-    adminToken: optional('LTI_ADMIN_TOKEN', '')
+    adminToken: optional('LTI_ADMIN_TOKEN', ''),
+    /**
+     * Verificación de la referencia firmada del material (T24, V-02):
+     * `off` no comprueba nada; `warn` (por defecto) sirve el launch sin firma
+     * válida pero deja un aviso estructurado; `enforce` responde 404. Se pasa
+     * a `enforce` cuando el aviso deje de aparecer: significa que ya no queda
+     * ninguna actividad anterior a la firma en uso.
+     */
+    launchResourceSignature: optional('LAUNCH_RESOURCE_SIGNATURE', isProduction ? 'enforce' : 'warn')
   },
 
   contentApi: {
     /** API de migración por fragmentos. Vacío = rutas deshabilitadas (404). */
-    token: contentApiToken
+    token: contentApiToken,
+    allowedPlatformIds: optional('CONTENT_API_ALLOWED_PLATFORM_IDS', '')
+      .split(',').map((id) => id.trim()).filter(Boolean)
   },
 
   admin: {
@@ -288,7 +387,20 @@ export const config = {
     passwordHash: adminPasswordHash,
     sessionSecret: adminSessionSecret,
     sessionTtlSeconds: integer('ADMIN_SESSION_TTL_SECONDS', 8 * 60 * 60),
-    allowPrivateLtiHosts: bool('ADMIN_ALLOW_PRIVATE_LTI_HOSTS', false)
+    allowPrivateLtiHosts: bool('ADMIN_ALLOW_PRIVATE_LTI_HOSTS', false),
+    /**
+     * Propietario de la biblioteca institucional: lo que el administrador
+     * importa desde la consola no es de ningún profesor, así que necesita un
+     * `owner_sub` propio por instancia.
+     *
+     * El prefijo `moodleshield:` es lo que garantiza que no choque nunca con el
+     * `sub` de un profesor real, que sale del `id_token` de Moodle. Cambiarlo en
+     * una instalación con contenido ya importado **esconde ese contenido**: las
+     * carpetas siguen ahí, pero pasan a colgar de un propietario que ya no se
+     * consulta. Se cambia antes de importar nada, o no se cambia.
+     */
+    libraryOwnerSub: optional('ADMIN_LIBRARY_OWNER_SUB', 'moodleshield:biblioteca'),
+    libraryOwnerName: optional('ADMIN_LIBRARY_OWNER_NAME', 'Biblioteca del centro')
   },
 
   log: {
@@ -331,7 +443,18 @@ export function isLoopbackDevUrl (url) {
 }
 
 export function assertConfigValid () {
-  if (config.media.delivery === 'signed' && !config.secrets.mediaLink) {
+  const isApp = config.serviceRole === 'app'
+  const isMigration = config.serviceRole === 'migrate'
+
+  // El entrypoint ejecuta primero el bootstrap con SERVICE_ROLE=migrate y
+  // elimina estas variables antes de iniciar Node web. Si alguien salta ese
+  // contrato, el proceso falla: la app runtime nunca conserva autoridad DDL ni
+  // la credencial de las colas del worker.
+  if (isApp && config.isProduction && (process.env.DB_PASSWORD || process.env.DB_WORKER_PASSWORD)) {
+    errors.push('La app runtime no puede conservar DB_PASSWORD ni DB_WORKER_PASSWORD')
+  }
+
+  if (isApp && config.media.delivery === 'signed' && !config.secrets.mediaLink) {
     errors.push('MEDIA_DELIVERY=signed exige MEDIA_LINK_SECRET')
   }
   // En producción la entrega DEBE ir firmada (V-11): la ruta de Node que sirve
@@ -339,11 +462,17 @@ export function assertConfigValid () {
   // ser un error de configuración que dejaría al sistema sin forma de entregar
   // vídeo. Se falla al arrancar, nombrando la variable, en vez de a mitad de un
   // visionado. Los tres composes ya fijan `signed`.
-  if (config.isProduction && config.media.delivery !== 'signed') {
+  if (isApp && config.isProduction && config.media.delivery !== 'signed') {
     errors.push('En producción MEDIA_DELIVERY debe ser "signed" (nginx firma los segmentos con secure_link)')
   }
-  if (config.isProduction && !config.publicUrl.startsWith('https://')) {
+  if (isApp && config.isProduction && normalizeOrigin(config.publicUrl) !== config.publicUrl) {
+    errors.push('PUBLIC_URL debe ser únicamente un origen canónico, sin ruta, query ni credenciales')
+  }
+  if (isApp && config.isProduction && !config.publicUrl.startsWith('https://')) {
     errors.push('PUBLIC_URL debe ser https:// en producción (Moodle lo exige para LTI 1.3)')
+  }
+  if (isApp && config.isProduction && config.publicOrigins.some((origin) => !origin.startsWith('https://'))) {
+    errors.push('Todos los PUBLIC_URL_ALIASES deben usar https:// en producción')
   }
   if (config.admin.enabled && !config.publicUrl.startsWith('https://') &&
       !isLoopbackDevUrl(config.publicUrl)) {
@@ -351,7 +480,7 @@ export function assertConfigValid () {
   }
   // El bearer de alta de plataformas abre el registro de tenants LTI. Sin
   // longitud mínima, `LTI_ADMIN_TOKEN=x` pasaba la validación (V-06).
-  if (config.lti.adminToken && config.lti.adminToken.length < 32) {
+  if (isApp && config.lti.adminToken && config.lti.adminToken.length < 32) {
     errors.push('LTI_ADMIN_TOKEN debe tener al menos 32 caracteres cuando está definido')
   }
   if (config.transcode.heartbeatMs >= config.transcode.leaseSeconds * 1000) {
@@ -360,11 +489,50 @@ export function assertConfigValid () {
   if (config.transcode.concurrency !== 1) {
     errors.push('TRANSCODE_CONCURRENCY debe ser 1: el worker procesa un único fichero cada vez')
   }
-  if (config.isProduction && config.contentApi.token && config.contentApi.token.length < 32) {
+  if (config.transcode.probeTimeoutSeconds < 1 || config.transcode.processTimeoutSeconds < 60 ||
+      config.transcode.maxDurationSeconds < 1 || config.transcode.maxPixels < 1 ||
+      config.transcode.maxDimension < 1 || config.transcode.maxStreams < 1 ||
+      config.transcode.maxSourceFps < 1 || config.transcode.maxAudioChannels < 1 ||
+      config.transcode.maxOutputBitrateKbps < 128) {
+    errors.push('Los límites de vídeo y plazos de transcodificación deben ser positivos')
+  }
+  if (isApp && config.isProduction && config.contentApi.token && config.contentApi.token.length < 32) {
     errors.push('CONTENT_API_TOKEN debe tener al menos 32 caracteres en producción')
+  }
+  if (isApp && config.isProduction && config.contentApi.token &&
+      config.contentApi.allowedPlatformIds.length === 0) {
+    errors.push('CONTENT_API_TOKEN en producción exige CONTENT_API_ALLOWED_PLATFORM_IDS')
+  }
+  if (config.contentApi.allowedPlatformIds.some((id) =>
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+    errors.push('CONTENT_API_ALLOWED_PLATFORM_IDS sólo admite UUID separados por coma')
   }
   if (!['auto', 'always', 'never'].includes(config.network.trustCloudflareClientIp)) {
     errors.push("TRUST_CLOUDFLARE_CLIENT_IP debe ser 'auto', 'always' o 'never'")
+  }
+  if (!['disable', 'require', 'verify-full'].includes(config.db.sslMode)) {
+    errors.push("DB_SSL_MODE debe ser 'disable', 'require' o 'verify-full'")
+  }
+  if (isMigration && config.db.provisionServiceRoles &&
+      new Set([config.db.ownerUser, config.db.appUser, config.db.workerUser]).size !== 3) {
+    errors.push('DB_USER, DB_APP_USER y DB_WORKER_USER deben ser distintos')
+  }
+  const localDatabaseHosts = new Set(['db', 'localhost', '127.0.0.1', '::1'])
+  if (config.isProduction && !localDatabaseHosts.has(config.db.host) &&
+      config.db.sslMode !== 'verify-full') {
+    errors.push('Una base de datos remota en producción exige DB_SSL_MODE=verify-full')
+  }
+  if (!['off', 'warn', 'enforce'].includes(config.lti.launchResourceSignature)) {
+    errors.push("LAUNCH_RESOURCE_SIGNATURE debe ser 'off', 'warn' o 'enforce'")
+  }
+  if (isApp && config.isProduction && config.lti.launchResourceSignature !== 'enforce') {
+    errors.push('LAUNCH_RESOURCE_SIGNATURE debe ser enforce en producción')
+  }
+  if (config.lti.clockToleranceSeconds < 0 || config.lti.maxTokenAgeSeconds < 60) {
+    errors.push('LTI_CLOCK_TOLERANCE no puede ser negativo y LTI_MAX_TOKEN_AGE_SECONDS debe ser al menos 60')
+  }
+  if (!['app', 'signed'].includes(config.media.delivery)) {
+    errors.push('MEDIA_DELIVERY debe ser "app" o "signed"')
   }
   if (!['auto', 'manual'].includes(config.revisions.activation)) {
     errors.push("MATERIAL_REVISION_ACTIVATION debe ser 'auto' o 'manual'")
@@ -380,6 +548,20 @@ export function assertConfigValid () {
   }
   if (config.media.uploadSessionTtlSeconds < 60 * 60) {
     errors.push('UPLOAD_SESSION_TTL_SECONDS debe ser al menos una hora')
+  }
+  if (config.playback.maxDistinctIps < 1 || config.playback.maxDistinctIps > 20) {
+    errors.push('PLAYBACK_MAX_DISTINCT_IPS debe estar entre 1 y 20')
+  }
+  if (config.playback.retentionSeconds < 0 || config.playback.purgeIntervalMs < 60_000) {
+    errors.push('La retención de grants no puede ser negativa y su purga debe espaciarse al menos un minuto')
+  }
+  if (config.uploads.minFreeBytes < 0 || config.uploads.maxActivePerOwner < 1 ||
+      config.uploads.maxPendingJobsPerOwner < 1 || config.uploads.maxReservedBytesPerOwner < 1 ||
+      config.uploads.maxStoredBytesPerOwner < 1) {
+    errors.push('Las cuotas de subida deben ser positivas (STORAGE_MIN_FREE_BYTES puede ser 0)')
+  }
+  if (Object.values(config.rateLimits).some((value) => value < 1)) {
+    errors.push('Todos los RATE_LIMIT_* deben ser enteros positivos')
   }
   if (errors.length > 0) {
     const detail = errors.map((e) => `  - ${e}`).join('\n')

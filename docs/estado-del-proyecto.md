@@ -1,10 +1,13 @@
 # Estado del proyecto
 
-> **Si buscas el resumen**, está en [`README.md`](README.md): índice de la documentación,
-> estado, hoja de ruta y por dónde empezar a contribuir. Este documento es la **auditoría
-> detallada** de la última entrega, con la evidencia tarea a tarea.
+> [!WARNING]
+> **Documento histórico, cerrado el 6 de agosto de 2026.** Describe la entrega T17–T21 y
+> contiene estados que ya no son actuales (por ejemplo T13). No lo uses para decidir si
+> producción es segura. La referencia vigente es
+> [`revision-seguridad-2026-08-10.md`](revision-seguridad-2026-08-10.md); el índice actual
+> está en [`README.md`](README.md).
 
-**Última actualización**: 6 de agosto de 2026  
+**Última actualización histórica**: 6 de agosto de 2026
 **Alcance de esta auditoría**: T17, T18, T20, T21 recientemente cerradas. Consulta [`docs/tasks/README.md`](tasks/README.md) para el estado completo.
 
 ---
@@ -140,15 +143,36 @@ de la tarea que vayas a tocar. No hace falta leer código para entender el dise�
 
 ## Cambios recientes
 
+**El selector de contenido recupera su pantalla** (17 de agosto, ADR-024):
+
+- **Una sola franja de cromo.** El catálogo gastaba 326 px antes del primer
+  elemento —cabecera con `h1`, fila de buscador, fila de migas, fila de pestañas
+  y cabecera de sección— sobre un iframe cuyo alto decide Moodle. Ahora son
+  82 px: ubicaciones, atrás, migas, buscador, vista, actualizar, ayuda y un menú
+  **＋ Nuevo** comparten una única barra. El `h1` repetía literalmente el título
+  del modal de Moodle.
+- **Una sola lista, agrupada.** Fuera las pestañas Todo/Colecciones/Materiales
+  —sólo escondían listas ya descargadas— y las cabeceras de sección. Carpetas,
+  colecciones y materiales conviven separados por etiquetas de grupo de una
+  línea, y **las subcarpetas del nivel abierto salen en la lista principal**, no
+  sólo en el lateral.
+- **Filas densas** de 44 px en vez de tarjetas de 96 px, con conmutador a
+  cuadrícula recordado en `sessionStorage`. Medido en un iframe cross-origin de
+  1140×513: de **1** elemento completamente visible a **9**.
+- **El lateral se pliega** bajo 720 px: pasa de banda horizontal de 10,5 rem a
+  cajón superpuesto, con la barra de comandos por encima.
+- La ayuda deja de abrirse sola en el selector; se mantiene en modo `manage`.
+
 **Rediseño de la biblioteca del profesor + carpetas anidadas + descarga de PDF sellada** (7 de agosto):
 
-- **La biblioteca es ahora un explorador de archivos**: migas de navegación,
+- **La biblioteca pasa a ser un explorador de archivos**: migas de navegación,
   tarjetas de carpeta, y las colecciones y materiales del nivel abierto en
-  secciones separadas. Desaparecen las pestañas Materiales/Colecciones y la
-  bandeja flotante: la colección se compone en su propio diálogo con un
-  buscador de materiales. La subida vive en un diálogo y hereda la carpeta
-  abierta. Nueva vista «Ver archivados» con restauración (antes archivar era un
-  camino sin salida: nada listaba lo archivado).
+  secciones separadas. Desaparece la bandeja flotante: la colección se compone
+  en su propio diálogo con un buscador de materiales. La subida vive en un
+  diálogo y hereda la carpeta abierta. Nueva vista «Ver archivados» con
+  restauración (antes archivar era un camino sin salida: nada listaba lo
+  archivado). Las pestañas Materiales/Colecciones sobrevivieron a esta pasada
+  como filtro de cliente; las retiró ADR-024.
 - **Carpetas anidadas** (`parent_id`, ADR-016): hasta `MAX_FOLDER_DEPTH`
   niveles, ciclos y profundidad vigilados por el servicio con advisory lock por
   profesor. Migración `008_folder_tree.sql`. Borrar una carpeta sube contenido
@@ -276,4 +300,3 @@ Documentada en `.env.example`. Las que más cambian:
 | `MATERIAL_REVISION_ACTIVATION` | `auto` | `auto` o `manual` para publicar revisiones |
 
 La configuración se valida al arrancar: si falta un secreto obligatorio en producción, el proceso muere de inmediato.
-

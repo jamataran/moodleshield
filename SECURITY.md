@@ -16,8 +16,8 @@ sobre todo con `MEDIA_DELIVERY=app` frente a `signed`).
 proyecto mantenido en tiempo libre; si el plazo se estira, se dirá por qué. Se agradece
 divulgación coordinada, y se te acreditará en el aviso salvo que prefieras lo contrario.
 
-> ⚠️ Antes de adjuntar logs: hoy `LOG_LEVEL=debug` registra queries que contienen tokens de
-> sesión (fallo conocido, parte de T16). Revísalos.
+> ⚠️ Antes de adjuntar logs: revísalos y elimina datos personales. La rama de seguridad
+> redacta las queries sensibles, pero `v1.0.5` es anterior a ese arreglo.
 
 ## Antes de reportar: mira la auditoría
 
@@ -30,9 +30,17 @@ Si lo que encontraste ya está ahí, **sigue siendo útil reportarlo** —sobre 
 o una consecuencia peor que la documentada—, pero dilo en el reporte para que podamos
 priorizarlo bien en vez de triarlo dos veces.
 
+La [revisión del 10 de agosto de 2026](docs/revision-seguridad-2026-08-10.md) distingue el
+estado de la rama del estado realmente declarado en producción y recoge los hallazgos
+posteriores.
+
 ## Versiones soportadas
 
-El proyecto está en `0.x`. Sólo se da soporte a la **última versión publicada** y a `main`.
+El proyecto está en `0.x`. **Ahora mismo no hay una versión publicada que se considere una
+base segura para una producción expuesta a Internet**: `v1.0.5` es anterior a todo el
+endurecimiento. `feature/seguridad-auditoria` es la candidata revisada y autorizada para
+pruebas controladas, no una versión que conste desplegada. Se aceptan reportes sobre ambas;
+la candidata sólo pasa a soportada en producción después de superar los gates de liberación.
 
 > **F-01, en concreto.** El perfil `infra/local` usa secretos de desarrollo deterministas
 > que ahora son públicos. Es deliberado para desarrollo en `localhost`, y **no** es una
@@ -66,8 +74,8 @@ sistema nunca dijo que las cubriera. Están documentadas en el
 
 - **Que un alumno con acceso legítimo consiga el vídeo.** No hay DRM. El sistema no impide
   copiar: hace que la copia sea atribuible.
-- **Grabar la pantalla.** El overlay y la marca A/B están precisamente para eso: no lo
-  impiden, lo hacen rastreable.
+- **Grabar la pantalla.** El overlay y la marca A/B están precisamente para disuadir e
+  investigar, pero el recorte o la colusión pueden hacer que la copia no sea atribuible.
 - **Recortar los bordes del vídeo para eliminar las marcas.** Limitación conocida, con
   solución en la hoja de ruta (marcas en varias posiciones).
 - **Colusión**: dos alumnos comparando copias para fabricar una tercera que no señale a
@@ -87,10 +95,19 @@ Si crees que alguna de estas fronteras está mal trazada, esa conversación sí 
   Guárdalo como lo que es: la clave que sostiene la atribución.
 - **Los secretos nunca van en Git.** Los `.env` versionados sólo contienen ajustes no
   secretos, y el CI comprueba en cada PR que sigue siendo así.
-- **En producción, `MEDIA_DELIVERY=signed`.** Con `app`, los segmentos los sirve Node sin
-  la validación `secure_link` de nginx.
+- **En producción, `MEDIA_DELIVERY=signed`.** La rama endurecida falla al arrancar con
+  `app`; no expongas Node ni dependas de esa protección en `v1.0.5`.
+- **Separa los tres roles PostgreSQL.** `DB_USER` es sólo migrador/propietario;
+  `DB_APP_USER` sirve peticiones sin DDL y `DB_WORKER_USER` sólo alcanza cola/material.
+  No reutilices contraseñas entre ellos. La app aborta si el bootstrap no eliminó del
+  runtime `DB_PASSWORD` y `DB_WORKER_PASSWORD`.
+- **Reinserta las actividades anteriores a la migración `014`.** Necesitan un placement
+  server-side; copiar una referencia firmada antigua ya no concede acceso.
 - **Registra las plataformas.** `frame-ancestors` se calcula a partir de las plataformas
-  dadas de alta; sin ninguna queda en `'self' https:`, que es permisivo.
+  dadas de alta; sin ninguna queda en `'self'` y Moodle no podrá embeber la herramienta.
+- **La API de migración está apagada por defecto.** Si defines `CONTENT_API_TOKEN` en
+  producción, limita además `CONTENT_API_ALLOWED_PLATFORM_IDS`; las cuotas por propietario
+  y el rate limit siguen siendo defensa adicional, no sustituyen rotar el token al terminar.
 - **`ADMIN_ALLOW_PRIVATE_LTI_HOSTS=false`** salvo que sepas por qué lo necesitas: activarlo
   amplía la superficie de SSRF.
 - Registrar visionados (`view_event`) es lo que hace posible el trazado, y son **datos

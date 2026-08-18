@@ -4,6 +4,7 @@ import { getVideoForPlatform } from './videos.js'
 import { getDocumentForPlatform } from './documents.js'
 import { getVisibleMaterial } from './sharing.js'
 import { isUuid } from '../media/storage.js'
+import { placementAllowsResource } from './resource-placements.js'
 
 /**
  * Alcance de una sesión sobre un recurso concreto.
@@ -52,7 +53,13 @@ export async function authorizeResource (session, kind, materialId) {
     const propio = material.owner_sub === session.sub
     if (!propio) {
       const visible = await getVisibleMaterial({
-        kind, id: materialId, platformId: session.platformId, ownerSub: session.sub
+        kind,
+        id: materialId,
+        platformId: session.platformId,
+        ownerSub: session.sub,
+        // Tercera vía además de propio y compartido: desplegado en el curso
+        // desde el que entra este profesor (services/sharing.js).
+        contextId: session.contextId
       })
       if (!visible) return DENIED
     }
@@ -70,6 +77,12 @@ export async function authorizeResource (session, kind, materialId) {
   if (!scope) return DENIED
 
   if (scope.kind === kind && scope.id === materialId) {
+    if (scope.placementId && !(await placementAllowsResource({
+      placementId: scope.placementId,
+      platformId: session.platformId,
+      kind,
+      resourceId: materialId
+    }))) return DENIED
     // La revisión viaja fijada desde el launch: resolver «la actual» en cada
     // petición permitiría que una activación a mitad de sesión mezclara
     // versiones bajo un player ya abierto.
@@ -85,6 +98,13 @@ export async function authorizeResource (session, kind, materialId) {
 
   if (scope.kind === 'collection') {
     if (!(await collectionContains(scope.id, kind, materialId))) return DENIED
+    if (scope.placementId && !(await placementAllowsResource({
+      placementId: scope.placementId,
+      platformId: session.platformId,
+      collectionId: scope.id,
+      kind,
+      resourceId: materialId
+    }))) return DENIED
     // Los elementos de una colección no llevan revisión fijada en el token: se
     // resuelve la activa al abrir cada elemento, y la playlist que se devuelve
     // ya la congela para toda esa reproducción.
@@ -114,6 +134,12 @@ export async function authorizeCollection (session, collectionId) {
     return { ok: true, viaOwner: true, collection }
   }
   if (session.resource?.kind === 'collection' && session.resource.id === collectionId) {
+    if (session.resource.placementId && !(await placementAllowsResource({
+      placementId: session.resource.placementId,
+      platformId: session.platformId,
+      kind: 'collection',
+      resourceId: collectionId
+    }))) return DENIED
     return { ok: true, viaOwner: false }
   }
   return DENIED

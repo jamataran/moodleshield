@@ -7,34 +7,16 @@
   <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
 </head>
 <body class="catalog-page">
-  <header class="catalog-header">
-    <div>
-      <p class="eyebrow" id="catalog-context">Biblioteca del profesor</p>
-      <h1 id="catalog-title">Seleccionar contenido</h1>
-      <p class="muted" id="subtitle"></p>
-    </div>
-    <div class="catalog-header-actions">
-      <button id="help-open" type="button">? Ayuda</button>
-      <button id="refresh" type="button" aria-label="Actualizar la biblioteca">↻ Actualizar</button>
-      <button id="upload-open" type="button" class="primary">⬆ Subir material</button>
-    </div>
-  </header>
-
   <div id="notice" role="status" aria-live="polite" hidden></div>
 
-  <div class="catalog-toolbar">
-    <input type="search" id="search" placeholder="Buscar carpetas, colecciones o materiales"
-           aria-label="Buscar en toda la biblioteca">
-    <button id="new-collection" type="button">＋ Nueva colección</button>
-  </div>
-
+  <!--
+    El modal de Moodle que envuelve esta página ya se titula «Seleccionar
+    contenido», y su alto lo decide Moodle: no hay forma de negociarlo desde
+    dentro del iframe. Por eso aquí no hay cabecera ni título propios (ADR-024);
+    todo lo que explica vive en el diálogo de ayuda, a un clic.
+  -->
   <div class="catalog-layout">
-    <aside class="catalog-sidebar" aria-label="Navegación de la biblioteca">
-      <div class="catalog-sidebar-head">
-        <h2>Ubicación</h2>
-        <button id="new-folder" type="button" class="icon-text" aria-label="Crear una carpeta">＋ Carpeta</button>
-      </div>
-
+    <aside class="catalog-sidebar" id="places" aria-label="Navegación de la biblioteca">
       <nav class="library-views" aria-label="Vistas de la biblioteca">
         <button id="all-content" type="button" class="library-view current">
           <span aria-hidden="true">▦</span>
@@ -48,7 +30,7 @@
       </nav>
 
       <section id="section-folders" class="folder-section">
-        <h3>Mis carpetas</h3>
+        <h2>Mis carpetas</h2>
         <div id="folder-grid" class="folder-tree" role="list"></div>
         <p class="muted folder-empty" id="folder-empty" hidden>No hay carpetas todavía.</p>
       </section>
@@ -59,9 +41,14 @@
         las mismas: aquí se puede usar y editar, pero no archivar ni borrar.
       -->
       <section id="section-shared" class="folder-section" hidden>
-        <h3>Compartidas conmigo</h3>
+        <h2>Compartidas conmigo</h2>
         <div id="shared-grid" class="folder-tree" role="list"></div>
       </section>
+
+      <button id="course-toggle" type="button" class="library-view" hidden>
+        <span aria-hidden="true">◎</span>
+        <span>Material de este curso</span>
+      </button>
 
       <button id="archived-toggle" type="button" class="library-view archived-view">
         <span aria-hidden="true">♲</span>
@@ -69,38 +56,59 @@
       </button>
     </aside>
 
+    <!-- Sólo existe cuando el lateral es un cajón superpuesto (pantalla estrecha). -->
+    <button id="places-scrim" type="button" tabindex="-1" aria-label="Cerrar las ubicaciones" hidden></button>
+
     <main class="catalog-main">
-      <div class="catalog-location">
-        <button id="back" type="button" aria-label="Volver a la ubicación anterior" disabled>← Atrás</button>
+      <!--
+        LA franja de cromo. Una sola, como en el visor del alumno: cada fila que
+        se añada aquí sale del alto de la lista, y dentro del iframe de Moodle
+        ese alto ya llega recortado.
+      -->
+      <div class="catalog-bar">
+        <button id="places-toggle" type="button" class="icon only-mobile"
+                aria-expanded="false" aria-controls="places" aria-label="Ubicaciones">☰</button>
+        <button id="back" type="button" class="icon" aria-label="Volver a la ubicación anterior" disabled>←</button>
         <nav id="crumbs" class="crumbs" aria-label="Ruta de carpetas"></nav>
-      </div>
-
-      <div class="content-tabs" role="tablist" aria-label="Tipo de contenido">
-        <button id="tab-all" type="button" role="tab" aria-selected="true" data-content-filter="all">Todo</button>
-        <button id="tab-collections" type="button" role="tab" aria-selected="false" data-content-filter="collections">Colecciones</button>
-        <button id="tab-materials" type="button" role="tab" aria-selected="false" data-content-filter="materials">Materiales</button>
-      </div>
-
-      <div class="catalog-results">
-        <section id="section-collections" class="explorer-section" hidden>
-          <div class="section-head">
-            <div>
-              <p class="section-kicker">Una actividad con varios recursos</p>
-              <h2 id="collections-heading">Colecciones</h2>
-            </div>
+        <input type="search" id="search" placeholder="Buscar…"
+               aria-label="Buscar carpetas, colecciones o materiales en toda la biblioteca">
+        <button id="view-toggle" type="button" class="icon" aria-pressed="false"
+                aria-label="Ver en cuadrícula">▦</button>
+        <button id="refresh" type="button" class="icon" aria-label="Actualizar la biblioteca">↻</button>
+        <button id="help-open" type="button" class="icon" aria-label="Ayuda">?</button>
+        <details class="menu new-menu" id="new-menu">
+          <summary class="new-menu-trigger" id="new-menu-trigger"
+                   aria-label="Crear o subir contenido">＋ Nuevo</summary>
+          <div class="menu-list">
+            <button id="upload-open" type="button">Subir material…</button>
+            <button id="import-open" type="button">Importar una carpeta…</button>
+            <button id="new-folder" type="button">Nueva carpeta…</button>
+            <button id="new-collection" type="button">Nueva colección…</button>
           </div>
-          <div id="collection-grid" class="grid" aria-live="polite"></div>
+        </details>
+      </div>
+
+      <!--
+        Una sola lista, agrupada como la de cualquier explorador: primero las
+        carpetas del nivel abierto, después las colecciones y al final los
+        materiales. Las etiquetas de grupo sustituyen a las pestañas que había
+        antes y cuestan una línea en lugar de una franja entera.
+      -->
+      <div class="catalog-results">
+        <section id="section-subfolders" class="content-group" aria-labelledby="subfolders-heading" hidden>
+          <h2 class="group-label" id="subfolders-heading">Carpetas</h2>
+          <div id="subfolder-grid" class="content-list" role="list"></div>
+        </section>
+
+        <section id="section-collections" class="content-group" aria-labelledby="collections-heading" hidden>
+          <h2 class="group-label" id="collections-heading">Colecciones</h2>
+          <div id="collection-grid" class="content-list" role="list" aria-live="polite"></div>
           <p class="load-more-row"><button id="load-more-collections" type="button" hidden>Mostrar más colecciones</button></p>
         </section>
 
-        <section id="section-materials" class="explorer-section" hidden>
-          <div class="section-head">
-            <div>
-              <p class="section-kicker">Recursos individuales</p>
-              <h2 id="materials-heading">Materiales</h2>
-            </div>
-          </div>
-          <div id="material-grid" class="grid" aria-live="polite"></div>
+        <section id="section-materials" class="content-group" aria-labelledby="materials-heading" hidden>
+          <h2 class="group-label" id="materials-heading">Materiales</h2>
+          <div id="material-grid" class="content-list" role="list" aria-live="polite"></div>
           <p class="load-more-row"><button id="load-more" type="button" hidden>Mostrar más materiales</button></p>
         </section>
 
@@ -234,6 +242,52 @@
         <button type="button" class="primary" id="upload-btn">Subir y procesar</button>
         <button type="button" id="upload-cancel">Cancelar</button>
         <span class="muted" id="upload-status" role="status"></span>
+      </p>
+    </div>
+  </dialog>
+
+  <!--
+    Importación de una carpeta completa. `webkitdirectory` es el único modo que
+    tiene un navegador de leer un árbol de directorios; los nombres de la ruta
+    llegan en `File.webkitRelativePath` y el servidor los convierte en carpetas.
+  -->
+  <dialog id="import-dialog" aria-labelledby="import-heading">
+    <div>
+      <h2 id="import-heading">Importar una carpeta</h2>
+      <p class="muted">
+        Se sube la carpeta entera <strong>respetando su estructura interna</strong>:
+        cada subcarpeta pasa a ser una carpeta de tu biblioteca. No se crean
+        colecciones — para agrupar materiales en una sola actividad, usa
+        <strong>Nueva colección</strong> cuando termine.
+      </p>
+      <p>
+        <label for="import-picker">Carpeta del ordenador</label>
+        <input type="file" id="import-picker" webkitdirectory directory multiple>
+      </p>
+      <p class="muted" id="import-target"></p>
+      <div id="import-preview" class="import-preview" hidden>
+        <p id="import-summary"></p>
+        <details id="import-skipped-box" hidden>
+          <summary id="import-skipped-summary">Ficheros omitidos</summary>
+          <ul id="import-skipped" class="import-skipped"></ul>
+        </details>
+      </div>
+      <p class="muted">
+        Se omiten los ficheros ocultos (<code>.DS_Store</code>, <code>Thumbs.db</code>,
+        carpetas que empiezan por punto) y todo lo que no sea vídeo o PDF. Un
+        fichero cuyo título ya exista en su carpeta se sube como
+        <strong>versión nueva</strong> del material que ya está ahí: no se
+        duplica y <strong>no cambia</strong> el identificador que Moodle guardó
+        en las actividades ya creadas.
+      </p>
+      <div id="import-progress" class="import-progress" hidden>
+        <progress id="import-bar" max="100" value="0"></progress>
+        <p class="muted" id="import-current"></p>
+      </div>
+      <p class="dialog-actions">
+        <button type="button" class="primary" id="import-btn">Importar carpeta</button>
+        <button type="button" id="import-cancel">Cancelar</button>
+        <span class="muted" id="import-status" role="status"></span>
       </p>
     </div>
   </dialog>

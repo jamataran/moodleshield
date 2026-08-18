@@ -72,6 +72,12 @@ export function normalizePlatformInput (input) {
       throw new PlatformValidationError(`${field} es obligatorio`, { field })
     }
   }
+  if (normalized.deploymentIds.length > 1) {
+    throw new PlatformValidationError(
+      'Cada plataforma debe representar un único deployment; registra otro client_id por separado',
+      { field: 'deploymentIds', code: 'multiple_deployments_not_supported' }
+    )
+  }
   return normalized
 }
 
@@ -111,10 +117,15 @@ export function isPrivateOrSpecialAddress (address) {
   }
   return lower === '::' || lower === '::1' || lower.startsWith('fe8') ||
     lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb') ||
-    lower.startsWith('fc') || lower.startsWith('fd')
+    // fc00::/7 (ULA), fec0::/10 (site-local obsoleto) y ff00::/8
+    // (multicast) tampoco pueden ser destinos de una descarga JWKS.
+    lower.startsWith('fc') || lower.startsWith('fd') ||
+    lower.startsWith('fec') || lower.startsWith('fed') ||
+    lower.startsWith('fee') || lower.startsWith('fef') ||
+    lower.startsWith('ff')
 }
 
-async function resolveSafeHost (hostname, allowPrivate) {
+export async function resolveSafeHost (hostname, allowPrivate) {
   let addresses
   try {
     addresses = await dns.lookup(hostname, { all: true, verbatim: true })
@@ -152,7 +163,12 @@ export function validateJwksPayload (payload) {
   return true
 }
 
-function downloadJson (url, allowedAddresses) {
+/**
+ * Descarga con la conexión FIJADA a una IP ya resuelta y validada. La usan la
+ * comprobación de la consola y el fetch de JWKS en runtime (V-14): mismo
+ * transporte, mismos límites, misma inmunidad al DNS rebinding.
+ */
+export function downloadPinned (url, allowedAddresses) {
   return new Promise((resolve, reject) => {
     const destination = allowedAddresses.find(({ family }) => family === 4) ?? allowedAddresses[0]
     const req = https.request({
@@ -199,11 +215,7 @@ function downloadJson (url, allowedAddresses) {
         }
       })
       res.on('end', () => {
-        try {
-          resolve({ statusCode: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) })
-        } catch {
-          reject(new PlatformValidationError('La respuesta no es JSON válido', { code: 'invalid_json' }))
-        }
+        resolve({ statusCode: res.statusCode, text: Buffer.concat(chunks).toString('utf8') })
       })
     })
     req.on('timeout', () => req.destroy(new PlatformValidationError('La conexión agotó los 8 segundos', {
@@ -221,6 +233,15 @@ function downloadJson (url, allowedAddresses) {
     })
     req.end()
   })
+}
+
+async function downloadJson (url, allowedAddresses) {
+  const { statusCode, text } = await downloadPinned(url, allowedAddresses)
+  try {
+    return { statusCode, body: JSON.parse(text) }
+  } catch {
+    throw new PlatformValidationError('La respuesta no es JSON válido', { code: 'invalid_json' })
+  }
 }
 
 export async function testPlatformConnection (input, {

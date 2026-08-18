@@ -4,17 +4,26 @@ La API `/api/v1` permite importar vídeos y PDF desde Postman o un script sin
 crear un segundo pipeline. Usa la misma recepción fragmentada, las mismas
 validaciones, las mismas tablas de trabajo y el mismo worker que la interfaz.
 
+> [!WARNING]
+> `CONTENT_API_TOKEN` es una **credencial administrativa potente**: quien la tenga puede
+> escoger cualquier `owner_sub` dentro de las plataformas autorizadas. Déjalo vacío fuera
+> de una migración y rótalo al terminar. En producción la aplicación exige
+> `CONTENT_API_ALLOWED_PLATFORM_IDS`, aplica rate limit y hace cumplir cuotas
+> transaccionales de sesiones, cola, bytes reservados, almacenamiento y espacio libre.
+
 ## Configuración
 
-Genera un secreto y añádelo al entorno de los servicios `app` y `worker`:
+Genera un secreto y añádelo únicamente al entorno del servicio `app`:
 
 ```sh
 openssl rand -hex 32
 CONTENT_API_TOKEN=<resultado>
+CONTENT_API_ALLOWED_PLATFORM_IDS=<uuid-plataforma-1>,<uuid-plataforma-2>
 ```
 
-Con el valor vacío, todas las rutas de la API responden `404`. En producción el
-token configurado debe tener al menos 32 caracteres.
+Con el token vacío, todas las rutas de la API responden `404`. En producción el
+token debe tener al menos 32 caracteres y la lista de plataformas no puede estar vacía.
+Una petición que declare otra plataforma recibe `403` aunque el bearer sea correcto.
 
 Cada petición de contenido lleva estas cabeceras:
 
@@ -69,6 +78,68 @@ Para sustituir el fichero de un material existente sin romper las actividades
 Moodle, incluye su UUID como `materialId` en la reserva. El propietario y la
 plataforma deben coincidir.
 
+## Migrar un árbol de directorios entero
+
+`POST /api/v1/imports/plan` evita tener que crear las carpetas a mano y decidir
+por tu cuenta qué es alta y qué es sustitución. Se le manda **sólo la lista de
+rutas relativas** y responde con el reparto ya resuelto:
+
+```json
+{
+  "parentId": null,
+  "dryRun": false,
+  "entries": [
+    { "path": "Álgebra/Tema 1/clase.mp4", "size": 734003200 },
+    { "path": "Álgebra/Tema 1/apuntes.pdf", "size": 1048576 },
+    { "path": "Álgebra/Tema 1/.DS_Store", "size": 6148 }
+  ]
+}
+```
+
+Respuesta (recortada):
+
+```json
+{
+  "summary": { "videos": 1, "pdfs": 1, "skipped": 1, "hidden": 1,
+               "foldersCreated": 2, "revisions": 0, "newMaterials": 2 },
+  "entries": [
+    { "index": 0, "status": "upload", "kind": "video", "title": "clase",
+      "folderId": "…", "folderPath": "Álgebra / Tema 1", "materialId": null },
+    { "index": 1, "status": "upload", "kind": "pdf", "title": "apuntes",
+      "folderId": "…", "folderPath": "Álgebra / Tema 1", "materialId": null },
+    { "index": 2, "status": "skipped", "reason": "hidden" }
+  ]
+}
+```
+
+Después, por cada entrada con `status: "upload"`, el protocolo de subida de
+arriba pasándole su `folderId` y su `materialId` (que será `null` en un alta y el
+UUID del material existente cuando la ruta repita un título ya presente en esa
+carpeta: entonces **es una revisión y el UUID no cambia**).
+
+- `dryRun: true` resuelve el mismo reparto **sin crear ninguna carpeta**. Sirve
+  para enseñar el resumen antes de lanzar la migración.
+- `parentId` cuelga todo el árbol de una carpeta existente; `null` lo deja en la
+  raíz de la biblioteca.
+- Se omiten los ficheros y carpetas ocultos (cualquier tramo que empiece por
+  `.`, más `__MACOSX`, `Thumbs.db` y compañía) y todo lo que no sea vídeo o PDF.
+- El tope por llamada es `MAX_IMPORT_ENTRIES` (500 por defecto); pasado, responde
+  `413 too_many_entries` y no crea nada.
+- Reimportar un fichero cuya revisión anterior sigue en cola responde `409
+  revision_in_progress` **en el `complete` de ese fichero**: un material sólo
+  admite una candidata a la vez. Espera a que termine o descarta la candidata.
+- Un árbol grande **agotará las cuotas por propietario** antes de terminar: la
+  primera suele ser `MAX_PENDING_JOBS_PER_OWNER` (10), porque la cola procesa de
+  uno en uno. La reserva responde entonces `429` con `too_many_pending_jobs`.
+  Trátalo como espera, no como error: para, deja que la cola avance y vuelve a
+  pedir el plan — las carpetas se reutilizan y sólo subirás lo que falte.
+- **Si un `complete` falla, cancela la sesión** (`DELETE /api/v1/uploads/{id}`).
+  Un `complete` fallido no libera la reserva, y unas pocas sesiones abandonadas
+  agotan `MAX_ACTIVE_UPLOADS_PER_OWNER` hasta que caducan.
+
+El detalle de por qué repetir es revisión y no duplicado está en
+[ADR-025](decisiones.md).
+
 ## Script listo para usar
 
 El script de ejemplo requiere Bash, `curl` y `jq`. Acepta varios ficheros y los
@@ -106,7 +177,10 @@ acumula filas `pending` y ffmpeg procesa exactamente un fichero cada vez. El
 planificador alterna las colas de vídeo y PDF para evitar que una tanda de
 vídeos bloquee indefinidamente los documentos.
 
-Tanto la UI como la API escriben cada fragmento directamente a disco. El cuerpo
+Tanto la UI como la API escriben cada fragmento directamente a disco. Antes de aceptar
+la reserva se comprueban, bajo un advisory lock por propietario, el número de subidas
+activas y jobs pendientes, los bytes reservados y almacenados y el espacio libre real.
+La reserva se libera al completar, cancelar o purgar una subida caducada. El cuerpo
 de una petición queda limitado a `UPLOAD_CHUNK_BYTES` (16 MiB por defecto), de
 modo que el consumo de RAM no crece con el tamaño total ni con el número de
 trabajos pendientes. Dimensiona `UPLOAD_ROOT` para conservar los originales en
@@ -133,6 +207,7 @@ curl -sS "$MOODLESHIELD_URL/api/v1/materials/video/$MATERIAL_ID" \
 Para una sustitución, espera además `latestRevisionPublished: true`: el material
 puede mantener `published: true` mientras la revisión anterior protege a las
 actividades existentes. Los estados terminales esperables de la última revisión
-son `ready`, `failed` o `cancelled`. No lances varios contenedores `worker` si buscas procesamiento
-global estrictamente secuencial: cada proceso respeta concurrencia uno, pero dos
-réplicas pueden reclamar trabajos distintos gracias a `SKIP LOCKED`.
+son `ready`, `failed` o `cancelled`. No lances varios contenedores `worker` si buscas
+procesamiento global estrictamente secuencial: cada proceso respeta concurrencia uno,
+pero dos réplicas pueden reclamar trabajos distintos gracias a `SKIP LOCKED`. Las cuotas
+de jobs se calculan en PostgreSQL y no se eluden levantando más procesos web.

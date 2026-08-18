@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sesiones de reproducción · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
+</head>
+<body class="admin" data-page="playback-grants">
+  <header class="bar admin-bar">
+    <div><p class="eyebrow">MoodleShield</p><h1>Sesiones de reproducción</h1></div>
+    <nav><a class="btn" href="/admin/platforms">Instancias</a>
+      <form id="logout" method="post" action="/admin/logout"><input type="hidden" name="_csrf"><button>Salir</button></form></nav>
+  </header>
+  <main class="admin-main">
+    <div id="notice" class="notice ok" hidden></div>
+    <section class="panel">
+      <p class="muted">Sesiones activas y recientes. Una sesión sospechosa supera el límite de direcciones distintas; revocarla corta playlists, claves, PDF y segmentos ya emitidos.</p>
+      <div class="table-wrap"><table><thead><tr><th>Emitida</th><th>Plataforma / usuario</th><th>Recurso</th><th>Peticiones / IP</th><th>Estado</th><th></th></tr></thead><tbody id="grantRows"></tbody></table></div>
+      <p id="grantsEmpty" class="muted" hidden>No hay sesiones recientes.</p>
+    </section>
+  </main>
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/assets/admin.js?v={{ASSET_VERSION}}" defer></script>
+</body>
+</html>

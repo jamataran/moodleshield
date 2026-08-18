@@ -4,6 +4,7 @@ import config from '../config.js'
 import { many, one } from '../db/index.js'
 import { assertUuid } from '../media/storage.js'
 import { createUploadsRouter } from './uploads.js'
+import { createImportsRouter } from './imports.js'
 
 export const contentApiRouter = Router()
 
@@ -53,6 +54,13 @@ export async function requireContentApi (req, res, next) {
           error: 'Faltan o no son válidas las cabeceras X-MoodleShield-Platform-Id y X-MoodleShield-Owner-Sub'
         })
       }
+      if (config.contentApi.allowedPlatformIds.length > 0 &&
+          !config.contentApi.allowedPlatformIds.includes(identity.platformId)) {
+        return res.status(403).json({
+          error: 'El token de migración no está autorizado para esta plataforma',
+          code: 'content_api_platform_not_allowed'
+        })
+      }
       const platform = await one(
         'SELECT id FROM lti_platform WHERE id = $1 AND enabled = true',
         [identity.platformId]
@@ -78,10 +86,13 @@ export async function requireContentApi (req, res, next) {
 
 contentApiRouter.get('/platforms', requireContentApiToken, async (_req, res, next) => {
   try {
+    const allowed = config.contentApi.allowedPlatformIds
     const platforms = await many(
       `SELECT id, name, issuer, client_id, enabled
          FROM lti_platform
-        ORDER BY lower(name), created_at`
+        WHERE ($1::uuid[] IS NULL OR id = ANY($1))
+        ORDER BY lower(name), created_at`,
+      [allowed.length > 0 ? allowed : null]
     )
     res.set('Cache-Control', 'private, no-store')
     res.json({
@@ -100,6 +111,9 @@ contentApiRouter.get('/platforms', requireContentApiToken, async (_req, res, nex
 
 // Recepción resumible por fragmentos; no existe un segundo pipeline de carga.
 contentApiRouter.use('/uploads', createUploadsRouter(requireContentApi))
+// Mismo plan de importación que la biblioteca: un script que migra un árbol de
+// directorios resuelve carpetas y revisiones aquí y sube por `/uploads`.
+contentApiRouter.use('/imports', createImportsRouter(requireContentApi))
 
 contentApiRouter.get('/materials/:kind/:id', requireContentApi, async (req, res, next) => {
   try {

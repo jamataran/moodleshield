@@ -15,6 +15,13 @@ log_format sin_query '$remote_addr - $remote_user [$time_local] '
 # No anunciar la versión de nginx en cada respuesta, ni siquiera en las de error.
 server_tokens off;
 
+# Sobre el Host (V-13): este gateway escucha SOLO en loopback del host (los
+# compose publican 127.0.0.1) y detrás va el proxy de borde del operador, que
+# es quien fija server_name al dominio público. Un Host desconocido que llegara
+# hasta la aplicación no le sirve a un atacante para envenenar URLs: los
+# orígenes se calculan contra PUBLIC_URL/PUBLIC_URL_ALIASES (public-origin.js),
+# nunca desde la cabecera. Si tu borde no filtra por server_name, añade allí:
+#     server { listen 443 ssl default_server; return 444; }
 upstream moodleshield_app {
     # Docker puede asignar otra IP a `app` al recrearla. Nginx 1.27 permite
     # resolver el nombre periódicamente sin tener que reiniciar el gateway.
@@ -63,10 +70,17 @@ server {
         # Las llaves de ${uri} no son decorativas: sin ellas nginx leería
         # "$uri" seguido del secreto como un único nombre de variable. envsubst
         # las respeta porque NGINX_ENVSUBST_FILTER limita qué se sustituye.
-        secure_link_md5 "$secure_link_expires${uri}${MEDIA_LINK_SECRET}";
+        # También se delimita `arg_sj`: tras envsubst el secreto queda pegado
+        # al nombre de variable; sin llaves nginx intentaría leer otra variable.
+        secure_link_md5 "$secure_link_expires${uri}${arg_sj}${MEDIA_LINK_SECRET}";
 
         if ($secure_link = "")  { return 403; }  # firma ausente o incorrecta
         if ($secure_link = "0") { return 410; }  # firma válida pero caducada
+
+        # El HMAC impide cambiar el jti. La subpetición consulta su estado en
+        # PostgreSQL, por lo que desactivar una plataforma o revocar la sesión
+        # corta también los segmentos que ya estaban en una playlist.
+        auth_request /_media-grant;
 
         alias /srv/media/videos/$vid/$rev/$variant/$seg;
 
@@ -84,10 +98,12 @@ server {
     # devuelva ninguna fila en ningún entorno.
     location ~ "^/media/(?<vid>[0-9a-fA-F-]{36})/(?<variant>[AB])/(?<seg>seg_\d{4,6}\.ts)$" {
         secure_link $arg_md5,$arg_expires;
-        secure_link_md5 "$secure_link_expires${uri}${MEDIA_LINK_SECRET}";
+        secure_link_md5 "$secure_link_expires${uri}${arg_sj}${MEDIA_LINK_SECRET}";
 
         if ($secure_link = "")  { return 403; }
         if ($secure_link = "0") { return 410; }
+
+        auth_request /_media-grant;
 
         alias /srv/media/$vid/$variant/$seg;
 
@@ -104,6 +120,22 @@ server {
     # forma estática: los PDF pasan siempre por la autorización de la app.
     location /media/ {
         return 403;
+    }
+
+    location = /_media-grant {
+        internal;
+        proxy_pass http://moodleshield_app/internal/media-grant;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        include /etc/nginx/proxy_headers.conf;
+    }
+
+    # La ruta real del backend sólo puede alcanzarla la subpetición anterior.
+    # Sin este exact match, una petición externa caería en `location /` y el
+    # proxy la reenviaría a Node (no serviría bytes, pero ampliaría superficie).
+    location = /internal/media-grant {
+        return 404;
     }
 
     # Subidas: sin buffering, para que un MP4 de 3 GB no se escriba antes en el
@@ -123,7 +155,14 @@ server {
 
     # Protocolo troceado compatible con el límite de cuerpo de Cloudflare. Los
     # PUT llevan sólo 16 MiB por defecto y se escriben directamente en app.
+    #
+    # `client_max_body_size` NO es opcional aquí: el bloque `server` lo deja en
+    # 1m (V-17) y esa herencia hacía que cada fragmento respondiera 413. Se
+    # dimensiona con MAX_CHUNK_SIZE, que debe ser mayor que UPLOAD_CHUNK_BYTES;
+    # sigue siendo dos órdenes de magnitud menor que el fichero completo, que es
+    # lo que buscaba el endurecimiento.
     location ^~ /uploads/ {
+        client_max_body_size ${MAX_CHUNK_SIZE};
         proxy_pass http://moodleshield_app;
         proxy_request_buffering off;
         proxy_http_version 1.1;
@@ -133,6 +172,19 @@ server {
     }
 
     location = /uploads {
+        client_max_body_size ${MAX_CHUNK_SIZE};
+        proxy_pass http://moodleshield_app;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        include /etc/nginx/proxy_headers.conf;
+    }
+
+    # Importación desde la consola de administración: mismo protocolo troceado,
+    # bajo la instancia cuyo contenido se está importando.
+    location ~ "^/admin/platforms/[0-9a-fA-F-]{36}/import/" {
+        client_max_body_size ${MAX_CHUNK_SIZE};
         proxy_pass http://moodleshield_app;
         proxy_request_buffering off;
         proxy_http_version 1.1;

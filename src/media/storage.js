@@ -95,6 +95,19 @@ export function materialDir (kind, materialId) {
     : path.join(documentsRoot, materialId)
 }
 
+/**
+ * Lápida forense de una revisión purgada (F-14). Vive FUERA del directorio de
+ * la revisión —la purga borra aquél entero— y guarda lo mínimo para que una
+ * filtración que aparezca después de purgar siga siendo trazable: ámbito del
+ * patrón, geometría de la marca y la lista de quién la vio. El prefijo con
+ * punto la deja fuera de las locations de nginx, como `.staging`.
+ */
+export function tombstonePath (kind, materialId, revisionId) {
+  assertUuid(materialId, 'Identificador de material')
+  assertUuid(revisionId, 'Identificador de revisión')
+  return path.join(mediaRoot, '.tombstones', kind, materialId, `${revisionId}.json`)
+}
+
 export function variantDir (dir, variant) {
   if (variant !== 'A' && variant !== 'B') throw new Error(`Variante inválida: ${variant}`)
   return path.join(dir, variant)
@@ -181,11 +194,15 @@ export async function readMediaMeta (dir) {
  */
 export async function mediaFingerprint (dir) {
   const hash = createHash('sha256')
-  hash.update(await readFile(keyPath(dir)))
+  const key = await readFile(keyPath(dir))
+  hash.update(key)
+  let artifactSizeBytes = key.length
   const segmentCounts = {}
   for (const variant of ['A', 'B']) {
     hash.update(variant)
-    hash.update(await readFile(variantPlaylistPath(dir, variant)))
+    const playlist = await readFile(variantPlaylistPath(dir, variant))
+    hash.update(playlist)
+    artifactSizeBytes += playlist.length
     const segments = (await readdir(variantDir(dir, variant)))
       .filter((name) => /^seg_\d{4,6}\.ts$/.test(name))
       .sort()
@@ -193,16 +210,24 @@ export async function mediaFingerprint (dir) {
     for (const name of segments) {
       const info = await stat(path.join(variantDir(dir, variant), name))
       hash.update(`${name}:${info.size}\n`)
+      artifactSizeBytes += info.size
     }
   }
-  return { artifactHash: hash.digest('hex'), segmentCounts }
+  const poster = await stat(posterPath(dir)).catch(() => null)
+  if (poster?.isFile()) artifactSizeBytes += poster.size
+  return { artifactHash: hash.digest('hex'), segmentCounts, artifactSizeBytes }
 }
 
 /** Huella de un documento: el PDF normalizado es el único artefacto crítico. */
 export async function documentFingerprint (dir) {
   const hash = createHash('sha256')
-  hash.update(await readFile(documentPath(dir)))
-  return { artifactHash: hash.digest('hex') }
+  const document = await readFile(documentPath(dir))
+  hash.update(document)
+  const poster = await stat(posterPath(dir)).catch(() => null)
+  return {
+    artifactHash: hash.digest('hex'),
+    artifactSizeBytes: document.length + (poster?.isFile() ? poster.size : 0)
+  }
 }
 
 export async function validateMediaDirectory (dir, { kind = 'video', materialId, revisionId } = {}) {

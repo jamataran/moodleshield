@@ -12,23 +12,35 @@ import config from '../config.js'
  * su propia playlist personalizada — es decir, exactamente su patrón.
  *
  * La receta es la estándar de nginx:
- *   secure_link_md5 "$secure_link_expires$uri$secret";
+ *   secure_link_md5 "$secure_link_expires${uri}${arg_sj}$secret";
  * con el secreto al final, que es lo que impide la extensión de longitud.
+ * `sj` liga la capacidad estática al grant revocable que nginx comprueba mediante
+ * `auth_request` antes de entregar cada segmento.
  */
 
-export function signedMediaUrl (uri, { expires, secret = config.secrets.mediaLink } = {}) {
+export function signedMediaUrl (uri, {
+  expires,
+  sessionJti = '',
+  secret = config.secrets.mediaLink
+} = {}) {
   const exp = expires ?? Math.floor(Date.now() / 1000) + config.media.linkTtlSeconds
-  const md5 = createHash('md5').update(`${exp}${uri}${secret}`).digest('base64')
+  const md5 = createHash('md5').update(`${exp}${uri}${sessionJti}${secret}`).digest('base64')
   // nginx espera base64url sin relleno.
   const token = md5.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-  return `${uri}?md5=${token}&expires=${exp}`
+  const grant = sessionJti ? `&sj=${encodeURIComponent(sessionJti)}` : ''
+  return `${uri}?md5=${token}&expires=${exp}${grant}`
 }
 
-export function verifyMediaUrl (uri, { md5, expires, secret = config.secrets.mediaLink }) {
+export function verifyMediaUrl (uri, {
+  md5,
+  expires,
+  sessionJti = '',
+  secret = config.secrets.mediaLink
+}) {
   const exp = Number.parseInt(expires, 10)
   if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) return false
   const expected = createHash('md5')
-    .update(`${exp}${uri}${secret}`)
+    .update(`${exp}${uri}${sessionJti}${secret}`)
     .digest('base64')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')

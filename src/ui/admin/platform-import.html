@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Importar contenido · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
+</head>
+<body class="admin" data-page="platform-import">
+  <header class="bar admin-bar">
+    <div><p class="eyebrow" id="platformName">MoodleShield</p><h1>Importar contenido</h1></div>
+    <nav>
+      <a class="btn" id="contentLink" href="/admin/platforms">Contenido del aula</a>
+      <a class="btn" href="/admin/platforms">Volver al listado</a>
+      <form id="logout" method="post" action="/admin/logout"><input type="hidden" name="_csrf"><button>Salir</button></form>
+    </nav>
+  </header>
+
+  <main class="admin-main">
+    <p class="muted" id="issuer"></p>
+    <div id="disabledWarning" class="notice warning" hidden></div>
+
+    <section class="panel">
+      <h2>Biblioteca del centro</h2>
+      <p class="muted" id="libraryExplainer"></p>
+      <p class="muted">
+        Se sube la carpeta entera <strong>respetando su estructura interna</strong>:
+        cada subcarpeta pasa a ser una carpeta de la biblioteca. No se crean
+        colecciones. Se omiten los ficheros ocultos (<code>.DS_Store</code>,
+        <code>Thumbs.db</code>, carpetas que empiezan por punto) y todo lo que no
+        sea vídeo o PDF.
+      </p>
+      <p class="muted">
+        Un fichero cuyo título ya exista en su carpeta se sube como
+        <strong>versión nueva</strong> del material que ya está ahí: no se
+        duplica y <strong>no cambia</strong> el identificador que Moodle guardó
+        en las actividades ya creadas.
+      </p>
+
+      <p>
+        <label for="destination">Carpeta de destino</label>
+        <select id="destination"></select>
+      </p>
+      <p>
+        <label for="picker">Carpeta del ordenador</label>
+        <input type="file" id="picker" webkitdirectory directory multiple>
+      </p>
+
+      <div id="preview" class="import-preview" hidden>
+        <p id="previewSummary"></p>
+        <details id="skippedBox" hidden>
+          <summary id="skippedSummary">Ficheros omitidos</summary>
+          <ul id="skipped" class="import-skipped"></ul>
+        </details>
+      </div>
+
+      <div id="progress" class="import-progress" hidden>
+        <progress id="bar" max="100" value="0"></progress>
+        <p class="muted" id="current"></p>
+      </div>
+
+      <p class="dialog-actions">
+        <button type="button" class="primary" id="startButton">Importar carpeta</button>
+        <button type="button" id="cancelButton" hidden>Cancelar</button>
+      </p>
+      <p id="status" role="status" aria-live="polite"></p>
+      <ul id="failures" class="import-skipped" hidden></ul>
+    </section>
+  </main>
+
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script type="module" src="/assets/admin-import.js?v={{ASSET_VERSION}}"></script>
+</body>
+</html>
