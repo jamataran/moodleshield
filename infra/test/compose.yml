@@ -189,7 +189,7 @@ services:
 
   app:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/app:sha-6b0f1f9
+    image: ghcr.io/jamataran/moodleshield/app:sha-5ae33b4
     restart: unless-stopped
     init: true
     depends_on:
@@ -214,7 +214,7 @@ services:
 
   worker:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/worker:sha-6b0f1f9
+    image: ghcr.io/jamataran/moodleshield/worker:sha-5ae33b4
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -224,7 +224,7 @@ services:
       app:
         condition: service_healthy
     # cd-main.yml activa el entorno mínimo a la vez que publica la imagen nueva.
-    environment: *app-env # WORKER_ENV_ACTIVATION
+    environment: *worker-env # WORKER_ENV_ACTIVATION
     volumes:
       - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
       - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
@@ -240,7 +240,7 @@ services:
   # y se etiqueta a la vez que app y worker.
   proxy:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/proxy:sha-6b0f1f9
+    image: ghcr.io/jamataran/moodleshield/proxy:sha-5ae33b4
     restart: unless-stopped
     depends_on:
       app:
