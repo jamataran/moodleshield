@@ -268,8 +268,8 @@ services:
       - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
     # ffmpeg necesita margen. Ajusta WORKER_CPUS al número de núcleos que
     # quieras cederle; el resto del host sigue respondiendo gracias al `nice`.
-    cpus: ${WORKER_CPUS:-2}
-    mem_limit: ${WORKER_MEMORY:-1536m}
+    cpus: ${WORKER_CPUS:-4}
+    mem_limit: ${WORKER_MEMORY:-4g}
     # ffmpeg y x264 abren hilos, y los hilos cuentan en este límite: 1024 deja
     # margen de sobra a la transcodificación y sigue frenando un fork bomb.
     pids_limit: 1024
