@@ -152,9 +152,11 @@ for (const file of DEPLOYABLES) {
     }
 
     if (blocks.worker.includes('*app-env # WORKER_ENV_ACTIVATION')) {
+      // Producción la escribe cd-promote.yml desde ADR-028; release.yml sólo
+      // crea el tag.
       const workflow = file.includes('/test/')
         ? '.github/workflows/cd-test.yml'
-        : '.github/workflows/release.yml'
+        : '.github/workflows/cd-promote.yml'
       const workflowText = await readFile(path.join(root, workflow), 'utf8')
       assert.match(workflowText,
         new RegExp(`environment: \\*worker-env # WORKER_ENV_ACTIVATION\\|" ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),

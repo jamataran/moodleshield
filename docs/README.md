@@ -43,6 +43,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | [`moodle-setup.md`](moodle-setup.md) | Alta de la herramienta en Moodle en seis pasos, con tabla de diagnóstico |
 | [`https-tunel.md`](https-tunel.md) | HTTPS público y túneles (Cloudflare, Tailscale) para desarrollo local |
 | [`../infra/README.md`](../infra/README.md) | Los tres entornos y el flujo *build once, promote up* |
+| [`../.github/DESPLIEGUE.md`](../.github/DESPLIEGUE.md) | **Manual del pipeline**: qué hace cada workflow, cómo ensayarlo de punta a punta y cómo comprobar que producción corre el mismo digest que test |
 
 ---
 
