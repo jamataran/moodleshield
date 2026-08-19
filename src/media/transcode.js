@@ -101,11 +101,45 @@ function parseFrameRate (raw) {
  * condición de que A y B corten en los mismos instantes — y se limita a 30:
  * por encima se divide entre dos (60→30, 50→25), que conserva la cadencia.
  */
+/**
+ * Fps de salida. Nada por encima de 30: en una clase grabada no aporta y
+ * duplica el coste de transcodificar.
+ *
+ * Dividir entre dos conserva la cadencia cuando la fuente es un múltiplo
+ * limpio —60→30, 50→25, 48→24— y por eso se hace así. Pero dividir a ciegas
+ * también convertía **32,5 fps en 16**, que se ve a saltos: es el fps que
+ * declara un móvil grabando en modo variable, y no tiene nada de raro. Si la
+ * mitad se queda por debajo de 24, no hay cadencia que conservar y se recorta a
+ * 30, que es remuestrear y no ir a trompicones.
+ */
 export function chooseOutputFps (sourceFps, fallback = config.transcode.fps) {
   if (!Number.isFinite(sourceFps) || sourceFps <= 0) return fallback
+  if (sourceFps <= 30) return Math.max(1, Math.round(sourceFps))
   let fps = sourceFps
   while (fps > 30) fps /= 2
-  return Math.max(1, Math.round(fps))
+  return Math.round(fps) >= 24 ? Math.round(fps) : 30
+}
+
+/**
+ * Recorte del lado largo, si se ha configurado uno.
+ *
+ * No existía: la salida heredaba la resolución de la fuente, así que un vídeo
+ * vertical de móvil a 1440×1920 se codificaba DOS VECES a 2,8 megapíxeles por
+ * fotograma —más que 1080p— para verse dentro de un iframe de Moodle. Recortar
+ * el lado largo a 1080 deja 0,87 Mpx: el mismo vídeo cuesta un tercio.
+ *
+ * `-2` en el otro lado mantiene la proporción y garantiza par, que es lo que
+ * exige yuv420p. El recorte va ANTES de la marca, así que A y B siguen
+ * recibiendo exactamente la misma imagen y sus cortes siguen coincidiendo.
+ */
+export function outputScaleFilter (info, longSide = config.transcode.maxOutputLongSide) {
+  const limite = Number(longSide)
+  if (!Number.isFinite(limite) || limite <= 0) return []
+  const ancho = Number(info?.width)
+  const alto = Number(info?.height)
+  if (!Number.isFinite(ancho) || !Number.isFinite(alto) || ancho <= 0 || alto <= 0) return []
+  if (Math.max(ancho, alto) <= limite) return []
+  return [ancho >= alto ? `scale=${limite}:-2` : `scale=-2:${limite}`]
 }
 
 /** Cota conservadora para las dos variantes, audio y sobrecarga HLS. */
@@ -231,8 +265,14 @@ export async function transcodeVideo (videoId, inputPath, {
   )
   await assertCapacity?.({ videoId, revisionId, estimatedBytes: estimatedArtifactBytes })
   const outputFps = chooseOutputFps(info.fps)
+  // El color se normaliza también para la miniatura; el recorte de tamaño no,
+  // porque la miniatura ya escala a 640 por su cuenta.
   const preFilters = colorFilters(info)
-  log.info({ ...info, outputFps, tonemap: preFilters.length > 0 }, 'Vídeo analizado')
+  const scaleFilters = outputScaleFilter(info)
+  log.info(
+    { ...info, outputFps, tonemap: preFilters.length > 0, scale: scaleFilters[0] ?? null },
+    'Vídeo analizado'
+  )
 
   // Una clave AES por vídeo, compartida por ambas variantes: es lo que permite
   // mezclar segmentos A y B en la misma playlist.
@@ -261,7 +301,7 @@ export async function transcodeVideo (videoId, inputPath, {
         keyInfo: keyInfoFile,
         hasAudio: info.hasAudio,
         fps: outputFps,
-        preFilters
+        preFilters: [...preFilters, ...scaleFilters]
       }),
       {
         onLine: onProgress,

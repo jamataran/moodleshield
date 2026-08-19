@@ -129,6 +129,18 @@ function secret (name, { workerRequired = false } = {}) {
 
 export const config = {
   env: nodeEnv,
+  /**
+   * Qué stack es éste: `test`, `prod` o `local`.
+   *
+   * No sale del bloque de variables sino del **Compose**, literal, sin
+   * interpolar: es el único dato que no se puede pegar mal. `NODE_ENV` no sirve
+   * para esto —vale `production` en test y en producción— y ésa es justo la
+   * confusión que costó dos días: un bloque generado con el perfil `prod`
+   * —`DATA_ROOT=/docker-apps/moodleshield-pro`, la marca imperceptible, la URL
+   * pública de producción— pegado en el stack de test, y nada en pantalla ni en
+   * el log que lo dijera.
+   */
+  deployment: optional('MOODLESHIELD_ENV', ''),
   isProduction,
   serviceRole,
 
@@ -341,6 +353,15 @@ export const config = {
     maxSourceFps: integer('VIDEO_MAX_SOURCE_FPS', 120),
     maxAudioChannels: integer('VIDEO_MAX_AUDIO_CHANNELS', 8),
     maxOutputBitrateKbps: integer('VIDEO_MAX_OUTPUT_BITRATE_KBPS', 8000),
+    /**
+     * Recorta el lado largo de la salida. `0` = sin recorte, que es como se ha
+     * comportado siempre y por eso es el valor por defecto: cambiarlo aquí
+     * cambiaría en silencio la calidad de lo que se transcodifique a partir de
+     * ahora. 1080 es el valor sensato para un reproductor dentro de un iframe
+     * de Moodle, y en fuentes verticales de móvil (1440×1920) divide por tres
+     * los píxeles por fotograma, que se codifican DOS veces.
+     */
+    maxOutputLongSide: integer('VIDEO_MAX_OUTPUT_LONG_SIDE', 0),
     /** Trabajos simultáneos del worker. Con ffmpeg por software, déjalo en 1. */
     concurrency: integer('TRANSCODE_CONCURRENCY', 1),
     /** Cada cuántos ms consulta el worker si hay trabajo nuevo. */
