@@ -193,6 +193,15 @@ Lo que la importación **no** hace: crear colecciones. Una carpeta del ordenador
 es una carpeta de la biblioteca. Agrupar varios materiales en una sola actividad
 sigue siendo una decisión explícita en el editor de colecciones.
 
+Lo más cerca que se llega es **«Colección con esta carpeta»** (menú «＋ Nuevo»):
+reúne el material de la carpeta abierta y de sus subcarpetas, en orden de
+lectura, y **prellena** el editor proponiendo guardarla en esa misma carpeta. No
+guarda nada por su cuenta —el profesor ve qué entra, en qué orden y con qué
+título— y recorta en `MAX_COLLECTION_ITEMS` diciendo cuántos se han quedado
+fuera. El selector del editor, por lo mismo, enseña la biblioteca **por
+carpetas** y carga cada una al desplegarla: con decenas de ficheros por tema,
+una lista plana por fecha es justo donde no se encuentra nada.
+
 ### La cola no tiene tope; el disco sí
 
 Las cuotas por propietario (F-12, `src/services/upload-limits.js`) no distinguen

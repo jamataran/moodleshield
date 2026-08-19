@@ -65,6 +65,14 @@ const state = {
   collectionDraft: { editing: null, items: [] },
   pickerResults: [],
   pickerNextCursor: null,
+  /**
+   * Selector de materiales del editor de colección. Se carga POR CARPETA y no
+   * de golpe: con la biblioteca real —decenas de ficheros por tema— una lista
+   * plana de todo el material es justo donde no se encuentra nada. `porCarpeta`
+   * guarda lo ya traído de cada una ('root' = material sin carpeta) para que
+   * plegar y volver a desplegar no cueste otra petición.
+   */
+  picker: { query: '', expanded: new Set(), porCarpeta: new Map() },
   /** Elemento al que devolver el foco tras una mutación. */
   focusAfterReload: null,
   /**
@@ -1706,14 +1714,19 @@ function openNewCollection () {
   el('collection-folder').disabled = false
   el('collection-save').textContent = 'Guardar'
   configureCollectionActions()
-  el('collection-search').value = ''
-  state.pickerResults = []
-  state.pickerNextCursor = null
   dialogStatus('collection-error')
+  avisoColeccion()
   renderCollectionItems()
-  void loadPicker()
+  resetPicker(destinationFolderId())
   abrirDialogo(el('collection-dialog'))
   el('collection-title').focus()
+}
+
+/** Explica de dónde sale lo que ya está puesto en el borrador. Sin drama: no es un error. */
+function avisoColeccion (mensaje = '') {
+  const node = el('collection-hint')
+  node.textContent = mensaje
+  node.hidden = !mensaje
 }
 
 /**
@@ -1746,18 +1759,100 @@ async function openCollectionEditor (collection) {
     folderSelect.disabled = isShared(full)
     el('collection-save').textContent = 'Guardar cambios'
     configureCollectionActions()
-    el('collection-search').value = ''
-    state.pickerResults = []
-    state.pickerNextCursor = null
     dialogStatus('collection-error')
+    avisoColeccion()
     renderCollectionItems()
-    void loadPicker()
+    resetPicker(full.folderId ?? null)
     abrirDialogo(el('collection-dialog'))
     el('collection-title').focus()
   } catch (err) {
     if (generation !== collectionEditorGeneration) return
     notify(err.message, 'error')
   }
+}
+
+/**
+ * «Colección con esta carpeta»: el caso normal después de importar un tema
+ * entero. Prellena el editor con el material de la carpeta abierta y de sus
+ * subcarpetas, en orden de lectura, y propone guardarla en esa misma carpeta.
+ *
+ * No crea nada por su cuenta a propósito: el diálogo enseña qué va dentro y en
+ * qué orden antes de guardar, que es justo lo que el profesor va a querer
+ * retocar. Guardar sigue siendo el mismo POST de siempre.
+ */
+async function openCollectionFromFolder () {
+  const folder = state.view === 'browse' ? folderById(state.folderId) : null
+  if (!folder) {
+    notify('Abre antes la carpeta con la que quieras hacer la colección', 'error')
+    return
+  }
+  const generation = ++collectionEditorGeneration
+  clearTimeout(pickerTimer)
+  const carpetas = [folder.id, ...subarbolEnOrden(folder.id)]
+  let grupos
+  try {
+    grupos = await Promise.all(carpetas.map(async (id) => {
+      const params = new URLSearchParams({ folderId: id, limit: '200' })
+      const data = await apiJson(`/materials?${params}`)
+      return [id, {
+        ...grupoVacio(),
+        materials: ordenLectura(insertables(data.materials)),
+        nextCursor: data.nextCursor,
+        cargado: true
+      }]
+    }))
+  } catch (err) {
+    if (generation === collectionEditorGeneration) {
+      notify(`No se pudo leer el material de la carpeta: ${err.message}`, 'error')
+    }
+    return
+  }
+  if (generation !== collectionEditorGeneration) return
+
+  const todos = grupos.flatMap(([, grupo]) => grupo.materials)
+  if (todos.length === 0) {
+    notify(`«${folder.name}» no tiene material que se pueda insertar`, 'error')
+    return
+  }
+  const dentro = todos.slice(0, topeColeccion())
+
+  state.collectionDraft = {
+    editing: null,
+    items: dentro.map((m) => ({ kind: m.kind, id: m.id, title: m.title }))
+  }
+  el('collection-heading').textContent = `Nueva colección con «${folder.name}»`
+  el('collection-title').value = folder.name
+  el('collection-description').value = ''
+  const destino = el('collection-folder')
+  destino.replaceChildren(...folderOptions({ rootLabel: 'Biblioteca' }))
+  // Una carpeta compartida es de su autor: se puede usar lo que hay dentro,
+  // pero lo que se crea se guarda en la biblioteca propia.
+  destino.value = isShared(folder) ? '' : folder.id
+  destino.disabled = false
+  el('collection-save').textContent = 'Guardar'
+  configureCollectionActions()
+  dialogStatus('collection-error')
+
+  const expanded = new Set(carpetas)
+  for (const ancestro of pathOf(folder.id)) expanded.add(ancestro.id)
+  state.picker = { query: '', expanded, porCarpeta: new Map(grupos) }
+  state.pickerResults = []
+  state.pickerNextCursor = null
+  el('collection-search').value = ''
+  renderCollectionItems()
+  renderPicker()
+
+  const subcarpetas = carpetas.length - 1
+  avisoColeccion(
+    `Se han añadido ${dentro.length} material${dentro.length === 1 ? '' : 'es'} de «${folder.name}»` +
+    (subcarpetas ? ` y sus ${subcarpetas} subcarpeta${subcarpetas === 1 ? '' : 's'}` : '') +
+    (todos.length > dentro.length
+      ? `. ${mensajeTope()} Se han quedado fuera ${todos.length - dentro.length}.`
+      : '. Quita lo que no quieras y ordénalo antes de guardar.') +
+    (isShared(folder) ? ` La carpeta es de ${ownerLabel(folder)}: la colección se guarda en tu biblioteca.` : '')
+  )
+  abrirDialogo(el('collection-dialog'))
+  el('collection-title').focus()
 }
 
 function renderCollectionItems () {
@@ -1808,8 +1903,125 @@ function renderCollectionItems () {
   }))
 }
 
+// ---------------------------------------------------------------------------
+// Selector de materiales: la biblioteca, por carpetas
+// ---------------------------------------------------------------------------
+
+/** Clave del grupo «sin carpeta»; es lo que entiende `/materials?folderId=`. */
+const PICKER_RAIZ = 'root'
+
+/** Insertable: publicado o aún en cola —el alumno lo verá al procesarse—, sin archivar. */
+function insertables (materials) {
+  return materials.filter((m) =>
+    !m.archived && (m.hasActiveRevision || INSERTABLE_STATUSES.has(m.status)))
+}
+
+/**
+ * Orden natural dentro de una carpeta. El explorador ordena por fecha, pero una
+ * colección se lee como un temario: «10 · …» tiene que ir detrás de «9 · …» y
+ * no delante, que es lo que haría un orden alfabético a secas.
+ */
+function ordenLectura (materials) {
+  return [...materials].sort((a, b) =>
+    String(a.title).localeCompare(String(b.title), 'es', { numeric: true, sensitivity: 'base' }))
+}
+
+/** Tope de materiales por colección; lo dice el servidor en el bootstrap. */
+function topeColeccion () {
+  const declarado = Number(boot.maxCollectionItems)
+  return Number.isFinite(declarado) && declarado > 0 ? declarado : 50
+}
+
+function mensajeTope () {
+  return `Una colección admite como máximo ${topeColeccion()} materiales.`
+}
+
+/** Vídeos y PDF de la carpeta y de todo lo que cuelga de ella. */
+function materialesEnSubarbol (id) {
+  const folder = folderById(id)
+  if (!folder) return 0
+  let total = Number(folder.videoCount ?? 0) + Number(folder.documentCount ?? 0)
+  for (const child of childrenOf(id)) total += materialesEnSubarbol(child.id)
+  return total
+}
+
+/** Subcarpetas en orden de lectura (primero en profundidad), como en el árbol. */
+function subarbolEnOrden (id) {
+  const out = []
+  const walk = (parentId) => {
+    for (const child of childrenOf(parentId)) {
+      out.push(child.id)
+      walk(child.id)
+    }
+  }
+  walk(id)
+  return out
+}
+
+/**
+ * Carpetas del selector, en el orden en que se leen y sólo hasta donde se ha
+ * desplegado. Las que no tienen material en todo su subárbol no salen: aquí no
+ * se organiza la biblioteca, se elige material, y una rama vacía sólo estorba.
+ */
+function carpetasDelPicker () {
+  const out = []
+  const walk = (parentId, shared) => {
+    for (const child of childrenOf(parentId)) {
+      if (isShared(child) !== shared) continue
+      if (materialesEnSubarbol(child.id) === 0) continue
+      out.push(child)
+      if (state.picker.expanded.has(child.id)) walk(child.id, shared)
+    }
+  }
+  walk(null, false)
+  walk(null, true)
+  return out
+}
+
+function grupoPicker (key) {
+  return state.picker.porCarpeta.get(key) ?? null
+}
+
+function grupoVacio () {
+  return { materials: [], nextCursor: null, cargado: false, cargando: false, error: null }
+}
+
+/**
+ * Trae el material de UNA carpeta. `key` es 'root' o el UUID, tal cual lo
+ * entiende `/materials?folderId=`. El material compartido entra por la misma
+ * puerta: la carpeta es de otro profesor, pero se ve porque la publicó.
+ */
+async function loadPickerFolder (key, { append = false } = {}) {
+  const generation = collectionEditorGeneration
+  const grupo = grupoPicker(key) ?? grupoVacio()
+  if (grupo.cargando) return
+  if (append && !grupo.nextCursor) return
+  grupo.cargando = true
+  grupo.error = null
+  state.picker.porCarpeta.set(key, grupo)
+  renderPicker()
+  try {
+    const params = new URLSearchParams({ folderId: key, limit: '200' })
+    if (append && grupo.nextCursor) params.set('cursor', grupo.nextCursor)
+    const data = await apiJson(`/materials?${params}`)
+    if (generation !== collectionEditorGeneration) return
+    const traido = insertables(data.materials)
+    grupo.materials = ordenLectura(
+      uniqueBy(append ? [...grupo.materials, ...traido] : traido, (m) => `${m.kind}:${m.id}`))
+    grupo.nextCursor = data.nextCursor
+    grupo.cargado = true
+  } catch (err) {
+    if (generation !== collectionEditorGeneration) return
+    grupo.error = err.message
+  } finally {
+    grupo.cargando = false
+    if (generation === collectionEditorGeneration) renderPicker()
+  }
+}
+
 let pickerGeneration = 0
 
+/** Búsqueda: ahí la lista sí va plana, porque ya viene filtrada por el término. */
 async function loadPicker ({ append = false } = {}) {
   const cursor = append ? state.pickerNextCursor : null
   if (append && !cursor) return
@@ -1823,12 +2035,8 @@ async function loadPicker ({ append = false } = {}) {
   try {
     const data = await apiJson(`/materials?${params}`)
     if (generation !== pickerGeneration) return
-    // Lo insertable: publicado o aún en cola (el alumno lo verá al procesarse),
-    // sin archivar. Misma regla que la inserción de material suelto.
-    const insertable = data.materials.filter((m) =>
-      !m.archived && (m.hasActiveRevision || INSERTABLE_STATUSES.has(m.status)))
-    const combined = append ? [...state.pickerResults, ...insertable] : insertable
-    state.pickerResults = [...new Map(combined.map((item) => [`${item.kind}:${item.id}`, item])).values()]
+    const combined = append ? [...state.pickerResults, ...insertables(data.materials)] : insertables(data.materials)
+    state.pickerResults = uniqueBy(combined, (item) => `${item.kind}:${item.id}`)
     state.pickerNextCursor = data.nextCursor
     renderPicker()
   } catch (err) {
@@ -1839,47 +2047,213 @@ async function loadPicker ({ append = false } = {}) {
   }
 }
 
-function renderPicker () {
-  const chosen = new Set(state.collectionDraft.items.map((s) => `${s.kind}:${s.id}`))
-  el('collection-picker').replaceChildren(...state.pickerResults.map((material) => {
-    const li = document.createElement('li')
-    const label = document.createElement('span')
-    label.className = 'item-label'
-    const name = document.createElement('span')
-    name.textContent = `${material.kind === 'pdf' ? 'PDF' : 'Vídeo'} · ${material.title}`
-    const where = document.createElement('span')
-    where.className = 'muted'
-    // La insignia de estado avisa de que se añade algo aún en preparación.
-    where.textContent = ` — en ${pathName(material.folderId)}` +
-      (isShared(material) ? ` · de ${ownerLabel(material)}` : '') +
-      (material.status !== 'ready' ? ` · ${STATUS_LABEL[material.status] ?? material.status}` : '')
-    label.append(name, where)
+/**
+ * Añade respetando el tope de la colección. Devuelve cuántos entraron y cuántos
+ * se quedaron fuera: recortar en silencio dejaría al profesor creyendo que ha
+ * metido la carpeta entera.
+ */
+function sumarAlBorrador (materiales) {
+  const items = state.collectionDraft.items
+  const yaEstan = new Set(items.map((s) => `${s.kind}:${s.id}`))
+  const nuevos = materiales.filter((m) => !yaEstan.has(`${m.kind}:${m.id}`))
+  const hueco = Math.max(0, topeColeccion() - items.length)
+  for (const material of nuevos.slice(0, hueco)) {
+    items.push({ kind: material.kind, id: material.id, title: material.title })
+  }
+  renderCollectionItems()
+  renderPicker()
+  return { sumados: Math.min(nuevos.length, hueco), fuera: Math.max(0, nuevos.length - hueco) }
+}
 
-    const toggle = document.createElement('button')
-    toggle.type = 'button'
-    const key = `${material.kind}:${material.id}`
-    toggle.textContent = chosen.has(key) ? 'Quitar' : 'Añadir'
-    toggle.addEventListener('click', () => {
-      const items = state.collectionDraft.items
-      const at = items.findIndex((s) => s.kind === material.kind && s.id === material.id)
-      if (at >= 0) items.splice(at, 1)
-      else items.push({ kind: material.kind, id: material.id, title: material.title })
+function filaAviso (texto, sangria = 0) {
+  const li = document.createElement('li')
+  li.className = 'picker-note muted'
+  li.style.setProperty('--picker-depth', String(sangria))
+  li.textContent = texto
+  return li
+}
+
+function filaMaterial (material, { elegidos, sangria = 0, conRuta = false }) {
+  const li = document.createElement('li')
+  li.className = 'picker-item'
+  li.style.setProperty('--picker-depth', String(sangria))
+
+  const label = document.createElement('span')
+  label.className = 'item-label'
+  const name = document.createElement('span')
+  name.textContent = `${material.kind === 'pdf' ? 'PDF' : 'Vídeo'} · ${material.title}`
+  const where = document.createElement('span')
+  where.className = 'muted'
+  // La insignia de estado avisa de que se añade algo aún en preparación.
+  where.textContent =
+    (conRuta ? ` — en ${pathName(material.folderId)}` : '') +
+    (isShared(material) ? ` · de ${ownerLabel(material)}` : '') +
+    (material.status !== 'ready' ? ` · ${STATUS_LABEL[material.status] ?? material.status}` : '')
+  label.append(name, where)
+
+  const key = `${material.kind}:${material.id}`
+  const puesto = elegidos.has(key)
+  const toggle = document.createElement('button')
+  toggle.type = 'button'
+  toggle.textContent = puesto ? 'Quitar' : 'Añadir'
+  toggle.setAttribute('aria-label', `${puesto ? 'Quitar' : 'Añadir'} ${material.title}`)
+  toggle.addEventListener('click', () => {
+    const items = state.collectionDraft.items
+    const at = items.findIndex((s) => s.kind === material.kind && s.id === material.id)
+    if (at >= 0) {
+      items.splice(at, 1)
       renderCollectionItems()
       renderPicker()
-    })
+      return
+    }
+    const { fuera } = sumarAlBorrador([material])
+    if (fuera) dialogStatus('collection-error', mensajeTope(), { error: true })
+  })
 
-    li.append(label, toggle)
-    return li
-  }))
-  el('collection-picker-more').hidden = !state.pickerNextCursor
+  li.append(label, toggle)
+  return li
+}
+
+/** Cabecera de un grupo, con su contenido debajo si está desplegado. */
+function filasDeCarpeta (folder, elegidos) {
+  const key = folder ? folder.id : PICKER_RAIZ
+  const nombre = folder ? folder.name : 'Sin carpeta'
+  const sangria = folder ? Math.max(0, pathOf(folder.id).length - 1) : 0
+  const abierta = state.picker.expanded.has(key)
+  const grupo = grupoPicker(key)
+  // Antes de traer nada vale la cuenta del árbol; después manda lo que de
+  // verdad se puede insertar, que descuenta lo fallido y lo que sigue subiendo.
+  const propios = grupo?.cargado && !grupo.nextCursor
+    ? grupo.materials.length
+    : folder
+      ? Number(folder.videoCount ?? 0) + Number(folder.documentCount ?? 0)
+      : Number(state.root?.videoCount ?? 0) + Number(state.root?.documentCount ?? 0)
+
+  const li = document.createElement('li')
+  li.className = 'picker-folder'
+  li.style.setProperty('--picker-depth', String(sangria))
+
+  const toggle = document.createElement('button')
+  toggle.type = 'button'
+  toggle.className = 'picker-folder-toggle'
+  toggle.setAttribute('aria-expanded', String(abierta))
+  const flecha = document.createElement('span')
+  flecha.className = 'picker-twisty'
+  flecha.setAttribute('aria-hidden', 'true')
+  flecha.textContent = abierta ? '▾' : '▸'
+  const texto = document.createElement('span')
+  texto.className = 'picker-folder-name'
+  texto.textContent = nombre
+  const cuenta = document.createElement('span')
+  cuenta.className = 'muted'
+  cuenta.textContent = `${propios} material${propios === 1 ? '' : 'es'}` +
+    (folder && isShared(folder) ? ` · de ${ownerLabel(folder)}` : '')
+  toggle.append(flecha, texto, cuenta)
+  toggle.addEventListener('click', () => {
+    if (abierta) state.picker.expanded.delete(key)
+    else {
+      state.picker.expanded.add(key)
+      if (!grupoPicker(key)?.cargado) void loadPickerFolder(key)
+    }
+    renderPicker()
+  })
+
+  const todo = document.createElement('button')
+  todo.type = 'button'
+  todo.className = 'picker-add-all'
+  todo.textContent = 'Añadir todo'
+  todo.setAttribute('aria-label', `Añadir los ${propios} materiales de ${nombre}`)
+  todo.disabled = propios === 0
+  todo.addEventListener('click', async () => {
+    state.picker.expanded.add(key)
+    if (!grupoPicker(key)?.cargado) await loadPickerFolder(key)
+    const traido = grupoPicker(key)
+    if (!traido || traido.materials.length === 0) {
+      dialogStatus('collection-error',
+        `«${nombre}» no tiene material que se pueda insertar.`, { error: true })
+      return
+    }
+    const { fuera } = sumarAlBorrador(traido.materials)
+    dialogStatus('collection-error',
+      fuera ? `${mensajeTope()} Se han quedado fuera ${fuera}.` : '',
+      { error: Boolean(fuera) })
+  })
+
+  li.append(toggle, todo)
+  const filas = [li]
+  if (!abierta) return filas
+
+  if (!grupo || (grupo.cargando && !grupo.cargado)) {
+    filas.push(filaAviso('Cargando…', sangria + 1))
+  } else if (grupo.error) {
+    filas.push(filaAviso(`No se pudo cargar: ${grupo.error}`, sangria + 1))
+  } else if (grupo.materials.length === 0) {
+    filas.push(filaAviso('Sin material que se pueda insertar', sangria + 1))
+  } else {
+    for (const material of grupo.materials) {
+      filas.push(filaMaterial(material, { elegidos, sangria: sangria + 1 }))
+    }
+  }
+  if (grupo?.nextCursor) {
+    const fila = document.createElement('li')
+    fila.className = 'picker-note'
+    fila.style.setProperty('--picker-depth', String(sangria + 1))
+    const mas = document.createElement('button')
+    mas.type = 'button'
+    mas.textContent = 'Mostrar más de esta carpeta'
+    mas.disabled = Boolean(grupo.cargando)
+    mas.addEventListener('click', () => { void loadPickerFolder(key, { append: true }) })
+    fila.append(mas)
+    filas.push(fila)
+  }
+  return filas
+}
+
+function renderPicker () {
+  const elegidos = new Set(state.collectionDraft.items.map((s) => `${s.kind}:${s.id}`))
+  const buscando = Boolean(state.picker.query)
+  const filas = []
+  if (buscando) {
+    for (const material of state.pickerResults) {
+      filas.push(filaMaterial(material, { elegidos, conRuta: true }))
+    }
+    if (filas.length === 0) filas.push(filaAviso('Ningún material coincide con la búsqueda'))
+  } else {
+    const enRaiz = Number(state.root?.videoCount ?? 0) + Number(state.root?.documentCount ?? 0)
+    if (enRaiz > 0) filas.push(...filasDeCarpeta(null, elegidos))
+    for (const folder of carpetasDelPicker()) filas.push(...filasDeCarpeta(folder, elegidos))
+    if (filas.length === 0) filas.push(filaAviso('Todavía no hay material en la biblioteca'))
+  }
+  el('collection-picker').replaceChildren(...filas)
+  el('collection-picker-hint').hidden = buscando
+  el('collection-picker-more').hidden = !(buscando && state.pickerNextCursor)
+}
+
+/**
+ * Deja el selector como recién abierto y con la carpeta de partida a la vista,
+ * que es donde el profesor va a buscar casi siempre.
+ */
+function resetPicker (folderId) {
+  state.picker = { query: '', expanded: new Set(), porCarpeta: new Map() }
+  state.pickerResults = []
+  state.pickerNextCursor = null
+  el('collection-search').value = ''
+  for (const ancestro of pathOf(folderId)) state.picker.expanded.add(ancestro.id)
+  const key = folderId ?? PICKER_RAIZ
+  state.picker.expanded.add(key)
+  renderPicker()
+  void loadPickerFolder(key)
 }
 
 let pickerTimer = null
 el('collection-search').addEventListener('input', () => {
   clearTimeout(pickerTimer)
   pickerTimer = setTimeout(() => {
+    state.picker.query = el('collection-search').value.trim()
     state.pickerNextCursor = null
-    void loadPicker()
+    state.pickerResults = []
+    if (state.picker.query) void loadPicker()
+    else renderPicker()
   }, 300)
 })
 el('collection-picker-more').addEventListener('click', () => { void loadPicker({ append: true }) })
@@ -2309,12 +2683,32 @@ const newMenu = menuFlotante(el('new-menu'))
 for (const [id, run] of [
   ['upload-open', openUpload],
   ['new-folder', () => { void createFolder() }],
-  ['new-collection', openNewCollection]
+  ['new-collection', openNewCollection],
+  ['new-collection-folder', () => { void openCollectionFromFolder() }]
 ]) {
   el(id).addEventListener('click', () => {
     newMenu.open = false
     run()
   })
+}
+
+// «Colección con esta carpeta» actúa sobre la carpeta abierta: si no hay
+// ninguna, la opción se apaga y dice por qué, en vez de fallar al pulsarla.
+el('new-menu').addEventListener('toggle', () => {
+  const folder = state.view === 'browse' ? folderById(state.folderId) : null
+  const boton = el('new-collection-folder')
+  boton.disabled = !folder
+  boton.textContent = folder
+    ? `Colección con «${recortar(folder.name, 24)}»…`
+    : 'Colección con esta carpeta…'
+  boton.title = folder
+    ? `Reúne el material de «${folder.name}» y de sus subcarpetas`
+    : 'Abre una carpeta para usar esta opción'
+})
+
+/** Nombres largos en un menú flotante lo estiran hasta salirse de la barra. */
+function recortar (texto, largo) {
+  return texto.length > largo ? `${texto.slice(0, largo - 1)}…` : texto
 }
 
 // ---------------------------------------------------------------------------

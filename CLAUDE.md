@@ -111,7 +111,8 @@ Encima de ambos: carpetas personales **anidadas** por profesor (ADR-016),
 colecciones que agrupan varios materiales en una sola actividad Moodle, y
 revisiones que permiten sustituir un fichero sin cambiar el UUID que Moodle
 tiene incrustado. La biblioteca del profesor es un explorador de archivos:
-migas + tarjetas de carpeta; la colección se compone en un diálogo con buscador.
+migas + tarjetas de carpeta; la colección se compone en un diálogo que enseña
+la biblioteca por carpetas, con buscador global.
 
 ## Invariantes que no se negocian
 
