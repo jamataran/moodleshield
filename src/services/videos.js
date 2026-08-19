@@ -286,21 +286,6 @@ export function deleteOwnedVideo ({ videoId, platformId, ownerSub }) {
     )
     if (used.length > 0) return { status: 'referenced', collections: used, sourcePaths: [], revisions: [] }
 
-    // Lo ya emitido no se toca: si hay una actividad de Moodle sirviendo esto,
-    // borrarlo la rompe para sus alumnos y no hay callback que avise a nadie.
-    const { rows: colocado } = await client.query(
-      `SELECT DISTINCT p.context_id
-         FROM resource_placement p
-        WHERE p.revoked_at IS NULL
-          AND ((p.resource_kind = 'video' AND p.resource_id = $1)
-               OR EXISTS (SELECT 1 FROM resource_placement_item i
-                           WHERE i.placement_id = p.id AND i.video_id = $1))`,
-      [videoId]
-    )
-    if (colocado.length > 0) {
-      return { status: 'placed', courses: colocado.map((row) => row.context_id), sourcePaths: [], revisions: [] }
-    }
-
     const { rows: jobs } = await client.query(
       'SELECT source_path FROM transcode_job WHERE video_id = $1 FOR UPDATE',
       [videoId]

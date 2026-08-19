@@ -236,15 +236,6 @@ documentsRouter.delete('/:id', requireCatalogInstructor, async (req, res, next) 
         collections: result.collections.map((row) => ({ id: row.id, title: row.title }))
       })
     }
-    if (result.status === 'placed') {
-      return res.status(409).json({
-        error: `Este material está insertado en ${result.courses.length} actividad(es) de Moodle. ` +
-          'Bórralo de ellas primero, o archívalo: archivar lo retira del catálogo sin romper ' +
-          'lo que los alumnos ya tienen delante.',
-        code: 'material_placed',
-        courses: result.courses.length
-      })
-    }
     await removeMaterialFiles('pdf', id).catch((err) => {
       logger.warn({ err, documentId: id }, 'Documento borrado de DB; quedan ficheros para reconciliar')
     })

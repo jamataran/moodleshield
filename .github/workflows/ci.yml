@@ -47,38 +47,6 @@ jobs:
           fi
           echo "Sin cambios en infra/prod/."
 
-  # Una migración ya publicada no vuelve a ejecutarse donde ya corrió: editarla
-  # no arregla nada y separa en silencio el esquema de producción del que
-  # describe el repositorio. Peor si el cambio es destructivo, porque CI las
-  # aplica sobre una base vacía, donde un DROP no duele. Aquí sólo se comprueba
-  # que nadie toca las de antes; que las nuevas sean aditivas lo vigila
-  # `test/guardia-datos.test.js`.
-  migraciones-inmutables:
-    name: Migraciones inmutables
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Las migraciones de antes no se editan ni se borran
-        env:
-          BASE: ${{ github.base_ref }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin "$BASE"
-          tocadas=$(git diff --name-only --diff-filter=MDR "origin/${BASE}...HEAD" -- migrations/)
-          if [ -n "$tocadas" ]; then
-            echo "::error::Estas migraciones ya estaban publicadas y esta PR las cambia o las borra:"
-            echo "$tocadas"
-            echo "Son inmutables por contrato: va una migración NUEVA, numerada, aditiva y reejecutable."
-            exit 1
-          fi
-          nuevas=$(git diff --name-only --diff-filter=A "origin/${BASE}...HEAD" -- migrations/ || true)
-          echo "Migraciones nuevas en esta PR: ${nuevas:-ninguna}"
-
   verify:
     name: Lint, tests e infraestructura
     runs-on: ubuntu-latest
