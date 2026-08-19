@@ -50,6 +50,38 @@ export function findPlatform ({ issuer, clientId }) {
   })
 }
 
+/**
+ * Por qué NO ha encajado una plataforma, para el log del operador.
+ *
+ * Un launch contra una plataforma que no encaja responde 404 y el mensaje no
+ * distingue el motivo: hacia fuera está bien —no confirma qué hay registrado—,
+ * pero deja al operador con tres causas indistinguibles y ninguna pista. Esto
+ * las separa **sólo para el log del servidor**, que es donde puede mirar quien
+ * administra la instancia. La respuesta HTTP no cambia.
+ */
+export async function diagnosePlatformMiss ({ issuer, clientId }) {
+  const rows = await many(
+    'SELECT client_id, enabled FROM lti_platform WHERE issuer = $1 ORDER BY created_at',
+    [issuer]
+  )
+  if (rows.length === 0) {
+    return { reason: 'issuer_no_registrado', hint: 'Ningún registro con ese issuer. Comprueba que el issuer de Moodle coincide EXACTAMENTE (sin barra final, y sólo el origen: la consola rechaza issuers con ruta).' }
+  }
+  const match = clientId ? rows.find((row) => row.client_id === clientId) : null
+  if (clientId && !match) {
+    return {
+      reason: 'client_id_distinto',
+      clientIdsRegistrados: rows.map((row) => row.client_id),
+      hint: 'El issuer sí está registrado, pero con otro client_id. En Moodle es el «ID de cliente» de la herramienta.'
+    }
+  }
+  const vivas = (match ? [match] : rows).filter((row) => row.enabled)
+  if (vivas.length === 0) {
+    return { reason: 'plataforma_deshabilitada', hint: 'La plataforma existe pero está deshabilitada: actívala en la consola.' }
+  }
+  return { reason: 'desconocido' }
+}
+
 export function getPlatformById (id) {
   return one('SELECT * FROM lti_platform WHERE id = $1', [id])
 }

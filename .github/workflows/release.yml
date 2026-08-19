@@ -1,7 +1,15 @@
-name: 'Release · promoción manual de test a producción'
+name: 'Release · crear el tag de promoción sobre test'
 
-# Publicación manual desde GitHub Actions. Evita tener que localizar a mano el
-# commit padre de deploy(test): crea el tag y promueve el mismo digest.
+# Este workflow SÓLO crea el tag. La promoción la hace `cd-promote.yml`, que se
+# dispara con `v*`: re-etiqueta el digest ensayado, avanza `main` hasta el commit
+# y escribe `infra/prod/compose.yml`. Aquí no se toca GHCR ni `main`.
+#
+# Antes de ADR-028 este fichero hacía las dos cosas, y quedó desincronizado al
+# separar los entornos por rama: leía `infra/test/compose.yml` desde `main`
+# —donde ya nunca se actualiza, porque el bump `deploy(test)` aterriza en
+# `test`—, buscaba el commit en `origin/main` y verificaba una firma emitida por
+# `cd-main.yml@refs/heads/main`, workflow que ya no existe. Habría promocionado
+# una imagen congelada, o no habría promocionado nada.
 #
 # La versión no se teclea: se elige el tipo de salto y el job la deriva del
 # último tag vX.Y.Z. El desplegable de GitHub sólo admite literales fijos, así
@@ -25,21 +33,22 @@ concurrency:
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
-  release:
-    name: Etiquetar y publicar en producción
+  tag:
+    name: Etiquetar el commit ensayado en test
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Obtener main completo
+      # `test` es la única fuente: es donde `cd-test.yml` escribe el bump y, por
+      # tanto, lo único que dice qué imagen se ha ensayado de verdad.
+      - name: Obtener test completo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: test
           fetch-depth: 0
 
-      - name: Resolver y validar versión e imagen de test
+      - name: Resolver versión y commit de test
         id: meta
         env:
           BUMP: ${{ inputs.bump }}
@@ -85,7 +94,7 @@ jobs:
           app_image=$(awk '$1 == "image:" && $2 ~ /\/app:/ {print $2; exit}' infra/test/compose.yml)
           sha_tag="${app_image##*:}"
           [[ "$sha_tag" =~ ^sha-[0-9a-f]{7,40}$ ]] || {
-            echo "::error::infra/test/compose.yml no apunta a una imagen sha-* válida: $sha_tag"
+            echo "::error::infra/test/compose.yml no apunta a una imagen sha-* válida: $sha_tag. ¿Ha corrido ya cd-test.yml sobre esta rama?"
             exit 1
           }
 
@@ -95,20 +104,22 @@ jobs:
           # Sólo se nota cuando la salida pasa de 4 KB (el buffer de stdio),
           # así que funcionó hasta que la historia creció lo suficiente.
           deploy_commit=$(git log -n 1 --format='%H' --fixed-strings \
-            --grep="deploy(test): ${sha_tag} [skip ci]" origin/main)
+            --grep="deploy(test): ${sha_tag} [skip ci]" origin/test)
           [[ -n "$deploy_commit" ]] || {
-            echo "::error::No se encontró el commit deploy(test) de $sha_tag en main"
+            echo "::error::No se encontró el commit deploy(test) de $sha_tag en la rama test"
             exit 1
           }
 
+          # El commit que se etiqueta es el PADRE del bump: el que se construyó y
+          # se ensayó. El bump sólo cambia la etiqueta de imagen del Compose.
           source_commit=$(git rev-parse "${deploy_commit}^")
           source_tag="sha-${source_commit:0:7}"
           [[ "$source_tag" == "$sha_tag" ]] || {
             echo "::error::$sha_tag no corresponde al commit padre de $deploy_commit"
             exit 1
           }
-          git merge-base --is-ancestor "$source_commit" origin/main || {
-            echo "::error::El commit de test no pertenece a main"
+          git merge-base --is-ancestor "$source_commit" origin/test || {
+            echo "::error::El commit $source_commit no pertenece a test"
             exit 1
           }
 
@@ -118,16 +129,15 @@ jobs:
               echo "::error::El tag $VERSION ya existe y apunta a otro commit"
               exit 1
             }
-            echo "El tag $VERSION ya apunta al commit correcto; continuamos la promoción"
+            echo "El tag $VERSION ya apunta al commit correcto"
           fi
 
-          echo "repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-          echo "sha_tag=$sha_tag" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=$sha_tag"             >> "$GITHUB_OUTPUT"
           echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"             >> "$GITHUB_OUTPUT"
+          echo "previous=$previous"           >> "$GITHUB_OUTPUT"
 
-      - name: Crear tag de release
+      - name: Crear y empujar el tag
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           SOURCE_COMMIT: ${{ steps.meta.outputs.source_commit }}
@@ -135,91 +145,31 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git show-ref --tags --verify --quiet "refs/tags/$VERSION"; then
-            git tag "$VERSION" "$SOURCE_COMMIT"
-            git push origin "$VERSION"
-          fi
-
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Instalar cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
-
-      - name: Verificar firma de las imágenes ensayadas en test
-        env:
-          REPO: ${{ steps.meta.outputs.repo }}
-          SOURCE_TAG: ${{ steps.meta.outputs.sha_tag }}
-        run: |
-          set -euo pipefail
-          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/cd-main.yml@refs/heads/main"
-          for image in app worker proxy; do
-            cosign verify \
-              --certificate-identity "$identity" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              "ghcr.io/${REPO}/${image}:${SOURCE_TAG}" >/dev/null
-          done
-
-      - name: Promover el mismo digest a GHCR
-        env:
-          REPO: ${{ steps.meta.outputs.repo }}
-          SOURCE_TAG: ${{ steps.meta.outputs.sha_tag }}
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          set -euo pipefail
-          for image in app worker proxy; do
-            source="ghcr.io/${REPO}/${image}:${SOURCE_TAG}"
-            docker buildx imagetools inspect "$source" >/dev/null
-            docker buildx imagetools create \
-              -t "ghcr.io/${REPO}/${image}:${VERSION}" \
-              -t "ghcr.io/${REPO}/${image}:latest" \
-              "$source"
-          done
-
-      - name: Apuntar producción a la nueva versión
-        env:
-          VERSION: ${{ steps.meta.outputs.version }}
-          REPO: ${{ steps.meta.outputs.repo }}
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          git checkout -B main origin/main
-          sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/app:.*$|    image: ghcr.io/jamataran/moodleshield/app:${VERSION}|"       infra/prod/compose.yml
-          sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/worker:.*$|    image: ghcr.io/jamataran/moodleshield/worker:${VERSION}|" infra/prod/compose.yml
-          sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${VERSION}|"   infra/prod/compose.yml
-          # Activación atómica con la primera imagen que entiende SERVICE_ROLE.
-          sed -i "s|environment: \*app-env # WORKER_ENV_ACTIVATION|environment: *worker-env # WORKER_ENV_ACTIVATION|" infra/prod/compose.yml
-          git add infra/prod/compose.yml
-          git commit -m "deploy(prod): ${VERSION} [skip ci]"
-          git push origin main
-
-      - name: Avisar a Portainer (opcional)
-        env:
-          WEBHOOK: ${{ secrets.PORTAINER_WEBHOOK_PROD }}
-        run: |
-          if [ -z "${WEBHOOK:-}" ]; then
-            echo "Sin webhook: Portainer redesplegará en su próximo polling."
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "El tag $VERSION ya está en origin; cd-promote.yml ya se disparó con él."
             exit 0
           fi
-          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$WEBHOOK")
-          echo "Portainer respondió $code"
-          [ "$code" -lt 400 ]
+          git tag "$VERSION" "$SOURCE_COMMIT"
+          # Empujar el tag dispara cd-promote.yml, que hace la promoción real.
+          git push origin "$VERSION"
 
       - name: Resumen
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           PREVIOUS: ${{ steps.meta.outputs.previous }}
-          BUMP: ${{ inputs.bump }}
-          SOURCE_TAG: ${{ steps.meta.outputs.sha_tag }}
+          SHA_TAG: ${{ steps.meta.outputs.sha_tag }}
+          SOURCE_COMMIT: ${{ steps.meta.outputs.source_commit }}
         run: |
           {
-            echo "### Producción → \`${VERSION}\`"
+            echo "### Tag \`${VERSION}\` creado"
             echo ""
-            echo "Salto desde \`${PREVIOUS}\` (${BUMP})."
-            echo "Promocionado desde \`${SOURCE_TAG}\` sin reconstruir."
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Anterior | \`${PREVIOUS}\` |"
+            echo "| Commit de test | \`${SOURCE_COMMIT}\` |"
+            echo "| Imagen ensayada | \`${SHA_TAG}\` |"
+            echo ""
+            echo "La promoción la ejecuta **cd-promote.yml**, disparado por este tag:"
+            echo "re-etiqueta \`${SHA_TAG}\` como \`${VERSION}\` (mismo digest), avanza"
+            echo "\`main\` hasta el commit y escribe \`infra/prod/compose.yml\`."
           } >> "$GITHUB_STEP_SUMMARY"

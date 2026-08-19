@@ -1,5 +1,6 @@
 import config, { assertConfigValid } from './config.js'
 import logger from './logger.js'
+import { appVersion } from './version.js'
 import { createApp } from './app.js'
 import { closeDatabase } from './db/index.js'
 import { getActiveKey } from './lti/keys.js'
@@ -19,7 +20,14 @@ logger.info({ kid: key.kid }, 'Clave de firma de la herramienta lista')
 const app = await createApp()
 const server = app.listen(config.http.port, config.http.host, () => {
   logger.info(
-    { port: config.http.port, publicUrl: config.publicUrl, env: config.env },
+    {
+      port: config.http.port,
+      publicUrl: config.publicUrl,
+      env: config.env,
+      // Cuál de los tres stacks es. `env` vale `production` también en test.
+      deployment: config.deployment || '(sin declarar)',
+      version: appVersion
+    },
     'MoodleShield escuchando'
   )
 })

@@ -45,15 +45,23 @@
         <div id="shared-grid" class="folder-tree" role="list"></div>
       </section>
 
-      <button id="course-toggle" type="button" class="library-view" hidden>
-        <span aria-hidden="true">◎</span>
-        <span>Material de este curso</span>
-      </button>
+      <!--
+        Ni el material del curso ni lo archivado son carpetas de nadie: son
+        vistas, como «Todo el contenido». Van en su propio bloque y separados
+        por una línea porque, pegados debajo del árbol, se leían como una
+        carpeta más de «Mis carpetas».
+      -->
+      <nav class="library-views library-views-end" aria-label="Otras vistas">
+        <button id="course-toggle" type="button" class="library-view" hidden>
+          <span aria-hidden="true">◎</span>
+          <span>Material de este curso</span>
+        </button>
 
-      <button id="archived-toggle" type="button" class="library-view archived-view">
-        <span aria-hidden="true">♲</span>
-        <span>Archivados</span>
-      </button>
+        <button id="archived-toggle" type="button" class="library-view archived-view">
+          <span aria-hidden="true">♲</span>
+          <span>Archivados</span>
+        </button>
+      </nav>
     </aside>
 
     <!-- Sólo existe cuando el lateral es un cajón superpuesto (pantalla estrecha). -->
@@ -84,6 +92,7 @@
             <button id="import-open" type="button">Importar una carpeta…</button>
             <button id="new-folder" type="button">Nueva carpeta…</button>
             <button id="new-collection" type="button">Nueva colección…</button>
+            <button id="new-collection-folder" type="button">Colección con esta carpeta…</button>
           </div>
         </details>
       </div>
@@ -254,32 +263,37 @@
   <dialog id="import-dialog" aria-labelledby="import-heading">
     <div>
       <h2 id="import-heading">Importar una carpeta</h2>
-      <p class="muted">
-        Se sube la carpeta entera <strong>respetando su estructura interna</strong>:
-        cada subcarpeta pasa a ser una carpeta de tu biblioteca. No se crean
-        colecciones — para agrupar materiales en una sola actividad, usa
-        <strong>Nueva colección</strong> cuando termine.
-      </p>
-      <p>
-        <label for="import-picker">Carpeta del ordenador</label>
-        <input type="file" id="import-picker" webkitdirectory directory multiple>
-      </p>
-      <p class="muted" id="import-target"></p>
-      <div id="import-preview" class="import-preview" hidden>
-        <p id="import-summary"></p>
-        <details id="import-skipped-box" hidden>
-          <summary id="import-skipped-summary">Ficheros omitidos</summary>
-          <ul id="import-skipped" class="import-skipped"></ul>
-        </details>
+      <!-- Todo lo que sirve para PREPARAR la importación vive aquí dentro, y se
+           oculta en bloque mientras sube: una vez pulsado el botón, lo único que
+           el profesor necesita mirar es cuánto queda. -->
+      <div id="import-setup">
+        <p class="muted">
+          Se sube la carpeta entera <strong>respetando su estructura interna</strong>:
+          cada subcarpeta pasa a ser una carpeta de tu biblioteca. No se crean
+          colecciones — para agrupar materiales en una sola actividad, usa
+          <strong>Nueva colección</strong> cuando termine.
+        </p>
+        <p>
+          <label for="import-picker">Carpeta del ordenador</label>
+          <input type="file" id="import-picker" webkitdirectory directory multiple>
+        </p>
+        <p class="muted" id="import-target"></p>
+        <div id="import-preview" class="import-preview" hidden>
+          <p id="import-summary"></p>
+          <details id="import-skipped-box" hidden>
+            <summary id="import-skipped-summary">Ficheros omitidos</summary>
+            <ul id="import-skipped" class="import-skipped"></ul>
+          </details>
+        </div>
+        <p class="muted">
+          Se omiten los ficheros ocultos (<code>.DS_Store</code>, <code>Thumbs.db</code>,
+          carpetas que empiezan por punto) y todo lo que no sea vídeo o PDF. Un
+          fichero cuyo título ya exista en su carpeta se sube como
+          <strong>versión nueva</strong> del material que ya está ahí: no se
+          duplica y <strong>no cambia</strong> el identificador que Moodle guardó
+          en las actividades ya creadas.
+        </p>
       </div>
-      <p class="muted">
-        Se omiten los ficheros ocultos (<code>.DS_Store</code>, <code>Thumbs.db</code>,
-        carpetas que empiezan por punto) y todo lo que no sea vídeo o PDF. Un
-        fichero cuyo título ya exista en su carpeta se sube como
-        <strong>versión nueva</strong> del material que ya está ahí: no se
-        duplica y <strong>no cambia</strong> el identificador que Moodle guardó
-        en las actividades ya creadas.
-      </p>
       <div id="import-progress" class="import-progress" hidden>
         <progress id="import-bar" max="100" value="0"></progress>
         <p class="muted" id="import-current"></p>
@@ -311,6 +325,7 @@
         <label for="collection-folder">Guardar en la carpeta</label>
         <select id="collection-folder"></select>
       </p>
+      <p id="collection-hint" class="muted" hidden></p>
       <p id="collection-error" class="dialog-error" role="alert" tabindex="-1" hidden></p>
 
       <div class="collection-editor-grid">
@@ -325,10 +340,14 @@
         <section>
           <h3>Añadir materiales</h3>
           <p>
-            <input type="search" id="collection-search" placeholder="Buscar materiales listos"
+            <input type="search" id="collection-search" placeholder="Buscar en toda la biblioteca"
                    aria-label="Buscar materiales para añadir">
           </p>
-          <ul id="collection-picker" class="collection-picker"></ul>
+          <p class="muted" id="collection-picker-hint">
+            Despliega una carpeta para ver su material. «Añadir todo» mete la carpeta entera.
+          </p>
+          <ul id="collection-picker" class="collection-picker"
+              aria-label="Material de la biblioteca, por carpetas"></ul>
           <p class="load-more-row">
             <button type="button" id="collection-picker-more" hidden>Mostrar más materiales</button>
           </p>

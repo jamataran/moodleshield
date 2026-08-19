@@ -33,16 +33,45 @@ test('las imágenes base desplegables están ancladas por digest', async () => {
   }
 })
 
-test('CD publica SBOM, provenance y firma; release verifica la firma', async () => {
+test('CD publica SBOM, provenance y firma; la promoción la verifica', async () => {
   const cd = await readFile(path.join(root, '.github/workflows/cd-test.yml'), 'utf8')
-  const release = await readFile(path.join(root, '.github/workflows/release.yml'), 'utf8')
+  const promote = await readFile(path.join(root, '.github/workflows/cd-promote.yml'), 'utf8')
   assert.match(cd, /\*\.attest=type=sbom/)
   assert.match(cd, /\*\.attest=type=provenance,mode=max/)
   assert.match(cd, /cosign sign --yes/)
   assert.equal((cd.match(/aquasecurity\/trivy-action@[0-9a-f]{40}/g) ?? []).length, 3)
   assert.equal((cd.match(/severity: CRITICAL,HIGH/g) ?? []).length, 3)
   assert.equal((cd.match(/exit-code: '1'/g) ?? []).length, 3)
-  assert.match(release, /cosign verify/)
+
+  // Promocionar no reconstruye: lo único que demuestra la procedencia del
+  // digest es la firma que le puso cd-test. Se verifica ANTES de re-etiquetar.
+  assert.match(promote, /cosign verify/)
+  // Por posición del PASO, no del texto: la cabecera del workflow ya menciona
+  // `imagetools create` en un comentario y adelantaría la comparación.
+  const verifyAt = promote.search(/^ {6}- name: .*[Vv]erificar la firma/m)
+  const retagAt = promote.search(/^ {6}- name: Re-etiquetar/m)
+  assert.ok(verifyAt > -1, 'cd-promote debe tener un paso que verifique la firma')
+  assert.ok(retagAt > verifyAt, 'la verificación de firma debe ir antes del re-etiquetado')
+})
+
+// La identidad del certificado lleva dentro el nombre del workflow y la rama que
+// lo emitió. Cuando ADR-028 renombró cd-main.yml a cd-test.yml y movió el build
+// a `test`, release.yml siguió verificando contra `cd-main.yml@refs/heads/main`:
+// una identidad que ya no firma nada. Esto lo ata a lo que de verdad construye.
+test('la identidad de cosign apunta al workflow y la rama que firman', async () => {
+  const promote = await readFile(path.join(root, '.github/workflows/cd-promote.yml'), 'utf8')
+  const cd = await readFile(path.join(root, '.github/workflows/cd-test.yml'), 'utf8')
+
+  const identity = promote.match(/identity="([^"]+)"/)?.[1]
+  assert.ok(identity, 'cd-promote debe fijar la identidad del certificado')
+  const workflow = identity.match(/\.github\/workflows\/([^@]+)@refs\/heads\/(.+)$/)
+  assert.ok(workflow, `identidad con formato inesperado: ${identity}`)
+  const [, file, branch] = workflow
+
+  assert.equal(file, 'cd-test.yml', 'debe verificarse contra el workflow que firma')
+  const triggers = cd.match(/branches:\s*\[([^\]]+)\]/)?.[1] ?? ''
+  assert.ok(triggers.split(',').map((b) => b.trim()).includes(branch),
+    `cd-test.yml no se dispara en '${branch}', así que nunca firmará con esa identidad`)
 })
 
 test('el CI de PR también bloquea CVE altas/críticas en las tres imágenes', async () => {

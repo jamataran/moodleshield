@@ -126,7 +126,12 @@ test('el apagado ordenado libera el lease y el trabajo se retoma sin gastar inte
 
   const row = await one('SELECT status, attempts, worker_id, lease_expires_at FROM transcode_job WHERE id = $1', [job.id])
   assert.equal(row.status, 'pending')
-  assert.equal(row.attempts, job.attempts, 'liberar no es fallar: no gasta intentos')
+  // `attempts` sube al reclamar, así que devolverlo tiene que DESCONTARLO: si no,
+  // tres despliegues durante un vídeo largo lo dejan en `failed` por algo que no
+  // tiene nada que ver con el fichero. El reaper sí gasta intento —un lease que
+  // expira sin avisar sí puede ser culpa del material—, pero una parada que
+  // hemos decidido nosotros no.
+  assert.equal(row.attempts, job.attempts - 1, 'liberar no es fallar: devuelve el intento')
   assert.equal(row.worker_id, null)
   assert.equal(row.lease_expires_at, null)
   // La revisión vuelve a la cola, no queda colgada en processing.

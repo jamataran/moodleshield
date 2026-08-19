@@ -52,7 +52,7 @@ if (values.list) {
     console.log(`${p.enabled ? '✓' : '✗'} ${p.name}
     issuer     ${p.issuer}
     client_id  ${p.client_id}
-    deployment ${p.deployment_ids.join(', ') || '(se aprenderá en el primer launch)'}
+    deployment ${p.deployment_ids.join(', ') || '⚠ SIN REGISTRAR: en producción todo launch responde 401 deployment_not_configured'}
 `)
   }
   await closeDatabase()
@@ -79,7 +79,7 @@ console.log(`Plataforma registrada:
   id          ${platform.id}
   issuer      ${platform.issuer}
   client_id   ${platform.client_id}
-  deployment  ${platform.deployment_ids.join(', ') || '(se aprenderá en el primer launch)'}
+  deployment  ${platform.deployment_ids.join(', ') || '⚠ SIN REGISTRAR: en producción todo launch responde 401 deployment_not_configured'}
 `)
 
 await closeDatabase()

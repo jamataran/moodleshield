@@ -7,6 +7,7 @@ import {
   chooseOutputFps,
   colorFilters,
   estimateVideoArtifactBytes,
+  outputScaleFilter,
   validateProbeData
 } from '../src/media/transcode.js'
 
@@ -59,6 +60,29 @@ test('los fps de salida siguen a la fuente y mantienen el GOP entero', () => {
   assert.equal(chooseOutputFps(120), 30)
   // Un screencast a pocos fps no se infla artificialmente.
   assert.equal(chooseOutputFps(15), 15)
+  // Y dividir sólo vale si al otro lado queda una cadencia. Un móvil grabando
+  // en modo variable declara 32,5: dividir daba 16 fps, que se ve a saltos.
+  assert.equal(chooseOutputFps(32.5), 30)
+  assert.equal(chooseOutputFps(34.4), 30)
+  assert.equal(chooseOutputFps(40), 30)
+  assert.equal(chooseOutputFps(48), 24, 'aquí la mitad sí es una cadencia')
+})
+
+test('el lado largo se recorta sólo si se ha configurado y sólo si sobra', () => {
+  const vertical = { width: 1440, height: 1920 }
+  const apaisado = { width: 3840, height: 2160 }
+
+  assert.deepEqual(outputScaleFilter(vertical, 0), [], 'sin límite, no se toca nada')
+  assert.deepEqual(outputScaleFilter(vertical, 1080), ['scale=-2:1080'],
+    'en vertical el lado largo es el alto')
+  assert.deepEqual(outputScaleFilter(apaisado, 1080), ['scale=1080:-2'],
+    'en apaisado, el ancho')
+  assert.deepEqual(outputScaleFilter({ width: 960, height: 540 }, 1080), [],
+    'lo que ya cabe no se reescala hacia arriba')
+  assert.deepEqual(outputScaleFilter({ width: 1280, height: 720 }, 1080), ['scale=1080:-2'],
+    'y 1280 de lado largo sí pasa del límite, aunque «720p» suene a menos')
+  assert.deepEqual(outputScaleFilter({ width: 0, height: 0 }, 1080), [],
+    'sin dimensiones fiables, no se inventa un filtro')
 })
 
 test('sin fps fiables de la fuente se cae al valor configurado', () => {

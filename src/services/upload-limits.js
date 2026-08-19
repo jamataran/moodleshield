@@ -32,6 +32,18 @@ async function assertFreeSpace (requestedBytes) {
   }
 }
 
+/**
+ * `-1` en cualquiera de los cupos por propietario significa **sin límite**.
+ *
+ * Se concentra aquí, en una función pura, para que la semántica sea una sola y
+ * se pueda probar sin base de datos: un cupo negativo nunca frena nada, y un
+ * cupo puesto frena en cuanto lo que ya hay más lo que se pide lo supera.
+ */
+export function superaCupo (usado, limite, pedido = 0) {
+  if (limite < 0) return false
+  return Number(usado) + Number(pedido) > Number(limite)
+}
+
 /** Reserva de forma serializada por propietario antes de aceptar bytes. */
 export async function reserveUpload ({ id, platformId, ownerSub, kind, sizeBytes, expiresAt }) {
   const size = Number(sizeBytes)
@@ -68,21 +80,21 @@ export async function reserveUpload ({ id, platformId, ownerSub, kind, sizeBytes
       [platformId, ownerSub]
     )
     const usage = usageResult.rows[0]
-    if (usage.active_uploads >= config.uploads.maxActivePerOwner) {
+    if (superaCupo(usage.active_uploads, config.uploads.maxActivePerOwner, 1)) {
       throw new UploadLimitError('Hay demasiadas subidas activas para este profesor', {
         code: 'too_many_active_uploads'
       })
     }
-    if (usage.pending_jobs >= config.uploads.maxPendingJobsPerOwner) {
+    if (superaCupo(usage.pending_jobs, config.uploads.maxPendingJobsPerOwner, 1)) {
       throw new UploadLimitError('La cola de procesado de este profesor está llena', {
         code: 'too_many_pending_jobs'
       })
     }
-    if (Number(usage.reserved_bytes) + size > config.uploads.maxReservedBytesPerOwner) {
+    if (superaCupo(usage.reserved_bytes, config.uploads.maxReservedBytesPerOwner, size)) {
       throw new UploadLimitError('Las subidas reservadas superan la cuota de este profesor')
     }
-    if (Number(usage.stored_bytes) + Number(usage.reserved_bytes) + size >
-        config.uploads.maxStoredBytesPerOwner) {
+    if (superaCupo(Number(usage.stored_bytes) + Number(usage.reserved_bytes),
+      config.uploads.maxStoredBytesPerOwner, size)) {
       throw new UploadLimitError('El almacenamiento de este profesor supera su cuota', {
         status: 413,
         code: 'owner_storage_quota_exceeded'

@@ -129,6 +129,18 @@ function secret (name, { workerRequired = false } = {}) {
 
 export const config = {
   env: nodeEnv,
+  /**
+   * Qué stack es éste: `test`, `prod` o `local`.
+   *
+   * No sale del bloque de variables sino del **Compose**, literal, sin
+   * interpolar: es el único dato que no se puede pegar mal. `NODE_ENV` no sirve
+   * para esto —vale `production` en test y en producción— y ésa es justo la
+   * confusión que costó dos días: un bloque generado con el perfil `prod`
+   * —`DATA_ROOT=/docker-apps/moodleshield-pro`, la marca imperceptible, la URL
+   * pública de producción— pegado en el stack de test, y nada en pantalla ni en
+   * el log que lo dijera.
+   */
+  deployment: optional('MOODLESHIELD_ENV', ''),
   isProduction,
   serviceRole,
 
@@ -220,8 +232,19 @@ export const config = {
   uploads: {
     /** Margen que debe quedar libre incluso después de la subida reservada. */
     minFreeBytes: integer('STORAGE_MIN_FREE_BYTES', 5 * 1024 * 1024 * 1024),
+    /**
+     * Cupos por profesor. **`-1` es «sin límite»** en los cuatro.
+     *
+     * La cola de procesado viene sin límite (`-1`) a propósito: encolar no
+     * consume disco ni CPU —el worker sigue procesando de uno en uno— y el tope
+     * anterior convertía importar una carpeta grande en varias pasadas
+     * manuales, esperando a que la cola bajara. Quien de verdad protege el
+     * disco es `STORAGE_MIN_FREE_BYTES` junto con la cuota de almacenamiento,
+     * que siguen puestas. Volver a poner un número aquí es un cambio de
+     * variable de entorno, sin desplegar nada.
+     */
     maxActivePerOwner: integer('MAX_ACTIVE_UPLOADS_PER_OWNER', 5),
-    maxPendingJobsPerOwner: integer('MAX_PENDING_JOBS_PER_OWNER', 10),
+    maxPendingJobsPerOwner: integer('MAX_PENDING_JOBS_PER_OWNER', -1),
     maxReservedBytesPerOwner: integer('MAX_RESERVED_UPLOAD_BYTES_PER_OWNER', 8 * 1024 * 1024 * 1024),
     maxStoredBytesPerOwner: integer('MAX_STORED_BYTES_PER_OWNER', 100 * 1024 * 1024 * 1024)
   },
@@ -330,6 +353,15 @@ export const config = {
     maxSourceFps: integer('VIDEO_MAX_SOURCE_FPS', 120),
     maxAudioChannels: integer('VIDEO_MAX_AUDIO_CHANNELS', 8),
     maxOutputBitrateKbps: integer('VIDEO_MAX_OUTPUT_BITRATE_KBPS', 8000),
+    /**
+     * Recorta el lado largo de la salida. `0` = sin recorte, que es como se ha
+     * comportado siempre y por eso es el valor por defecto: cambiarlo aquí
+     * cambiaría en silencio la calidad de lo que se transcodifique a partir de
+     * ahora. 1080 es el valor sensato para un reproductor dentro de un iframe
+     * de Moodle, y en fuentes verticales de móvil (1440×1920) divide por tres
+     * los píxeles por fotograma, que se codifican DOS veces.
+     */
+    maxOutputLongSide: integer('VIDEO_MAX_OUTPUT_LONG_SIDE', 0),
     /** Trabajos simultáneos del worker. Con ffmpeg por software, déjalo en 1. */
     concurrency: integer('TRANSCODE_CONCURRENCY', 1),
     /** Cada cuántos ms consulta el worker si hay trabajo nuevo. */
@@ -555,10 +587,15 @@ export function assertConfigValid () {
   if (config.playback.retentionSeconds < 0 || config.playback.purgeIntervalMs < 60_000) {
     errors.push('La retención de grants no puede ser negativa y su purga debe espaciarse al menos un minuto')
   }
-  if (config.uploads.minFreeBytes < 0 || config.uploads.maxActivePerOwner < 1 ||
-      config.uploads.maxPendingJobsPerOwner < 1 || config.uploads.maxReservedBytesPerOwner < 1 ||
-      config.uploads.maxStoredBytesPerOwner < 1) {
-    errors.push('Las cuotas de subida deben ser positivas (STORAGE_MIN_FREE_BYTES puede ser 0)')
+  // `-1` es «sin límite»; 0 no, porque un cupo de cero no deja subir nada y casi
+  // siempre sería una variable mal puesta, no una decisión.
+  const cuotaValida = (valor) => valor === -1 || valor >= 1
+  if (config.uploads.minFreeBytes < 0 || !cuotaValida(config.uploads.maxActivePerOwner) ||
+      !cuotaValida(config.uploads.maxPendingJobsPerOwner) ||
+      !cuotaValida(config.uploads.maxReservedBytesPerOwner) ||
+      !cuotaValida(config.uploads.maxStoredBytesPerOwner)) {
+    errors.push('Las cuotas de subida deben ser positivas o -1 para «sin límite» ' +
+      '(STORAGE_MIN_FREE_BYTES puede ser 0, pero no -1)')
   }
   if (Object.values(config.rateLimits).some((value) => value < 1)) {
     errors.push('Todos los RATE_LIMIT_* deben ser enteros positivos')

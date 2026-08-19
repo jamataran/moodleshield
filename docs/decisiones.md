@@ -898,16 +898,29 @@ El plan crea las carpetas antes de subir un solo byte. Si el árbol se rechaza
 —demasiado profundo, cupo agotado—, no se ha subido nada; las carpetas que sí
 cupieron quedan creadas y vacías, y la siguiente importación las reutiliza.
 
-Y la consecuencia que más se nota en una biblioteca de verdad: **una importación
-grande agota las cuotas por propietario** (F-12), normalmente
-`MAX_PENDING_JOBS_PER_OWNER`, porque la cola procesa de uno en uno. Eso es lo
-correcto —las cuotas existen para que un profesor no monopolice el worker— y el
-importador lo trata como lo que es: **se detiene y dice cuántos ficheros
-quedan**, en vez de marcar como fallidos los que ni siquiera intentó. Al retomar,
-las carpetas se reutilizan y sólo entra lo que falta; los que ya estaban se
-vuelven a subir como revisión, porque saltarlos exigiría comparar el contenido y
-el navegador no puede calcular el SHA-256 de un fichero de varios GB sin leerlo
-entero. Dividir una biblioteca grande en varias importaciones evita ese coste.
+Y la consecuencia que más se notaba en una biblioteca de verdad: **una
+importación grande agotaba las cuotas por propietario** (F-12), casi siempre
+`MAX_PENDING_JOBS_PER_OWNER`, porque la cola procesa de uno en uno. Se probó en
+PRE y no se sostiene: el profesor selecciona su carpeta, se van diez ficheros y
+el resto le pide volver más tarde a repetir la misma operación. **La cola pasa a
+no tener tope** (`-1`, que es «sin límite» en los cuatro cupos por propietario).
+El razonamiento: encolar no consume disco ni CPU, sólo una fila; el worker sigue
+procesando de uno en uno tarde lo que tarde, y quien de verdad protege la
+máquina —`STORAGE_MIN_FREE_BYTES` y `MAX_STORED_BYTES_PER_OWNER`— no se ha
+tocado. Un número ahí no repartía el worker entre profesores: sólo repartía la
+paciencia del que importa.
+
+Si aun así se agota una cuota —el disco, o un tope repuesto a mano por variable
+de entorno—, el importador sigue haciendo lo correcto: **se detiene y dice
+cuántos ficheros quedan**, en vez de marcar como fallidos los que ni siquiera
+intentó. Al retomar, las carpetas se reutilizan y sólo entra lo que falta; los
+que ya estaban se vuelven a subir como revisión, porque saltarlos exigiría
+comparar el contenido y el navegador no puede calcular el SHA-256 de un fichero
+de varios GB sin leerlo entero.
+
+Y el resumen final cuenta lo que pasó de verdad, carpetas incluidas: el plan las
+crea antes de subir un solo byte, así que «no se subió nada» era falso en cuanto
+el árbol quedaba puesto, y lo leía justo quien estaba decidiendo si reintentar.
 
 Revertirlo es quitar el botón, el diálogo y `routes/imports.js`: `/uploads` y el
 árbol de carpetas siguen exactamente como estaban.

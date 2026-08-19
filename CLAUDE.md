@@ -30,6 +30,29 @@ Cuando una tarea parezca exigir algo de lo anterior: **para y pregunta**,
 proponiendo la alternativa no destructiva (archivar en vez de borrar, columna
 nueva en vez de renombrada, script con confirmación en vez de automático).
 
+## Regla 0-bis — hay una operación en marcha, y lo ya emitido no se toca
+
+**Nada de lo que diseñes puede exigir rehacer lo que ya está desplegado.** Hay
+actividades Moodle insertadas, enlaces emitidos, plataformas dadas de alta y
+material subido que funcionan hoy y que **nadie va a volver a tocar**. La
+compatibilidad hacia atrás con lo ya emitido es un requisito de la tarea, no una
+mejora opcional.
+
+Antes de dar por buena una decisión, responde en voz alta a: **¿qué le pasa a lo
+que ya está puesto y en uso?** Si la respuesta es «hay que reinsertarlo,
+regenerarlo o reconfigurarlo», eso es una rotura: dilo **antes** de
+implementarla y propón el camino compatible. Que el usuario decida después
+asumir el trabajo manual es su decisión, no el valor por defecto.
+
+El caso que lo enseñó, para no repetirlo: al desplegar sobre `v1.0.5` la versión
+con T24, las actividades ya insertadas dejaron de abrirse. `enforce` exige
+`custom.resourcesig` y `custom.placementid`, que ninguna actividad anterior a la
+migración `014` lleva, y en producción el `deployment_id` dejó de aprenderse en
+el primer launch (401 `deployment_not_configured`). Las dos roturas eran
+deliberadas y estaban documentadas — y aun así ninguna traía camino de
+continuidad para lo que ya estaba en producción. Documentar una rotura no la
+convierte en un plan de migración.
+
 Al escribir código, la misma regla en forma de diseño:
 
 - Borrar es **archivar** (`archived_at`), y sólo el propietario puede hacerlo.
@@ -88,7 +111,8 @@ Encima de ambos: carpetas personales **anidadas** por profesor (ADR-016),
 colecciones que agrupan varios materiales en una sola actividad Moodle, y
 revisiones que permiten sustituir un fichero sin cambiar el UUID que Moodle
 tiene incrustado. La biblioteca del profesor es un explorador de archivos:
-migas + tarjetas de carpeta; la colección se compone en un diálogo con buscador.
+migas + tarjetas de carpeta; la colección se compone en un diálogo que enseña
+la biblioteca por carpetas, con buscador global.
 
 ## Invariantes que no se negocian
 

@@ -177,11 +177,24 @@ export function createQueue (kind) {
     })
   }
 
+  /**
+   * Devolver a la cola un trabajo que se estaba haciendo cuando el worker
+   * recibió SIGTERM. **Descuenta el intento**, y no es un detalle: `attempts`
+   * sube al reclamar, y `maxAttempts` es 3. Sin descontarlo, tres despliegues
+   * mientras se transcodifica un vídeo largo lo dejaban en `failed` —«procesado
+   * interrumpido demasiadas veces»— por algo que no tenía nada que ver con el
+   * fichero, y con 60 en cola eso es casi seguro que le toca a alguno.
+   *
+   * Sólo aquí, que es una parada ordenada y decidida por nosotros. Un lease que
+   * expira sin avisar —el worker murió, o se quedó colgado— sigue gastando
+   * intento en el reaper: ahí sí puede ser culpa del material.
+   */
   function releaseJob ({ jobId, materialId, revisionId, workerId, reason = 'Worker detenido' }) {
     return transaction(async (client) => {
       const result = await client.query(
         `UPDATE ${jobs}
             SET status = 'pending', run_after = now(), last_error = $4,
+                attempts = GREATEST(attempts - 1, 0),
                 worker_id = NULL, lease_expires_at = NULL, heartbeat_at = NULL
           WHERE id = $1 AND ${materialFk} = $2 AND status = 'running' AND worker_id = $3`,
         [jobId, materialId, workerId, String(reason).slice(0, 4000)]
