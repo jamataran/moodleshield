@@ -45,15 +45,23 @@
         <div id="shared-grid" class="folder-tree" role="list"></div>
       </section>
 
-      <button id="course-toggle" type="button" class="library-view" hidden>
-        <span aria-hidden="true">◎</span>
-        <span>Material de este curso</span>
-      </button>
+      <!--
+        Ni el material del curso ni lo archivado son carpetas de nadie: son
+        vistas, como «Todo el contenido». Van en su propio bloque y separados
+        por una línea porque, pegados debajo del árbol, se leían como una
+        carpeta más de «Mis carpetas».
+      -->
+      <nav class="library-views library-views-end" aria-label="Otras vistas">
+        <button id="course-toggle" type="button" class="library-view" hidden>
+          <span aria-hidden="true">◎</span>
+          <span>Material de este curso</span>
+        </button>
 
-      <button id="archived-toggle" type="button" class="library-view archived-view">
-        <span aria-hidden="true">♲</span>
-        <span>Archivados</span>
-      </button>
+        <button id="archived-toggle" type="button" class="library-view archived-view">
+          <span aria-hidden="true">♲</span>
+          <span>Archivados</span>
+        </button>
+      </nav>
     </aside>
 
     <!-- Sólo existe cuando el lateral es un cajón superpuesto (pantalla estrecha). -->

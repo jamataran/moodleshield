@@ -252,7 +252,14 @@ body.catalog-page {
   font-size: .72rem;
   text-align: center;
 }
-.archived-view { margin-top: .7rem; }
+.archived-view { margin-top: .15rem; }
+/* Las vistas que no son carpetas se separan del árbol con una línea: pegadas
+   debajo se leían como una carpeta más de «Mis carpetas». */
+.library-views-end {
+  margin-top: .7rem;
+  padding-top: .6rem;
+  border-top: 1px solid var(--border);
+}
 
 .folder-tree { display: grid; gap: .08rem; }
 .folder-card {
@@ -265,6 +272,28 @@ body.catalog-page {
 .folder-card:hover,
 .folder-card.current { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .folder-card.current { box-shadow: inset 2px 0 var(--accent); }
+/* Desplegar y entrar son dos controles distintos, así que el triángulo tiene su
+   propia zona de pulsación. `folder-twisty-space` la reserva en las hojas para
+   que los nombres no bailen de sangría según tengan hijas o no. */
+.folder-twisty, .folder-twisty-space {
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  display: grid;
+  place-items: center;
+}
+.folder-twisty {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-size: .7rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.folder-twisty:hover { background: var(--surface); color: var(--text); }
+
 .folder-open {
   min-width: 0;
   flex: 1;
@@ -1343,6 +1372,8 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   button, .btn { min-height: 44px; }
   button.icon, .topbar-icon, details.menu > summary { min-height: 44px; min-width: 44px; }
   .index-item { min-height: 44px; }
+  /* En el árbol, ancho suficiente para acertar sin abrir la carpeta sin querer. */
+  .folder-twisty { min-width: 2.2rem; }
   .video-icon-button { min-width: 44px; min-height: 44px; }
   .video-timeline { height: 2rem; padding: .875rem 0; }
   .video-volume { display: none; }

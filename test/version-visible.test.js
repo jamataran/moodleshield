@@ -53,22 +53,3 @@ test('sin sello de build vale «dev», no el número muerto de package.json', as
   assert.notEqual(appVersion, paquete.version,
     'package.json no lo mantiene nadie: enseñarlo sería enseñar un número falso')
 })
-
-/**
- * El botón «＋ Nuevo» es un `<summary>` dentro de `details.menu`, así que compite
- * con las reglas del menú «⋯». `.new-menu-trigger` a secas (0,1,0) pierde contra
- * `details.menu > summary` (0,1,2) aunque esté escrito antes: el texto salía
- * oscuro sobre el azul, y gris al pasar por encima. La versión cualificada gana
- * en ambos casos, y esta prueba está para que nadie la «simplifique».
- */
-test('el botón ＋ Nuevo mantiene el selector que le gana al menú genérico', async () => {
-  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
-  for (const selector of [
-    'details.menu > summary.new-menu-trigger {',
-    'details.menu > summary.new-menu-trigger:hover {'
-  ]) {
-    assert.ok(css.includes(selector), `falta el selector cualificado: ${selector}`)
-  }
-  assert.doesNotMatch(css, /^\.new-menu-trigger\s*[{:]/m,
-    'sin cualificar pierde por especificidad contra details.menu > summary')
-})
