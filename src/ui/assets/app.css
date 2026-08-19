@@ -666,6 +666,10 @@ dialog label { display: block; font-size: .875rem; color: var(--muted); margin-b
   border-radius: var(--radius);
   background: var(--surface-2);
 }
+/* Las dos columnas se desplazan por dentro. Una colección con la carpeta
+   entera son decenas de filas, y dentro del iframe de Moodle —que llega ya
+   recortado— dejarlas crecer empuja «Guardar» fuera de la vista. */
+.collection-items, .collection-picker { max-height: clamp(10rem, 38dvh, 24rem); overflow-y: auto; }
 .collection-items { padding-left: 1.25rem; margin: .25rem 0; }
 .collection-items li { display: flex; align-items: center; gap: .4rem; margin: .25rem 0; }
 .collection-items .item-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -673,8 +677,6 @@ dialog label { display: block; font-size: .875rem; color: var(--muted); margin-b
   list-style: none;
   margin: .25rem 0 0;
   padding: 0;
-  max-height: 18rem;
-  overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
@@ -687,6 +689,28 @@ dialog label { display: block; font-size: .875rem; color: var(--muted); margin-b
 }
 .collection-picker li:first-child { border-top: 0; }
 .collection-picker .item-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* El selector es un árbol de carpetas, no una lista plana: la sangría es lo
+   único que dice de qué carpeta cuelga cada material. */
+.collection-picker li { padding-left: calc(.6rem + var(--picker-depth, 0) * .9rem); }
+.picker-folder { background: var(--surface); }
+.picker-folder-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  border: 0;
+  background: none;
+  padding: .1rem 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.picker-folder-name { font-weight: 600; overflow-wrap: anywhere; }
+.picker-twisty { flex: none; width: 1rem; color: var(--muted); font-size: .7rem; }
+.picker-add-all { flex: none; }
+.picker-note { display: block; }
 
 #revision-list { list-style: none; padding: 0; }
 #revision-list li {

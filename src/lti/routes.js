@@ -230,7 +230,10 @@ ltiRouter.post('/launch', async (req, res, next) => {
             // Habilita «Material de este curso»: sin curso en el launch no hay
             // aula de la que hablar y la vista no se ofrece.
             hasCourse: Boolean(context.contextId),
-            acceptMultiple: Boolean(context.deepLinkingSettings?.accept_multiple)
+            acceptMultiple: Boolean(context.deepLinkingSettings?.accept_multiple),
+            // El editor de colecciones recorta ANTES de mandar y dice cuántos
+            // se quedan fuera; sin el tope aquí sólo lo sabría por el 400.
+            maxCollectionItems: config.catalog.maxCollectionItems
           }
         })
       )
@@ -248,7 +251,8 @@ ltiRouter.post('/launch', async (req, res, next) => {
               mode: 'manage',
               sessionToken,
               hasCourse: Boolean(context.contextId),
-              user: { name: context.name, isInstructor: true }
+              user: { name: context.name, isInstructor: true },
+              maxCollectionItems: config.catalog.maxCollectionItems
             }
           })
         )

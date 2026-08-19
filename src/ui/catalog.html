@@ -92,6 +92,7 @@
             <button id="import-open" type="button">Importar una carpeta…</button>
             <button id="new-folder" type="button">Nueva carpeta…</button>
             <button id="new-collection" type="button">Nueva colección…</button>
+            <button id="new-collection-folder" type="button">Colección con esta carpeta…</button>
           </div>
         </details>
       </div>
@@ -324,6 +325,7 @@
         <label for="collection-folder">Guardar en la carpeta</label>
         <select id="collection-folder"></select>
       </p>
+      <p id="collection-hint" class="muted" hidden></p>
       <p id="collection-error" class="dialog-error" role="alert" tabindex="-1" hidden></p>
 
       <div class="collection-editor-grid">
@@ -338,10 +340,14 @@
         <section>
           <h3>Añadir materiales</h3>
           <p>
-            <input type="search" id="collection-search" placeholder="Buscar materiales listos"
+            <input type="search" id="collection-search" placeholder="Buscar en toda la biblioteca"
                    aria-label="Buscar materiales para añadir">
           </p>
-          <ul id="collection-picker" class="collection-picker"></ul>
+          <p class="muted" id="collection-picker-hint">
+            Despliega una carpeta para ver su material. «Añadir todo» mete la carpeta entera.
+          </p>
+          <ul id="collection-picker" class="collection-picker"
+              aria-label="Material de la biblioteca, por carpetas"></ul>
           <p class="load-more-row">
             <button type="button" id="collection-picker-more" hidden>Mostrar más materiales</button>
           </p>
