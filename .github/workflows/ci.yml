@@ -1,4 +1,4 @@
-name: 'CI · PR: validar código, infraestructura y build'
+name: '[AUTO] CI · valida cada PR'
 
 # Sólo en pull requests. Los pushes a `test` los cubre cd-test.yml (que ya
 # verifica antes de publicar): así cada commit se construye UNA vez, no dos.

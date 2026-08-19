@@ -90,6 +90,7 @@ sueltos. Antes de tocar nada:
 | [`docs/tasks/README.md`](docs/tasks/README.md) | Estado real de cada tarea; `done/` sólo con evidencia |
 | [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle (6 pasos) |
 | [`infra/README.md`](infra/README.md) | Entornos local/test/prod |
+| [`.github/README.md`](.github/README.md) | Pipeline: cómo se prueba un cambio y cómo se promociona a producción |
 
 El repositorio es **público**: `README.md` (ES) y `README.en.md` (EN) son la cara
 externa y no llevan estado de tareas — eso vive en `docs/README.md`.
