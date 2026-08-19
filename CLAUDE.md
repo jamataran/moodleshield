@@ -30,6 +30,18 @@ Cuando una tarea parezca exigir algo de lo anterior: **para y pregunta**,
 proponiendo la alternativa no destructiva (archivar en vez de borrar, columna
 nueva en vez de renombrada, script con confirmación en vez de automático).
 
+Esta lista ya no depende de que la recuerdes: la aplica
+[`.claude/hooks/guardia-datos.mjs`](.claude/hooks/guardia-datos.mjs), enganchado
+como hook `PreToolUse` en [`.claude/settings.json`](.claude/settings.json). Corta
+el comando **antes** de ejecutarlo. Peca de prudente a propósito: un comando que
+sólo *menciona* algo destructivo —documentación escrita desde un heredoc— también
+se corta; escribe entonces el fichero con la herramienta de edición. Autorizar es
+del usuario y **por comando**: exporta `MOODLESHIELD_PERMITIR_DESTRUCTIVO` con un
+fragmento del comando concreto antes de abrir la sesión. Un valor genérico no
+abre nada, y una asignación en la propia línea tampoco: el hook hereda el entorno
+de quien abrió la sesión. Si salta, no busques rodeo: explícalo y que lo ejecute
+quien opera el entorno.
+
 ## Regla 0-bis — hay una operación en marcha, y lo ya emitido no se toca
 
 **Nada de lo que diseñes puede exigir rehacer lo que ya está desplegado.** Hay
