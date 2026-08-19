@@ -66,7 +66,17 @@ const state = {
   pickerResults: [],
   pickerNextCursor: null,
   /** Elemento al que devolver el foco tras una mutación. */
-  focusAfterReload: null
+  focusAfterReload: null,
+  /**
+   * Carpetas desplegadas en el árbol del lateral. Se guarda lo DESPLEGADO y no
+   * lo plegado a propósito: una biblioteca de verdad tiene cientos de carpetas
+   * y desplegarlas todas convierte el lateral en un listado inmanejable de
+   * varias pantallas. Se empieza con la raíz a la vista y se abre lo que haga
+   * falta. Vive en memoria: mientras el diálogo de Moodle esté abierto se
+   * conserva, y no depende de un almacenamiento que dentro de un iframe de
+   * terceros puede estar particionado.
+   */
+  expanded: new Set()
 }
 
 // El título de la pestaña es el único sitio donde el modo cabe sin gastar
@@ -248,17 +258,32 @@ function ownerLabel (item) {
   return item?.ownerName || 'otro profesor'
 }
 
+/**
+ * El árbol del lateral, aplanado en el orden en que se lee.
+ *
+ * Sólo baja por las carpetas desplegadas. Buscando sí baja entero: ahí la lista
+ * ya viene filtrada por el término, y esconder una coincidencia detrás de un
+ * triángulo sería esconder justo lo que se ha pedido ver.
+ */
 function flattenedFolders ({ shared = false } = {}) {
+  const todo = state.view === 'search'
   const out = []
   const walk = (parentId) => {
     for (const child of childrenOf(parentId)) {
       if (isShared(child) !== shared) continue
       out.push(child)
-      walk(child.id)
+      if (todo || state.expanded.has(child.id)) walk(child.id)
     }
   }
   walk(null)
   return out
+}
+
+/** Deja a la vista el camino hasta una carpeta, sin plegar nada de lo abierto. */
+function expandPathTo (id) {
+  for (const folder of pathOf(id)) {
+    if (folder.id !== id) state.expanded.add(folder.id)
+  }
 }
 
 /** Ancestros de la carpeta, de la raíz hacia abajo, incluida ella misma. */
@@ -408,6 +433,12 @@ function openAll () {
 }
 
 function openFolder (id) {
+  // Abrir una carpeta despliega su camino: si no, entrar desde la lista o desde
+  // una miga dejaría el lateral señalando una fila que no está a la vista.
+  if (id) {
+    expandPathTo(id)
+    state.expanded.add(id)
+  }
   navigate({ view: 'browse', folderId: id ?? null })
 }
 
@@ -506,11 +537,52 @@ window.addEventListener('resize', () => {
 // Carpetas
 // ---------------------------------------------------------------------------
 
-function folderCard (folder) {
+/**
+ * @param {object} folder
+ * @param {object} [opts]
+ * @param {boolean} [opts.tree]  en el árbol del lateral, donde una carpeta con
+ *   hijas lleva triángulo para desplegarla sin entrar en ella. En la lista de
+ *   contenido no: allí una carpeta se abre, no se despliega.
+ */
+/**
+ * Desplegar y entrar son dos cosas distintas, y por eso son dos controles.
+ * Mezclarlas obliga a entrar en una carpeta para ver qué hay dentro, que es lo
+ * que hacía inmanejable el lateral. Buscando no aparece: ahí el árbol se enseña
+ * entero porque la lista ya viene filtrada.
+ */
+function folderTwisty (folder) {
+  const hijas = childrenOf(folder.id).length > 0
+  if (!hijas || state.view === 'search') {
+    const hueco = document.createElement('span')
+    hueco.className = 'folder-twisty-space'
+    hueco.setAttribute('aria-hidden', 'true')
+    return hueco
+  }
+  const abierta = state.expanded.has(folder.id)
+  const boton = document.createElement('button')
+  boton.type = 'button'
+  boton.className = 'folder-twisty'
+  boton.setAttribute('aria-expanded', String(abierta))
+  boton.setAttribute('aria-label', `${abierta ? 'Plegar' : 'Desplegar'} ${folder.name}`)
+  boton.textContent = abierta ? '\u25be' : '\u25b8'
+  boton.addEventListener('click', (event) => {
+    // Sin esto el clic llega también a la tarjeta y acaba abriendo la carpeta:
+    // desplegar dejaría de ser una acción propia.
+    event.stopPropagation()
+    if (abierta) state.expanded.delete(folder.id)
+    else state.expanded.add(folder.id)
+    render()
+  })
+  return boton
+}
+
+function folderCard (folder, { tree = false } = {}) {
   const card = document.createElement('article')
   card.className = `folder-card${state.view === 'browse' && state.folderId === folder.id ? ' current' : ''}`
   card.setAttribute('role', 'listitem')
   card.style.setProperty('--folder-depth', String(Math.max(0, pathOf(folder.id).length - 1)))
+
+  if (tree) card.append(folderTwisty(folder))
 
   const open = document.createElement('button')
   open.type = 'button'
@@ -1938,14 +2010,20 @@ function normalizeQuery (text) {
 }
 
 function render () {
+  // Primera pintada con una carpeta ya abierta —se entra directamente a un
+  // nivel—: se deja su camino a la vista. Sólo con el árbol recién nacido, para
+  // no volver a desplegar lo que el profesor acaba de plegar estando dentro.
+  if (state.expanded.size === 0 && state.view === 'browse' && state.folderId) {
+    expandPathTo(state.folderId)
+  }
   const matching = (list) => state.view === 'search'
     ? list.filter((f) => normalizeQuery(f.name).includes(normalizeQuery(state.query)))
     : list
   const folders = matching(flattenedFolders())
   const shared = matching(flattenedFolders({ shared: true }))
-  el('folder-grid').replaceChildren(...folders.map(folderCard))
+  el('folder-grid').replaceChildren(...folders.map((f) => folderCard(f, { tree: true })))
   el('folder-empty').hidden = folders.length > 0
-  el('shared-grid').replaceChildren(...shared.map(folderCard))
+  el('shared-grid').replaceChildren(...shared.map((f) => folderCard(f, { tree: true })))
   el('section-shared').hidden = shared.length === 0
   el('root-count').textContent = state.root?.materialCount ? String(state.root.materialCount) : ''
 

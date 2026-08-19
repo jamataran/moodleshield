@@ -1,18 +1,11 @@
 import { Router } from 'express'
-import { readFile } from 'node:fs/promises'
 import { one } from '../db/index.js'
 import logger from '../logger.js'
+import { healthVersion } from '../version.js'
 
 export const healthRouter = Router()
 
-let version = process.env.APP_VERSION ?? null
-if (!version) {
-  try {
-    version = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')).version
-  } catch {
-    version = 'unknown'
-  }
-}
+const version = await healthVersion()
 
 /** Liveness: responde mientras el proceso esté vivo. No toca la base de datos. */
 healthRouter.get('/healthz', (_req, res) => {

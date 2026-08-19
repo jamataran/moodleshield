@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import config from '../config.js'
+import { appVersion } from '../version.js'
 
 const uiDir = path.dirname(fileURLToPath(import.meta.url))
 const cache = new Map()
@@ -57,8 +58,11 @@ export async function renderPage (name, { bootstrap = {}, ...vars } = {}, { raw 
   // Los HTML se generan en cada navegación LTI, pero los estáticos pueden
   // permanecer en la caché del navegador. Al variar esta query con cada imagen
   // desplegada nunca se mezcla un HTML nuevo con su JavaScript anterior.
-  const assetVersion = encodeURIComponent(process.env.APP_VERSION ?? 'dev')
-  html = html.replaceAll('{{ASSET_VERSION}}', () => assetVersion)
+  // La MISMA cadena en los dos sitios, y a propósito: la que rompe la caché de
+  // los estáticos es la que se enseña en la consola. Si divergieran, el número
+  // que lee el operador podría no ser el del código que está sirviendo.
+  html = html.replaceAll('{{ASSET_VERSION}}', () => encodeURIComponent(appVersion))
+  html = html.replaceAll('{{APP_VERSION}}', () => escapeHtml(appVersion))
   for (const [key, value] of Object.entries(vars)) {
     const rendered = raw.includes(key) ? String(value ?? '') : escapeHtml(value)
     html = html.replaceAll(`{{${key}}}`, () => rendered)
