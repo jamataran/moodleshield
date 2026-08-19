@@ -34,7 +34,7 @@ x-app-env: &app-env
   # entorno. NODE_ENV no distingue test de producción; esto sí.
   MOODLESHIELD_ENV: test
   SERVICE_ROLE: app
-  LOG_LEVEL: ${LOG_LEVEL:-debug}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
   PUBLIC_URL: ${PUBLIC_URL:?falta PUBLIC_URL}
   DB_HOST: db
   DB_PORT: "5432"
@@ -74,24 +74,24 @@ x-app-env: &app-env
   MEDIA_DELIVERY: signed
   MEDIA_PUBLIC_PREFIX: /media
   MEDIA_LINK_TTL_SECONDS: ${MEDIA_LINK_TTL_SECONDS:-14400}
-  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-4294967296}
   UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-16777216}
   UPLOAD_SESSION_TTL_SECONDS: ${UPLOAD_SESSION_TTL_SECONDS:-86400}
-  STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-1073741824}
+  STORAGE_MIN_FREE_BYTES: ${STORAGE_MIN_FREE_BYTES:-5368709120}
   MAX_ACTIVE_UPLOADS_PER_OWNER: ${MAX_ACTIVE_UPLOADS_PER_OWNER:-5}
   # -1 = cola sin tope. El disco lo siguen guardando STORAGE_MIN_FREE_BYTES
   # y MAX_STORED_BYTES_PER_OWNER.
   MAX_PENDING_JOBS_PER_OWNER: ${MAX_PENDING_JOBS_PER_OWNER:--1}
-  MAX_RESERVED_UPLOAD_BYTES_PER_OWNER: ${MAX_RESERVED_UPLOAD_BYTES_PER_OWNER:-4294967296}
-  MAX_STORED_BYTES_PER_OWNER: ${MAX_STORED_BYTES_PER_OWNER:-53687091200}
+  MAX_RESERVED_UPLOAD_BYTES_PER_OWNER: ${MAX_RESERVED_UPLOAD_BYTES_PER_OWNER:-8589934592}
+  MAX_STORED_BYTES_PER_OWNER: ${MAX_STORED_BYTES_PER_OWNER:-107374182400}
   PLAYBACK_MAX_DISTINCT_IPS: ${PLAYBACK_MAX_DISTINCT_IPS:-3}
   PLAYBACK_REVOKE_ON_SUSPICION: ${PLAYBACK_REVOKE_ON_SUSPICION:-true}
   SEGMENT_SECONDS: ${SEGMENT_SECONDS:-4}
   OUTPUT_FPS: ${OUTPUT_FPS:-24}
-  OUTPUT_CRF: ${OUTPUT_CRF:-23}
+  OUTPUT_CRF: ${OUTPUT_CRF:-21}
   OUTPUT_PRESET: ${OUTPUT_PRESET:-veryfast}
   # Marca visible: en pruebas interesa verla.
-  MARK_ALPHA: ${MARK_ALPHA:-0.5}
+  MARK_ALPHA: ${MARK_ALPHA:-0.06}
   TRANSCODE_CONCURRENCY: ${TRANSCODE_CONCURRENCY:-1}
   TRANSCODE_LEASE_SECONDS: ${TRANSCODE_LEASE_SECONDS:-90}
   TRANSCODE_HEARTBEAT_MS: ${TRANSCODE_HEARTBEAT_MS:-20000}
@@ -127,7 +127,7 @@ x-worker-env: &worker-env
   # entorno. NODE_ENV no distingue test de producción; esto sí.
   MOODLESHIELD_ENV: test
   SERVICE_ROLE: worker
-  LOG_LEVEL: ${LOG_LEVEL:-debug}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
   DB_HOST: db
   DB_PORT: "5432"
   DB_NAME: ${DB_NAME:-moodleshield}
@@ -138,14 +138,14 @@ x-worker-env: &worker-env
   UPLOAD_ROOT: /data/uploads
   SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-14400}
   MEDIA_LINK_TTL_SECONDS: ${MEDIA_LINK_TTL_SECONDS:-14400}
-  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-4294967296}
   UPLOAD_CHUNK_BYTES: ${UPLOAD_CHUNK_BYTES:-16777216}
   UPLOAD_SESSION_TTL_SECONDS: ${UPLOAD_SESSION_TTL_SECONDS:-86400}
   SEGMENT_SECONDS: ${SEGMENT_SECONDS:-4}
   OUTPUT_FPS: ${OUTPUT_FPS:-24}
-  OUTPUT_CRF: ${OUTPUT_CRF:-23}
+  OUTPUT_CRF: ${OUTPUT_CRF:-21}
   OUTPUT_PRESET: ${OUTPUT_PRESET:-veryfast}
-  MARK_ALPHA: ${MARK_ALPHA:-0.5}
+  MARK_ALPHA: ${MARK_ALPHA:-0.06}
   TRANSCODE_CONCURRENCY: ${TRANSCODE_CONCURRENCY:-1}
   TRANSCODE_LEASE_SECONDS: ${TRANSCODE_LEASE_SECONDS:-90}
   TRANSCODE_HEARTBEAT_MS: ${TRANSCODE_HEARTBEAT_MS:-20000}
@@ -177,6 +177,9 @@ services:
       POSTGRES_DB: ${DB_NAME:-moodleshield}
       POSTGRES_USER: ${DB_USER:-moodleshield}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+      # Igual que producción. Sólo surte efecto al crear el cluster: una base ya
+      # inicializada no cambia por esto.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
       - "${DATA_ROOT:?falta DATA_ROOT}/pgdata:/var/lib/postgresql/data:Z"
     ports:
@@ -191,7 +194,7 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
-    mem_limit: 256m
+    mem_limit: 512m
     pids_limit: 256
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
@@ -217,7 +220,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
-    mem_limit: 384m
+    mem_limit: 512m
     pids_limit: 256
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
@@ -240,8 +243,10 @@ services:
     volumes:
       - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
       - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
-    cpus: ${WORKER_CPUS:-1}
-    mem_limit: ${WORKER_MEMORY:-1024m}
+    # ffmpeg necesita margen. Ajusta WORKER_CPUS al número de núcleos que
+    # quieras cederle; el resto del host sigue respondiendo gracias al `nice`.
+    cpus: ${WORKER_CPUS:-4}
+    mem_limit: ${WORKER_MEMORY:-4g}
     pids_limit: 1024
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m
@@ -259,7 +264,7 @@ services:
         condition: service_healthy
     environment:
       MEDIA_LINK_SECRET: ${MEDIA_LINK_SECRET:?falta MEDIA_LINK_SECRET}
-      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-2g}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-4g}
       MAX_CHUNK_SIZE: ${MAX_CHUNK_SIZE:-32m}
     volumes:
       - "${DATA_ROOT:?falta DATA_ROOT}/media:/srv/media:ro,z"
