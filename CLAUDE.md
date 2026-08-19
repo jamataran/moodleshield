@@ -30,6 +30,28 @@ Cuando una tarea parezca exigir algo de lo anterior: **para y pregunta**,
 proponiendo la alternativa no destructiva (archivar en vez de borrar, columna
 nueva en vez de renombrada, script con confirmación en vez de automático).
 
+### Esta regla ya no depende de que la leas
+
+Desde el 19 de agosto de 2026 la lista de arriba está implementada, no sólo
+escrita. Tres capas, y ninguna sustituye a las otras:
+
+| Capa | Qué corta | Dónde vive |
+|---|---|---|
+| **Guardia de datos** (hook `PreToolUse`) | El comando o la edición, antes de ejecutarse: volúmenes de Docker, borrado en bloque de árboles de datos, limpieza de ficheros no versionados, `push --force`, SQL destructivo por `psql`, sobrescribir un `.env`, editar una migración ya escrita | [`tools/guardia-datos.mjs`](tools/guardia-datos.mjs) + [`.claude/settings.json`](.claude/settings.json) |
+| **Pruebas** (`npm test`, y por tanto CI en cada PR) | Una migración que pierda filas o estructuras, y cualquier `DELETE`/`UPDATE` sin `WHERE` en `src/` | [`test/guardia-datos.test.js`](test/guardia-datos.test.js) |
+| **CI** | Editar o borrar una migración ya publicada en la rama base | Job «Migraciones inmutables» de `.github/workflows/ci.yml` |
+
+La guardia peca de prudente a propósito: un comando que sólo **menciona** algo
+destructivo —documentación escrita desde un heredoc, por ejemplo— también se
+corta. Cuando pase, escribe el fichero con la herramienta de edición en vez de
+por consola; es el lado bueno del error.
+
+Autorizar algo destructivo es de la persona que opera el entorno, y **por
+comando**: exporta `MOODLESHIELD_PERMITIR_DESTRUCTIVO` con un fragmento del
+comando concreto antes de abrir la sesión. Un `=1` genérico no abre nada, y una
+asignación en la propia línea tampoco: el hook no la ve, porque hereda el
+entorno de quien abrió la sesión.
+
 ## Regla 0-bis — hay una operación en marcha, y lo ya emitido no se toca
 
 **Nada de lo que diseñes puede exigir rehacer lo que ya está desplegado.** Hay
@@ -71,7 +93,7 @@ sueltos. Antes de tocar nada:
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
 | [`docs/revision-seguridad-2026-08-10.md`](docs/revision-seguridad-2026-08-10.md) | Estado de seguridad vigente: rama frente a producción, riesgos y gates de despliegue |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…027: por qué cada decisión y cómo revertirla |
+| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…029: por qué cada decisión y cómo revertirla |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
 | [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría histórica de la entrega del 6 de agosto; no usar como estado vigente |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Mapa de fases y dependencias |
@@ -167,6 +189,7 @@ src/queue/      cola Postgres con lease, heartbeat y reaper (vídeo y PDF)
 src/ui/         HTML sin framework + assets; render.js sustituye {{BOOTSTRAP}}
 migrations/     SQL plano, numeradas, inmutables una vez aplicadas
 tools/trace.mjs trazado forense de una filtración
+tools/guardia-datos.mjs  la Regla 0 hecha código: corta lo destructivo (hook + tests)
 test/           node:test; *.test.js sin BD, integration/*.integration.js con BD
 ```
 

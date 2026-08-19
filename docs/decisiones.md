@@ -1080,3 +1080,73 @@ es un control:
 volver a disparar `cd-test.yml` con `branches: [main]` y quitar el job
 `frontera-entornos`. La rama `test` puede quedarse donde está; no la lee nadie
 más. Conviene no hacerlo: es volver a la situación que causó el incidente.
+
+## ADR-029 · La Regla 0 se implementa: la pérdida de datos se corta antes de ocurrir, no se recuerda
+
+**Estado**: aceptada · **Fecha**: 2026-08
+
+**Contexto.** `CLAUDE.md` abre con la Regla 0 —hay producción con vídeos, PDF y
+actividades Moodle vivas— y con una lista de lo que nunca se hace. Esa lista es
+correcta y nunca ha bastado del todo, porque una regla escrita sólo protege
+mientras quien la lee la respeta y la recuerda. Basta un comando de memoria
+muscular, un agente con prisa o una receta copiada de un tutorial para perder
+material que nadie va a volver a subir: del vídeo original de un profesor no hay
+otra copia una vez borrado su árbol.
+
+Al preparar la subida a producción del 19 de agosto de 2026 se revisó qué
+impedía de verdad cada punto de esa lista. La respuesta era incómoda: casi nada.
+`src/db/guard.js` cerraba un caso concreto —que los tests truncaran una base
+viva— y CI aplicaba las migraciones sobre una base **vacía**, donde una
+migración destructiva no duele y por tanto tampoco se nota. Todo lo demás
+dependía del criterio de quien tecleaba.
+
+**Decisión.** Convertir la Regla 0 en tres controles que fallan en cerrado, cada
+uno en un momento distinto del ciclo. Ninguno sustituye a los otros: el primero
+depende de la herramienta con la que se trabaja, el segundo de que el código
+llegue a una PR, el tercero de la comparación con la rama base.
+
+1. **Guardia de datos** (`tools/guardia-datos.mjs`), enganchada como hook
+   `PreToolUse` en `.claude/settings.json`. Decide sobre la llamada a la
+   herramienta —antes de ejecutarla— y corta el borrado de volúmenes de Docker,
+   el borrado en bloque de árboles de datos, la limpieza de ficheros no
+   versionados, la reescritura de historia publicada, el SQL destructivo lanzado
+   contra la base, la sobrescritura de un fichero de secretos y la edición de una
+   migración ya escrita. La decisión es una función pura, así que el catálogo se
+   prueba sin ejecutar nada.
+2. **Pruebas** (`test/guardia-datos.test.js`), que corren en `npm test` y por
+   tanto en cada PR: ninguna migración puede llevar sentencias que pierdan filas
+   o estructuras, y ningún literal SQL de `src/` puede modificar una tabla sin
+   `WHERE`. `DROP INDEX` y `DROP CONSTRAINT` se admiten: reorganizan el esquema
+   sin perder una fila, y 002 y 016 los usan.
+3. **CI** (job «Migraciones inmutables»): una migración que ya existía en la rama
+   base no puede modificarse ni borrarse. Editarla no arregla nada donde ya
+   corrió —no vuelve a ejecutarse— y separa en silencio el esquema real del que
+   describe el repositorio.
+
+Y un cierre en la aplicación, que es donde estaba el único agujero real: borrar
+un material **colocado en una actividad viva** responde 409 `material_placed` en
+vez de destruirlo. Insertado suelto no había nada que lo impidiera
+—`resource_placement.resource_id` es un uuid sin clave ajena—, así que el
+borrado salía adelante y rompía la actividad para sus alumnos sin que Moodle
+avisara a nadie: ese callback no existe. Por el snapshot de una colección sí
+frenaba el `ON DELETE RESTRICT`, pero con un error de integridad ilegible; ahora
+las dos puertas dan el mismo 409 accionable, y archivar sigue abierto.
+
+La guardia peca de prudente: un comando que sólo **menciona** algo destructivo
+también se corta. Se acepta a conciencia. El coste de un falso positivo es
+escribir el fichero con la herramienta de edición; el de un falso negativo es
+material perdido.
+
+Autorizar sigue siendo posible, porque la Regla 0 lo contempla («sin que el
+usuario lo pida de forma explícita y para esa ejecución concreta»), pero es de
+la persona que opera el entorno y **por comando**:
+`MOODLESHIELD_PERMITIR_DESTRUCTIVO` lleva un fragmento del comando que autoriza.
+Un valor genérico no abre nada, y una asignación en la propia línea tampoco: el
+hook hereda el entorno de quien abrió la sesión, no el del comando.
+
+**Cómo revertirlo.** Quitar el bloque `hooks` de `.claude/settings.json`
+desactiva la primera capa sin tocar nada más; borrar `test/guardia-datos.test.js`
+y el job «Migraciones inmutables», las otras dos. El 409 de material colocado se
+revierte quitando la comprobación de `resource_placement` de `deleteOwnedVideo` y
+`deleteOwnedDocument`. Conviene no hacerlo: lo que queda entonces es la lista
+escrita, que es justo lo que no bastó.
