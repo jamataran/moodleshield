@@ -424,30 +424,29 @@ feature/* ── PR ──▶ CI ──▶ merge a test
                               ├─ actualiza infra/test/compose.yml EN `test`
                               └─ Portainer (refs/heads/test) despliega TEST
 
-test ── tag vX.Y.Z ──▶ cd-promote.yml
-                       ├─ comprueba que existe :sha-<commit> en GHCR
+test ── botón «[MANUAL] Promocionar a producción» ──▶ cd-promote.yml
+                       ├─ localiza el commit ensayado en `test`
+                       ├─ verifica la firma cosign de sus imágenes
+                       ├─ crea el tag vX.Y.Z sobre ese commit
                        ├─ re-etiqueta el MISMO digest como :vX.Y.Z y :latest
-                       ├─ avanza `main` HASTA el commit etiquetado
+                       ├─ mergea ese commit en `main`
                        ├─ actualiza infra/prod/compose.yml EN `main`
                        └─ Portainer (refs/heads/main) despliega PROD
 ```
 
-Es *build once, promote up*: crear el tag **no reconstruye nada**, sólo re-etiqueta, y
+Es *build once, promote up*: promocionar **no reconstruye nada**, sólo re-etiqueta, y
 producción acaba corriendo el mismo digest que se ensayó en test. El rollback es un
 `git revert` del commit de despliegue. Los commits `deploy(test): …` y `deploy(prod): …`
 son automáticos: no los edites ni los borres a mano, son lo que activa GitOps.
 
-Sólo se etiqueta un commit que ya esté desplegado en test: si no existe su
-`:sha-<commit>` en GHCR, `cd-promote` falla en cerrado. Y una PR hacia `test` que
-toque `infra/prod/` la rechaza el job `frontera-entornos` de `ci.yml`.
+Sólo se promociona un commit que ya esté desplegado en test: si no existe su
+`:sha-<commit>` en GHCR, o su firma no es la de `cd-test.yml`, la promoción falla
+en cerrado. Y una PR hacia `test` que toque `infra/prod/` la rechaza el job
+«Frontera entre entornos» de `ci.yml`. Empujar un tag a mano no promociona nada.
 
-El tag lo puedes crear a mano o con [`release.yml`](../.github/workflows/release.yml),
-que **sólo hace eso**: deriva la versión del último `vX.Y.Z`, localiza el commit
-ensayado en `test` y empuja el tag. La promoción entera es de `cd-promote.yml`.
-
-**El manual de pruebas del pipeline —qué mirar en cada paso, cómo comprobar que
-el digest promocionado es el mismo, y las cuatro cosas que deben fallar— está en
-[`.github/DESPLIEGUE.md`](../.github/DESPLIEGUE.md).**
+**Todo el pipeline —qué hace cada workflow, cómo se promociona paso a paso, qué
+comprobar y qué errores significan qué— está en
+[`.github/README.md`](../.github/README.md).**
 
 Los cambios que sólo tocan documentación, `LICENSE`, `.idea/` o `infra/local/` no publican
 imágenes ni despliegan.
