@@ -63,6 +63,9 @@ export async function renderPage (name, { bootstrap = {}, ...vars } = {}, { raw 
   // que lee el operador podría no ser el del código que está sirviendo.
   html = html.replaceAll('{{ASSET_VERSION}}', () => encodeURIComponent(appVersion))
   html = html.replaceAll('{{APP_VERSION}}', () => escapeHtml(appVersion))
+  // Qué stack es. Sale del Compose, no del bloque de variables: es lo único que
+  // no se puede pegar mal, y sin ello test y producción son indistinguibles.
+  html = html.replaceAll('{{APP_ENV}}', () => escapeHtml(config.deployment || ''))
   for (const [key, value] of Object.entries(vars)) {
     const rendered = raw.includes(key) ? String(value ?? '') : escapeHtml(value)
     html = html.replaceAll(`{{${key}}}`, () => rendered)

@@ -40,8 +40,10 @@ test('las vistas que se abren dentro de Moodle no la enseñan', async () => {
 
 test('el marcador que se pinta es el mismo que versiona los estáticos', async () => {
   const html = await renderPage('admin/platforms.html', { bootstrap: {} })
-  assert.match(html, new RegExp(`class="build"[^>]*>${appVersion}<`),
+  assert.match(html, new RegExp(`class="build"[^>]*>.*${appVersion}</span>`),
     'la barra debe llevar la compilación en ejecución')
+  assert.match(html, /class="build-env">/,
+    'y el stack al lado: NODE_ENV vale «production» en test y en producción')
   assert.match(html, new RegExp(`app\\.css\\?v=${appVersion}`),
     'y tiene que ser la misma cadena que rompe la caché: si divergen, el número miente')
 })

@@ -29,6 +29,9 @@ x-app-env: &app-env
   # development: permite PUBLIC_URL http y secretos por defecto. La mecánica
   # (firma de segmentos, cifrado, LTI) es idéntica a producción.
   NODE_ENV: development
+  # Literal, NO interpolado: es lo único que no se puede pegar mal desde otro
+  # entorno. NODE_ENV no distingue test de producción; esto sí.
+  MOODLESHIELD_ENV: local
   SERVICE_ROLE: app
   LOG_LEVEL: ${LOG_LEVEL:-debug}
   PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8088}
@@ -101,6 +104,8 @@ x-app-env: &app-env
   TRANSCODE_PROBE_TIMEOUT_SECONDS: ${TRANSCODE_PROBE_TIMEOUT_SECONDS:-30}
   TRANSCODE_PROCESS_TIMEOUT_SECONDS: ${TRANSCODE_PROCESS_TIMEOUT_SECONDS:-21600}
   VIDEO_MAX_OUTPUT_BITRATE_KBPS: ${VIDEO_MAX_OUTPUT_BITRATE_KBPS:-8000}
+  # 0 = sin recorte. 1080 recorta el lado largo y abarata mucho el vídeo vertical.
+  VIDEO_MAX_OUTPUT_LONG_SIDE: ${VIDEO_MAX_OUTPUT_LONG_SIDE:-0}
   VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-14400}
   VIDEO_MAX_PIXELS: ${VIDEO_MAX_PIXELS:-8294400}
   VIDEO_MAX_DIMENSION: ${VIDEO_MAX_DIMENSION:-4096}
@@ -116,6 +121,9 @@ x-app-env: &app-env
 
 x-worker-env: &worker-env
   NODE_ENV: development
+  # Literal, NO interpolado: es lo único que no se puede pegar mal desde otro
+  # entorno. NODE_ENV no distingue test de producción; esto sí.
+  MOODLESHIELD_ENV: local
   SERVICE_ROLE: worker
   LOG_LEVEL: ${LOG_LEVEL:-debug}
   DB_HOST: db
@@ -146,6 +154,8 @@ x-worker-env: &worker-env
   TRANSCODE_PROBE_TIMEOUT_SECONDS: ${TRANSCODE_PROBE_TIMEOUT_SECONDS:-30}
   TRANSCODE_PROCESS_TIMEOUT_SECONDS: ${TRANSCODE_PROCESS_TIMEOUT_SECONDS:-21600}
   VIDEO_MAX_OUTPUT_BITRATE_KBPS: ${VIDEO_MAX_OUTPUT_BITRATE_KBPS:-8000}
+  # 0 = sin recorte. 1080 recorta el lado largo y abarata mucho el vídeo vertical.
+  VIDEO_MAX_OUTPUT_LONG_SIDE: ${VIDEO_MAX_OUTPUT_LONG_SIDE:-0}
   VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-14400}
   VIDEO_MAX_PIXELS: ${VIDEO_MAX_PIXELS:-8294400}
   VIDEO_MAX_DIMENSION: ${VIDEO_MAX_DIMENSION:-4096}

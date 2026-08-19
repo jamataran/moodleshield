@@ -1391,6 +1391,8 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
    la vista de Moodle —ahí el espacio es del material— ni en el login, que es
    deliberadamente anónimo. */
 .admin .build { color: var(--muted); font-size: .75rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em; white-space: nowrap; }
+.admin .build-env { color: var(--accent); text-transform: uppercase; letter-spacing: .06em; }
+.admin .build-env:empty { display: none; }
 .login-page { min-height: 100vh; display: grid; place-items: center; }
 .login-card { width: min(100%, 390px); padding: 1.5rem; }
 .login-card form { display: grid; gap: 1rem; margin-top: 1.25rem; }

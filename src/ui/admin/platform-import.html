@@ -9,7 +9,7 @@
 <body class="admin" data-page="platform-import">
   <header class="bar admin-bar">
     <div><p class="eyebrow" id="platformName">MoodleShield</p><h1>Importar contenido</h1></div>
-    <nav><span class="build" title="Compilación que está sirviendo esta página">{{APP_VERSION}}</span>
+    <nav><span class="build" title="Entorno y compilación que sirven esta página"><b class="build-env">{{APP_ENV}}</b> {{APP_VERSION}}</span>
       <a class="btn" id="contentLink" href="/admin/platforms">Contenido del aula</a>
       <a class="btn" href="/admin/platforms">Volver al listado</a>
       <form id="logout" method="post" action="/admin/logout"><input type="hidden" name="_csrf"><button>Salir</button></form>
