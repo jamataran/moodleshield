@@ -1,24 +1,35 @@
-name: 'CD · tag vX.Y.Z: promover la misma imagen a producción'
+name: '[MANUAL] Promocionar a producción'
 
-# El tag se crea sobre `test`, sobre un commit YA desplegado y probado ahí.
-# Promocionar es dos cosas, y ninguna es construir:
-#   1. Re-etiquetar el mismo digest sha-<commit> como vX.Y.Z.
-#   2. Avanzar `main` HASTA ese commit y escribir la etiqueta en
-#      infra/prod/compose.yml.
-# Portainer de producción sigue `main`, que por tanto sólo se mueve aquí:
-# ningún merge de trabajo puede tocar producción (ADR-028).
-
-# Promoción a producción SIN reconstruir: `docker buildx imagetools create`
-# re-etiqueta el digest que ya rodó en test como vX.Y.Z + latest. Ni Node, ni
-# tests, ni build: el commit ya se verificó y construyó al entrar en main.
-# Coste total: menos de un minuto de Actions.
+# El ÚNICO botón para subir a producción. Se elige el salto de versión y este
+# workflow hace las cuatro cosas, en orden y sin pasos intermedios:
+#
+#   1. Calcula la versión y localiza el commit que se ensayó en `test`.
+#   2. Verifica la firma de sus imágenes y crea el tag vX.Y.Z sobre ese commit.
+#   3. Re-etiqueta el MISMO digest como vX.Y.Z + latest (no reconstruye nada).
+#   4. Mergea ese commit en `main` y escribe infra/prod/compose.yml.
+#
+# `main` es producción (ADR-028) y sólo la mueve este workflow: ningún merge de
+# trabajo puede tocarla. Antes esto vivía partido en dos —`release.yml` creaba el
+# tag y `cd-promote.yml` reaccionaba a él—, y el reparto sólo servía para tener
+# que saber cuál de los dos lanzar. Empujar un tag a mano ya no promociona nada:
+# se promociona desde aquí.
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Salto sobre el último tag vX.Y.Z'
+        required: true
+        type: choice
+        default: 'SUBIR PARCHE — vX.Y.(Z+1)'
+        options:
+          - 'SUBIR PARCHE — vX.Y.(Z+1)'
+          - 'SUBIR MENOR — vX.(Y+1).0'
+          - 'SUBIR MAYOR — v(X+1).0.0'
 
+# Las promociones se encolan, no se cancelan: una a medias es peor que tardía.
 concurrency:
-  group: cd-promote
+  group: promocion
   cancel-in-progress: false
 
 permissions:
@@ -26,29 +37,113 @@ permissions:
   packages: write
 
 jobs:
-  promote:
-    name: Promocionar y desplegar prod
+  promocionar:
+    name: Promocionar test a producción
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # `test` es la única fuente: es donde `cd-test.yml` escribe el bump y, por
+      # tanto, lo único que dice qué imagen se ha ensayado de verdad. Historia
+      # completa porque después hay que mover `main` desde este mismo checkout.
+      - name: Obtener test completo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Historia completa: este job mueve `main` hasta el commit
-          # etiquetado, y con un checkout superficial no hay base de merge.
+          ref: test
           fetch-depth: 0
 
-      - name: Resolver commit y etiquetas
+      - name: Resolver versión y commit ensayado
         id: meta
+        env:
+          BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
-          repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          # rev-parse del propio checkout: con tags anotados, GITHUB_SHA puede
-          # apuntar al objeto tag y no al commit.
-          commit=$(git rev-parse HEAD)
-          echo "repo=$repo"                    >> "$GITHUB_OUTPUT"
-          echo "commit=$commit"                >> "$GITHUB_OUTPUT"
-          echo "sha_tag=sha-${commit::7}"      >> "$GITHUB_OUTPUT"
-          echo "version=${GITHUB_REF_NAME}"    >> "$GITHUB_OUTPUT"
+          git fetch --tags --force origin
+
+          # Sin tuberías a propósito: `git tag | head` mata a git con SIGPIPE en
+          # cuanto la salida crece, y `pipefail` aborta el paso (ver más abajo).
+          # Sólo cuentan los tags limpios vX.Y.Z; una preversión no es una base.
+          previous=""
+          while IFS= read -r tag; do
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+            previous="$tag"
+            break
+          done <<< "$(git tag --list 'v*' --sort=-v:refname)"
+
+          if [[ -n "$previous" ]]; then
+            IFS='.' read -r major minor patch <<< "${previous#v}"
+          else
+            echo "No hay ningún tag vX.Y.Z todavía; partimos de v0.0.0"
+            previous="(ninguno)"
+            major=0; minor=0; patch=0
+          fi
+
+          case "$BUMP" in
+            'SUBIR PARCHE'*) patch=$((patch + 1)) ;;
+            'SUBIR MENOR'*)  minor=$((minor + 1)); patch=0 ;;
+            'SUBIR MAYOR'*)  major=$((major + 1)); minor=0; patch=0 ;;
+            *)
+              echo "::error::Salto no reconocido: $BUMP"
+              exit 1
+              ;;
+          esac
+          VERSION="v${major}.${minor}.${patch}"
+          echo "Último tag: $previous → nueva versión: $VERSION"
+
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Versión derivada inválida: $VERSION"
+            exit 1
+          }
+
+          app_image=$(awk '$1 == "image:" && $2 ~ /\/app:/ {print $2; exit}' infra/test/compose.yml)
+          sha_tag="${app_image##*:}"
+          [[ "$sha_tag" =~ ^sha-[0-9a-f]{7,40}$ ]] || {
+            echo "::error::infra/test/compose.yml no apunta a una imagen sha-* válida: $sha_tag. ¿Ha corrido ya cd-test.yml sobre esta rama?"
+            exit 1
+          }
+
+          # Filtra git, no awk. Con `git log | awk '{print; exit}'`, awk cierra
+          # la tubería en cuanto encuentra la línea y git muere con SIGPIPE
+          # (141) al escribir el resto; `pipefail` lo propaga y el paso aborta.
+          # Sólo se nota cuando la salida pasa de 4 KB (el buffer de stdio),
+          # así que funcionó hasta que la historia creció lo suficiente.
+          deploy_commit=$(git log -n 1 --format='%H' --fixed-strings \
+            --grep="deploy(test): ${sha_tag} [skip ci]" origin/test)
+          [[ -n "$deploy_commit" ]] || {
+            echo "::error::No se encontró el commit deploy(test) de $sha_tag en la rama test"
+            exit 1
+          }
+
+          # El commit que se etiqueta es el PADRE del bump: el que se construyó y
+          # se ensayó. El bump sólo cambia la etiqueta de imagen del Compose.
+          source_commit=$(git rev-parse "${deploy_commit}^")
+          source_tag="sha-${source_commit:0:7}"
+          [[ "$source_tag" == "$sha_tag" ]] || {
+            echo "::error::$sha_tag no corresponde al commit padre de $deploy_commit"
+            exit 1
+          }
+          git merge-base --is-ancestor "$source_commit" origin/test || {
+            echo "::error::El commit $source_commit no pertenece a test"
+            exit 1
+          }
+
+          # Reintentar una promoción que falló a medias tiene que poder: si el
+          # tag ya está y apunta donde debe, se sigue desde donde se quedó.
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            existing=$(git rev-list -n1 "$VERSION" 2>/dev/null || true)
+            [[ "$existing" == "$source_commit" ]] || {
+              echo "::error::El tag $VERSION ya existe y apunta a otro commit"
+              exit 1
+            }
+            echo "El tag $VERSION ya apunta al commit correcto; se continúa la promoción"
+          fi
+
+          echo "repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=$sha_tag"             >> "$GITHUB_OUTPUT"
+          echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"             >> "$GITHUB_OUTPUT"
+          echo "previous=$previous"           >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -59,10 +154,11 @@ jobs:
       - name: Instalar cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
-      # Se promociona un digest sin reconstruirlo, así que lo único que
-      # demuestra su procedencia es la firma que le puso `cd-test.yml` al
-      # publicarlo. Verificarla aquí es lo que impide promocionar una imagen
-      # empujada a GHCR por cualquier otro camino.
+      # Se promociona un digest sin reconstruirlo, así que lo único que demuestra
+      # su procedencia es la firma que le puso `cd-test.yml` al publicarlo.
+      # Verificarla aquí es lo que impide promocionar una imagen empujada a GHCR
+      # por cualquier otro camino. Va ANTES de crear el tag: un tag es historia
+      # publicada y no se retira.
       - name: Verificar la firma de las imágenes ensayadas en test
         env:
           REPO: ${{ steps.meta.outputs.repo }}
@@ -78,6 +174,22 @@ jobs:
             echo "✓ firma verificada: ${img}:${SRC}"
           done
 
+      - name: Crear el tag de la versión
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.meta.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "El tag $VERSION ya estaba en origin, sobre el commit correcto"
+            exit 0
+          fi
+          git tag "$VERSION" "$SOURCE_COMMIT"
+          git push origin "$VERSION"
+          echo "✓ tag $VERSION sobre $SOURCE_COMMIT"
+
       - name: Re-etiquetar el mismo digest (app + worker + proxy)
         env:
           REPO: ${{ steps.meta.outputs.repo }}
@@ -88,7 +200,7 @@ jobs:
           for img in app worker proxy; do
             src="ghcr.io/${REPO}/${img}:${SRC}"
             if ! docker buildx imagetools inspect "$src" >/dev/null 2>&1; then
-              echo "::error::No existe ${src}. Sólo se etiquetan commits que hayan pasado por \`test\` (cd-test publica su imagen sha-*). Un tag sobre un commit sin ensayar en test no se promociona."
+              echo "::error::No existe ${src}. Sólo se promocionan commits que hayan pasado por \`test\` (cd-test publica su imagen sha-*)."
               exit 1
             fi
             docker buildx imagetools create \
@@ -98,15 +210,12 @@ jobs:
             echo "✓ ${img}: ${SRC} → ${VERSION} (mismo digest)"
           done
 
-      - name: Desplegar en prod (bump de infra/prod/compose.yml)
+      - name: Desplegar en prod (merge en main + bump de infra/prod/compose.yml)
         env:
           VERSION: ${{ steps.meta.outputs.version }}
-          REPO: ${{ steps.meta.outputs.repo }}
-          TAG_SHA: ${{ steps.meta.outputs.commit }}
+          TAG_SHA: ${{ steps.meta.outputs.source_commit }}
         run: |
           set -euo pipefail
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           # Mismo patrón que cd-test: partir siempre de la punta real de main y
           # reintentar, en vez de rebasar un cambio sobre la misma línea.
@@ -126,9 +235,7 @@ jobs:
             sed -i -E "s|^    image: ghcr.io/jamataran/moodleshield/proxy:.*$|    image: ghcr.io/jamataran/moodleshield/proxy:${VERSION}|"   infra/prod/compose.yml
             # Activación atómica del entorno reducido del worker, en el MISMO
             # commit que la imagen: nunca se aplica a una imagen antigua cuyo
-            # config.js todavía exige los secretos web. Vivía en release.yml
-            # cuando ese workflow escribía el Compose de producción; al pasar la
-            # promoción aquí (ADR-028) tenía que venirse con ella.
+            # config.js todavía exige los secretos web.
             sed -i "s|environment: \*app-env # WORKER_ENV_ACTIVATION|environment: *worker-env # WORKER_ENV_ACTIVATION|" infra/prod/compose.yml
 
             # El commit del bump es condicional; el push NO, porque el merge de
@@ -166,10 +273,19 @@ jobs:
       - name: Resumen
         env:
           VERSION: ${{ steps.meta.outputs.version }}
+          PREVIOUS: ${{ steps.meta.outputs.previous }}
           SRC: ${{ steps.meta.outputs.sha_tag }}
+          SOURCE_COMMIT: ${{ steps.meta.outputs.source_commit }}
         run: |
           {
-            echo "### Prod → \`${VERSION}\`"
+            echo "### Producción → \`${VERSION}\`"
             echo ""
-            echo "Promocionado desde \`${SRC}\` **sin reconstruir** (mismo digest que test)."
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Versión anterior | \`${PREVIOUS}\` |"
+            echo "| Commit ensayado en test | \`${SOURCE_COMMIT}\` |"
+            echo "| Imagen promocionada | \`${SRC}\` → \`${VERSION}\` (mismo digest) |"
+            echo ""
+            echo "Promocionado **sin reconstruir**: producción corre el binario que rodó en test."
+            echo "Portainer redesplegará al recoger \`main\`."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,19 +1,43 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
+/** Todos los workflows, sin lista que mantener: uno nuevo entra solo. */
+async function workflowFiles () {
+  const dir = path.join(root, '.github/workflows')
+  return (await readdir(dir)).filter((f) => f.endsWith('.yml')).sort()
+}
+
 test('las acciones de GitHub están ancladas a commits completos', async () => {
-  const files = ['ci.yml', 'cd-test.yml', 'release.yml', 'cd-promote.yml', 'codeql.yml']
+  const files = await workflowFiles()
+  assert.ok(files.length >= 4, 'faltan workflows por revisar')
   for (const file of files) {
     const text = await readFile(path.join(root, '.github/workflows', file), 'utf8')
     for (const line of text.match(/^\s*(?:-\s+)?uses:\s*[^\s]+/gm) ?? []) {
       assert.match(line, /@[0-9a-f]{40}(?:\s+#\s+v[0-9A-Za-z_.-]+)?$/,
         `${file} contiene una acción mutable: ${line.trim()}`)
     }
+  }
+})
+
+/**
+ * El nombre dice si hay que hacer algo: `[AUTO]` se dispara solo, `[MANUAL]` es
+ * un botón. Sin el prefijo, la pestaña de Actions es una lista de nombres
+ * parecidos en la que hay que abrir cada uno para saber cuál se lanza a mano.
+ */
+test('cada workflow declara en su nombre si es automático o manual', async () => {
+  for (const file of await workflowFiles()) {
+    const text = await readFile(path.join(root, '.github/workflows', file), 'utf8')
+    const name = text.match(/^name:\s*'?([^'\n]+)'?/)?.[1] ?? ''
+    assert.match(name, /^\[(AUTO|MANUAL)\] /, `${file} no dice si es [AUTO] o [MANUAL]: ${name}`)
+    const manual = name.startsWith('[MANUAL]')
+    const soloAMano = /^on:\n\s+workflow_dispatch:/m.test(text)
+    assert.equal(manual, soloAMano,
+      `${file}: [MANUAL] es sólo para lo que no se dispara solo`)
   }
 })
 

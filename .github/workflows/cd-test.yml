@@ -1,4 +1,4 @@
-name: 'CD · test: publicar imágenes y desplegar en test'
+name: '[AUTO] CD · despliega test al mergear'
 
 # Cada push a `test`: verifica, construye UNA vez, publica :sha-<commit> y
 # :edge, y escribe la etiqueta en infra/test/compose.yml DE LA PROPIA RAMA

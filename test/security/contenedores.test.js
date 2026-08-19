@@ -152,8 +152,8 @@ for (const file of DEPLOYABLES) {
     }
 
     if (blocks.worker.includes('*app-env # WORKER_ENV_ACTIVATION')) {
-      // Producción la escribe cd-promote.yml desde ADR-028; release.yml sólo
-      // crea el tag.
+      // Test lo escribe cd-test.yml al desplegar; producción, el workflow de
+      // promoción, que es el único que la mueve.
       const workflow = file.includes('/test/')
         ? '.github/workflows/cd-test.yml'
         : '.github/workflows/cd-promote.yml'

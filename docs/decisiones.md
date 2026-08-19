@@ -1076,6 +1076,15 @@ es un control:
 - `cd-promote.yml` falla en cerrado si no existe el `:sha-<commit>` del commit
   etiquetado: no se promociona nada que no haya pasado por test.
 
+**Actualización (19 de agosto de 2026).** La promoción vivía partida en dos
+workflows —`release.yml` creaba el tag y `cd-promote.yml` reaccionaba a él—, y
+ese reparto sólo servía para tener que saber cuál lanzar. Es ahora **un único
+botón**, «[MANUAL] Promocionar a producción» (`cd-promote.yml`): calcula la
+versión, verifica la firma, etiqueta, re-etiqueta el digest y mueve `main`.
+Empujar un tag a mano ya no promociona nada. Todos los workflows llevan además
+`[AUTO]` o `[MANUAL]` en el nombre —el prefijo dice si hay que hacer algo— y el
+manual del pipeline vive en [`.github/README.md`](../.github/README.md).
+
 **Cómo revertirlo.** Devolver los dos stacks de Portainer a `refs/heads/main`,
 volver a disparar `cd-test.yml` con `branches: [main]` y quitar el job
 `frontera-entornos`. La rama `test` puede quedarse donde está; no la lee nadie
