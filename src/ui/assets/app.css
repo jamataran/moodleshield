@@ -1346,6 +1346,11 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
 .admin a { color: var(--accent); }
 .admin .btn { text-decoration: none; display: inline-block; }
 .admin .eyebrow { color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+/* Qué compilación se está mirando. Discreta pero legible sin buscarla: es lo
+   que distingue test de producción y una versión de la anterior. No aparece en
+   la vista de Moodle —ahí el espacio es del material— ni en el login, que es
+   deliberadamente anónimo. */
+.admin .build { color: var(--muted); font-size: .75rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em; white-space: nowrap; }
 .login-page { min-height: 100vh; display: grid; place-items: center; }
 .login-card { width: min(100%, 390px); padding: 1.5rem; }
 .login-card form { display: grid; gap: 1rem; margin-top: 1.25rem; }
