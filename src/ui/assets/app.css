@@ -306,14 +306,23 @@ body.catalog-page {
   padding: .32rem .5rem;
 }
 .new-menu { flex: none; margin-left: .15rem; }
-.new-menu-trigger {
+/* El selector va cualificado a propósito, y quitarlo rompe el botón: más abajo,
+   `details.menu > summary` pinta el menú «⋯» en gris (0,1,2) y `…:hover` en gris
+   sobre fondo claro (0,2,2). Un `.new-menu-trigger` a secas es (0,1,0) y pierde
+   por especificidad aunque esté escrito antes, así que el botón azul salía con
+   el texto oscuro y se volvía gris al pasar por encima. Cualificado gana en los
+   dos casos. */
+details.menu > summary.new-menu-trigger {
   white-space: nowrap;
   border: 1px solid var(--accent);
   background: var(--accent);
   color: #fff;
   font-weight: 600;
 }
-.new-menu-trigger:hover { background: color-mix(in srgb, #000 8%, var(--accent)); color: #fff; }
+details.menu > summary.new-menu-trigger:hover {
+  background: color-mix(in srgb, #000 8%, var(--accent));
+  color: #fff;
+}
 
 .crumbs {
   flex: 1 1 auto;
