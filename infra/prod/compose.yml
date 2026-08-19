@@ -208,7 +208,7 @@ services:
   # ---------------------------------------------------------------------------
   app:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/app:v1.0.5
+    image: ghcr.io/jamataran/moodleshield/app:v1.0.7
     restart: unless-stopped
     init: true
     depends_on:
@@ -239,7 +239,7 @@ services:
   # tumbe el servicio web y para poder limitarle CPU de forma independiente.
   worker:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/worker:v1.0.5
+    image: ghcr.io/jamataran/moodleshield/worker:v1.0.7
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -252,7 +252,7 @@ services:
         condition: service_healthy
     # Compatibilidad de rollout: v1.0.5 aún exige *app-env. release.yml cambia
     # este anchor en el mismo commit que apunta a la primera imagen compatible.
-    environment: *app-env # WORKER_ENV_ACTIVATION
+    environment: *worker-env # WORKER_ENV_ACTIVATION
     volumes:
       - "${DATA_ROOT:?falta DATA_ROOT}/media:/data/media:z"
       - "${DATA_ROOT:?falta DATA_ROOT}/uploads:/data/uploads:z"
@@ -277,7 +277,7 @@ services:
   # que monta son los medios que sirve con sendfile.
   proxy:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/proxy:v1.0.5
+    image: ghcr.io/jamataran/moodleshield/proxy:v1.0.7
     restart: unless-stopped
     depends_on:
       app:
