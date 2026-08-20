@@ -222,19 +222,6 @@ export function toMaterialDto (row, { owner = true } = {}) {
 }
 
 /**
- * Un material cualquiera, por tipo e id, dentro del ámbito del profesor.
- * Devuelve `null` (→ 404) para cualquier id que no sea suyo.
- */
-export function getOwnedMaterial ({ kind, id, platformId, ownerSub }) {
-  if (!platformId || !ownerSub || !isUuid(id)) return Promise.resolve(null)
-  const table = kind === 'pdf' ? 'pdf_document' : 'video'
-  return one(
-    `SELECT * FROM ${table} WHERE id = $1 AND platform_id = $2 AND owner_sub = $3`,
-    [id, platformId, ownerSub]
-  )
-}
-
-/**
  * Material PROPIO con ese título dentro de una carpeta concreta.
  *
  * Es lo que convierte una reimportación en versiones nuevas en vez de en

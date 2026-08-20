@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { pdfMarkLabel } from '../src/ui/assets/pdf-mark.js'
+import { pdfMarkLabel, pdfMarkTile } from '../src/ui/assets/pdf-mark.js'
 
 /**
  * Marca de fondo del visor de PDF: la identidad del lector repetida sobre la
@@ -29,6 +29,46 @@ test('sin identidad no se estampa una marca vacía', () => {
   assert.equal(pdfMarkLabel({}), null)
   assert.equal(pdfMarkLabel(), null)
   assert.equal(pdfMarkLabel({ identity: '   ', name: '' }), null)
+})
+
+/** Marcas que caen en una hoja del visor: 1080 px de ancho, A4 a esa escala. */
+function marcasPorHoja (label, ancho = 1080, alto = 1400) {
+  const tile = pdfMarkTile(label)
+  return (ancho / tile.width) * (alto / tile.height) * tile.labels.length
+}
+
+test('la marca se reparte por la hoja, no se repite sobre cada renglón', () => {
+  // El PDF se estudia. Con la baldosa atada al ancho del texto, un DNI salía
+  // unas cincuenta veces por página y la marca dejaba de ser fondo para ser
+  // ruido. Media docena cubre la hoja sin competir con lo que hay que leer.
+  const salen = marcasPorHoja('12345678Z')
+  assert.ok(salen >= 4 && salen <= 9,
+    `salen ${salen.toFixed(1)} marcas por hoja; la banda calibrada es 4–9`)
+})
+
+test('la densidad no la decide el largo de la etiqueta', () => {
+  // Un DNI y un nombre corto tienen que marcar igual de poco: si la baldosa la
+  // fija el texto, la etiqueta corta se repite el triple.
+  const dni = pdfMarkTile('12345678Z')
+  const corto = pdfMarkTile('Ana Ruiz')
+  assert.deepEqual([dni.width, dni.height], [corto.width, corto.height])
+
+  // Un nombre muy largo sí ensancha la baldosa, y con ella el hueco: el patrón
+  // RECORTA lo que se sale, y media marca es peor que ninguna.
+  const largo = pdfMarkTile('María del Carmen Fernández Ballesteros')
+  const [, [x2]] = largo.labels
+  assert.ok(x2 + largo.textWidth <= largo.width,
+    'la segunda etiqueta de la baldosa tiene que caber entera')
+  assert.ok(marcasPorHoja('María del Carmen Fernández Ballesteros') <= marcasPorHoja('12345678Z'))
+})
+
+test('las dos etiquetas de la baldosa van desplazadas entre sí', () => {
+  // Alineadas quedarían en columnas y se leerían como una tabla de fondo.
+  const tile = pdfMarkTile('12345678Z')
+  const [[x1, y1], [x2, y2]] = tile.labels
+  assert.notEqual(x1, x2)
+  assert.notEqual(y1, y2)
+  assert.ok(y1 > 0 && y2 < tile.height, 'las dos filas tienen que caber en la baldosa')
 })
 
 test('la marca se construye sin innerHTML: la identidad nunca se interpola en marcado', async () => {

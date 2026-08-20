@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import logger from '../logger.js'
 import { requireCatalogInstructor } from './auth.js'
 import { assertDocumentId, assertUuid, assertVideoId } from '../media/storage.js'
-import { displayOwnerName } from '../services/sharing.js'
+import { displayOwnerName, getVisibleMaterial } from '../services/sharing.js'
 import {
   assembleChunkedUpload,
   cancelChunkedUpload,
@@ -15,13 +15,11 @@ import {
 } from '../media/chunked-upload.js'
 import {
   createVideoAndJob,
-  createVideoRevisionAndJob,
-  getVideoForOwner
+  createVideoRevisionAndJob
 } from '../services/videos.js'
 import {
   createDocumentAndJob,
-  createDocumentRevisionAndJob,
-  getDocumentForOwner
+  createDocumentRevisionAndJob
 } from '../services/documents.js'
 import { releaseUploadReservation, reserveUpload } from '../services/upload-limits.js'
 
@@ -29,17 +27,23 @@ function ownerFrom (req) {
   return { platformId: req.session.platformId, ownerSub: req.session.sub }
 }
 
-async function assertOwnedMaterial (kind, materialId, req) {
+/**
+ * Material que este profesor puede sustituir: el suyo y el compartido que ve
+ * (ADR-029). El `assert*Id` va delante para que un identificador mal formado no
+ * llegue a la consulta, y `null` acaba en 404: quien no lo ve no sabe si existe.
+ */
+async function assertRevisableMaterial (kind, materialId, req) {
   if (!materialId) return null
-  if (kind === 'video') {
-    const id = assertVideoId(materialId)
-    return (await getVideoForOwner(id, req.session.platformId, req.session.sub)) ? id : null
-  }
-  if (kind === 'pdf') {
-    const id = assertDocumentId(materialId)
-    return (await getDocumentForOwner(id, req.session.platformId, req.session.sub)) ? id : null
-  }
-  return null
+  if (kind !== 'video' && kind !== 'pdf') return null
+  const id = kind === 'video' ? assertVideoId(materialId) : assertDocumentId(materialId)
+  const material = await getVisibleMaterial({
+    kind,
+    id,
+    platformId: req.session.platformId,
+    ownerSub: req.session.sub,
+    contextId: req.session.contextId ?? null
+  })
+  return material ? id : null
 }
 
 /**
@@ -55,7 +59,7 @@ uploadsRouter.post('/', requireUploadAuth, async (req, res, next) => {
     const requestedMaterialId = req.body?.materialId || null
     let materialId = randomUUID()
     if (requestedMaterialId) {
-      materialId = await assertOwnedMaterial(req.body?.kind, requestedMaterialId, req)
+      materialId = await assertRevisableMaterial(req.body?.kind, requestedMaterialId, req)
       if (!materialId) return res.status(404).json({ error: 'Material no encontrado' })
     }
     upload = await createChunkedUpload({
@@ -136,8 +140,9 @@ uploadsRouter.post('/:uploadId/complete', requireUploadAuth, async (req, res, ne
     }
     const replacing = session.manifest.replacing
     if (replacing) {
-      const owned = await assertOwnedMaterial(session.manifest.kind, session.manifest.materialId, req)
-      if (!owned) return res.status(404).json({ error: 'Material no encontrado' })
+      const revisable = await assertRevisableMaterial(
+        session.manifest.kind, session.manifest.materialId, req)
+      if (!revisable) return res.status(404).json({ error: 'Material no encontrado' })
     }
 
     assembled = await assembleChunkedUpload(uploadId, ownerFrom(req))
@@ -148,6 +153,8 @@ uploadsRouter.post('/:uploadId/complete', requireUploadAuth, async (req, res, ne
             videoId: assembled.materialId,
             platformId: req.session.platformId,
             ownerSub: req.session.sub,
+            contextId: req.session.contextId ?? null,
+            createdByName: displayOwnerName(req.session),
             sourcePath: assembled.destination,
             sizeBytes: assembled.size,
             sha256: assembled.sha256,
@@ -172,6 +179,8 @@ uploadsRouter.post('/:uploadId/complete', requireUploadAuth, async (req, res, ne
             documentId: assembled.materialId,
             platformId: req.session.platformId,
             ownerSub: req.session.sub,
+            contextId: req.session.contextId ?? null,
+            createdByName: displayOwnerName(req.session),
             sourcePath: assembled.destination,
             sizeBytes: assembled.size,
             sha256: assembled.sha256,

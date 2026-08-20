@@ -52,6 +52,7 @@ import { authorizeResource, authorizeCollection } from '../../src/services/autho
 import {
   activateRevision,
   archiveMaterial,
+  discardRevision,
   getActiveRevision,
   listPurgeCandidates,
   listRevisions,
@@ -1390,6 +1391,173 @@ test('compartir da acceso de trabajo, no de propiedad', async () => {
   const renombrada = await renameFolder({ id: carpeta.id, ...scopeLuis, name: 'Renombrada por Luis' })
   assert.ok(renombrada, 'renombrar una carpeta compartida es parte del acceso de trabajo')
   assert.equal(renombrada.name, 'Renombrada por Luis')
+})
+
+test('ADR-029: quien usa un material compartido puede corregirlo, y la corrección llega sola', async () => {
+  // El caso real: Ana sube el temario y lo comparte; Luis encuentra un error en
+  // el segundo vídeo y sube el fichero corregido. Nadie reinserta nada en Moodle.
+  const carpeta = await createFolder({ ...scopeA, ownerName: 'Ana', name: `Temario ${randomUUID()}` })
+  const videos = []
+  for (const n of [1, 2, 3]) {
+    videos.push(await readyVideo({ title: `Tema ${n}`, folderId: carpeta.id }))
+  }
+  const coleccion = await createCollection({
+    ...scopeA,
+    ownerName: 'Ana',
+    title: `Curso ${randomUUID()}`,
+    folderId: carpeta.id,
+    items: videos.map((id) => ({ kind: 'video', id }))
+  })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  const anterior = await getActiveRevision({ kind: 'video', materialId: videos[1] })
+  const subida = await createVideoRevisionAndJob({
+    videoId: videos[1],
+    ...scopeLuis,
+    createdByName: 'Luis',
+    sourcePath: `/tmp/${randomUUID()}.mp4`,
+    sizeBytes: 4096,
+    originalFilename: 'tema-2-corregido.mp4'
+  })
+  assert.equal(subida.status, 'queued')
+  await finishJob(videoQueue, videos[1])
+
+  // 1 · El material de Ana: mismo UUID, mismo dueño, fichero nuevo publicado.
+  const material = await one(
+    'SELECT owner_sub, active_revision_id, original_filename FROM video WHERE id = $1',
+    [videos[1]]
+  )
+  assert.equal(material.owner_sub, ANA,
+    'corregir no cambia de dueño: la firma T24 de lo ya insertado sigue valiendo')
+  assert.notEqual(material.active_revision_id, anterior.id)
+  assert.equal(material.original_filename, 'tema-2-corregido.mp4')
+
+  // 2 · La colección de Ana: los mismos elementos, sirviendo la revisión nueva.
+  const items = await loadItems(coleccion.id)
+  assert.deepEqual(items.map((i) => i.id), videos, 'la colección no se recompone')
+  assert.equal(items[1].active_revision_id, material.active_revision_id)
+
+  // 3 · Y en la biblioteca de Luis sigue siendo de Ana, ya corregido.
+  const visto = (await listMaterials(scopeLuis)).materials.find((m) => m.id === videos[1])
+  assert.equal(visto.shared, true)
+  assert.equal(visto.status, 'ready')
+
+  // El historial dice quién subió cada versión, que es lo que hace esto revisable.
+  const historial = await listRevisions({ kind: 'video', materialId: videos[1] })
+  const nueva = historial.find((r) => r.id === material.active_revision_id)
+  assert.equal(nueva.created_by_sub, LUIS)
+  assert.equal(nueva.created_by_name, 'Luis')
+  assert.equal(historial.find((r) => r.id === anterior.id).status, 'retired',
+    'la versión de Ana se retira, no se borra: se puede volver a ella')
+
+  // Los apuntes en PDF del mismo tema, por el mismo camino.
+  const documentId = await readyDocument({ title: 'Apuntes del tema 2', folderId: carpeta.id })
+  const pdf = await createDocumentRevisionAndJob({
+    documentId,
+    ...scopeLuis,
+    createdByName: 'Luis',
+    sourcePath: `/tmp/${randomUUID()}.pdf`,
+    sizeBytes: 1024,
+    originalFilename: 'apuntes-corregidos.pdf'
+  })
+  assert.equal(pdf.status, 'queued')
+  assert.equal(pdf.revision.created_by_sub, LUIS)
+})
+
+test('ADR-029: publicar y volver atrás son de los dos, cada uno por su lado', async () => {
+  const carpeta = await createFolder({ ...scopeA, name: `Rollback ${randomUUID()}` })
+  const videoId = await readyVideo({ title: 'Con dos versiones', folderId: carpeta.id })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  const primera = await getActiveRevision({ kind: 'video', materialId: videoId })
+  await createVideoRevisionAndJob({
+    videoId,
+    ...scopeLuis,
+    createdByName: 'Luis',
+    sourcePath: `/tmp/${randomUUID()}.mp4`,
+    sizeBytes: 2048,
+    originalFilename: 'corregido.mp4'
+  })
+  await finishJob(videoQueue, videoId)
+  const segunda = await getActiveRevision({ kind: 'video', materialId: videoId })
+  assert.notEqual(segunda.id, primera.id)
+
+  // Ana no se queda mirando: vuelve a la suya sin esperar a nadie.
+  const vuelta = await activateRevision({
+    kind: 'video', materialId: videoId, revisionId: primera.id, ...scopeA
+  })
+  assert.equal(vuelta.status, 'activated')
+
+  // Y Luis puede volver a publicar la corregida: es la misma operación.
+  const republicada = await activateRevision({
+    kind: 'video', materialId: videoId, revisionId: segunda.id, ...scopeLuis
+  })
+  assert.equal(republicada.status, 'activated')
+  assert.equal(
+    (await one('SELECT active_revision_id FROM video WHERE id = $1', [videoId])).active_revision_id,
+    segunda.id
+  )
+})
+
+test('ADR-029: descartar la candidata de otro no; la propia sí', async () => {
+  const carpeta = await createFolder({ ...scopeA, name: `Candidatas ${randomUUID()}` })
+  const videoId = await readyVideo({ title: 'Con candidata', folderId: carpeta.id })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  const deAna = await createVideoRevisionAndJob({
+    videoId, ...scopeA, createdByName: 'Ana', sourcePath: `/tmp/${randomUUID()}.mp4`, sizeBytes: 512
+  })
+  assert.equal(
+    (await discardRevision({
+      kind: 'video', materialId: videoId, revisionId: deAna.revision.id, ...scopeLuis
+    })).status,
+    'not_owned',
+    'tirarle a otro una subida en curso no es corregir un material'
+  )
+
+  // La autora sí puede con cualquiera: sólo cabe una candidata viva, así que si
+  // no pudiera, una subida ajena a medias le bloquearía la suya.
+  assert.equal(
+    (await discardRevision({
+      kind: 'video', materialId: videoId, revisionId: deAna.revision.id, ...scopeA
+    })).status,
+    'discarded'
+  )
+
+  const deLuis = await createVideoRevisionAndJob({
+    videoId, ...scopeLuis, createdByName: 'Luis', sourcePath: `/tmp/${randomUUID()}.mp4`, sizeBytes: 512
+  })
+  assert.equal(
+    (await discardRevision({
+      kind: 'video', materialId: videoId, revisionId: deLuis.revision.id, ...scopeLuis
+    })).status,
+    'discarded',
+    'la suya la descarta quien la subió, sin molestar al autor del material'
+  )
+})
+
+test('ADR-029: sin compartir no hay corrección que valga, ni desde otra instancia', async () => {
+  const videoId = await readyVideo({ title: 'Privado de Ana' })
+  const activa = await getActiveRevision({ kind: 'video', materialId: videoId })
+
+  for (const scope of [scopeLuis, scopeB]) {
+    assert.equal(
+      (await createVideoRevisionAndJob({
+        videoId, ...scope, sourcePath: `/tmp/${randomUUID()}.mp4`, sizeBytes: 128
+      })).status,
+      'not_found'
+    )
+    assert.equal(
+      (await activateRevision({
+        kind: 'video', materialId: videoId, revisionId: activa.id, ...scope
+      })).status,
+      'not_found'
+    )
+  }
+  assert.equal(
+    (await one('SELECT active_revision_id FROM video WHERE id = $1', [videoId])).active_revision_id,
+    activa.id
+  )
 })
 
 test('una colección compartida la ve, la edita y la duplica el otro profesor', async () => {

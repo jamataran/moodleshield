@@ -252,7 +252,8 @@ catalog_folder           carpeta personal por (platform_id, owner_sub); anidable
                          is_public la comparte con el resto de la instancia
 catalog_folder_shared    VISTA: qué carpetas están compartidas, herencia incluida
 video                    identidad lógica, propietario, carpeta, revisión activa
-video_revision           fichero físico: estado, duración, segmentos, patrón
+video_revision           fichero físico: estado, duración, segmentos, patrón,
+                         y quién la subió (puede no ser el dueño del material)
 pdf_document             identidad lógica de un PDF
 pdf_revision             fichero físico: páginas, hash
 content_collection       colección propia, archivable
@@ -376,15 +377,25 @@ platform_id  ── frontera dura. Compartir NUNCA cruza instancias Moodle
 owner_sub    ── frontera con una puerta: is_public en carpeta o colección
 ```
 
-Compartir da acceso de **trabajo**, no de propiedad:
+Compartir da acceso de **trabajo**, no de propiedad. La línea no separa mirar de
+tocar: separa lo que se puede deshacer de lo que no ([ADR-029](decisiones.md)).
 
-| Cualquier profesor de la instancia | Sólo el autor |
+| Cualquier profesor que lo vea | Sólo el autor |
 |---|---|
 | Ver, abrir e insertar en su curso | Publicar y despublicar |
-| Editar título y descripción | Archivar, borrar y purgar revisiones |
-| Componer y reordenar una colección compartida | Subir una versión nueva |
-| Renombrar la carpeta | Mover de carpeta y borrar la carpeta |
-| Duplicar una colección en su biblioteca | |
+| Editar título y descripción | Archivar, restaurar y borrar |
+| **Subir una versión corregida** | Purgar revisiones y retenerlas para una investigación |
+| **Publicar una versión y volver a una anterior** | Mover de carpeta y borrar la carpeta |
+| Descartar la candidata que subió él | Descartar cualquier candidata |
+| Componer, reordenar y duplicar una colección compartida | |
+| Renombrar la carpeta | |
+
+Corregir el fichero de otro es reversible y queda firmado: la versión anterior se
+queda `retired` con sus artefactos, el historial dice quién subió cada una y
+volver atrás es un clic. Lo que cambia con la corrección lo hace **solo**, sin
+reinsertar nada: las actividades Moodle, las colecciones y la biblioteca de los
+demás apuntan al mismo UUID. Lo irreversible —archivar, purgar, borrar— se queda
+con el autor, y `owner_sub` no se mueve nunca.
 
 Las FK compuestas `(folder_id, platform_id, owner_sub)` siguen exigiendo que una
 carpeta contenga sólo material de su autor: se ve la biblioteca del otro, no se
@@ -515,10 +526,15 @@ Conviene tener claro contra qué sirve cada cosa, porque es fácil confundirlas:
 | Sello de la descarga (ADR-017) | Dentro del PDF generado al vuelo | Una copia descargada, hasta que alguien la reprocese |
 | Nada | — | Una filtración de los bytes originales |
 
-La marca de fondo se calibra con `--pdf-mark-alpha` en `app.css`. El criterio es
-el más bajo que todavía se lea al fotografiar la pantalla: por debajo de `.10` la
-compresión de una cámara de móvil se la come, y por encima de `.18` empieza a
-molestar sobre texto pequeño.
+La marca de fondo tiene **dos** mandos, y conviene no confundirlos:
+
+| Mando | Dónde | Criterio |
+|---|---|---|
+| Cuánto se ve | `--pdf-mark-alpha` en `app.css` | el más bajo que todavía se lea al fotografiar la pantalla: por debajo de `.10` la compresión de una cámara de móvil se la come, y por encima de `.18` molesta sobre texto pequeño |
+| Cada cuánto se repite | `pdfMarkTile` en `pdf-mark.js` | una marca por cada cuadro de 480 px, unas cinco o seis por hoja; la densidad **no** la fija el largo de la etiqueta |
+
+El segundo importa tanto como el primero: un PDF de apuntes se estudia, y una
+marca cada dos renglones no deja leer por tenue que sea.
 
 | | Vídeo | PDF |
 |---|---|---|

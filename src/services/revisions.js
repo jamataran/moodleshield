@@ -5,6 +5,7 @@ import { many, one, query, transaction } from '../db/index.js'
 import config from '../config.js'
 import logger from '../logger.js'
 import { isUuid, readMediaMeta, removeRevisionFiles, revisionDir, tombstonePath } from '../media/storage.js'
+import { visibleClause } from './sharing.js'
 
 /**
  * Revisiones: el material lógico y el fichero físico dejan de ser lo mismo.
@@ -114,6 +115,7 @@ export function syncMaterialStatus (client, kind, materialId) {
 export async function insertRevision (client, kind, {
   materialId,
   createdBySub,
+  createdByName = null,
   originalFilename,
   sizeBytes,
   sha256
@@ -124,20 +126,20 @@ export async function insertRevision (client, kind, {
   // staging se nombra con él antes de que exista ninguna fila más.
   const id = randomUUID()
   const extraColumns = kind === 'video' ? ', pattern_scope' : ''
-  const extraValues = kind === 'video' ? ', $7' : ''
+  const extraValues = kind === 'video' ? ', $8' : ''
   const params = [materialId, originalFilename ?? null, sizeBytes ?? null,
-    sha256 ?? null, createdBySub, id]
+    sha256 ?? null, createdBySub, id, createdByName ?? null]
   if (kind === 'video') params.push(`${materialId}:${id}`)
 
   try {
     const { rows } = await client.query(
       `INSERT INTO ${revisions}
          (id, ${fk}, revision_number, status, storage_layout, original_filename,
-          size_bytes, sha256, created_by_sub${extraColumns})
+          size_bytes, sha256, created_by_sub, created_by_name${extraColumns})
        VALUES (
          $6, $1,
          COALESCE((SELECT max(revision_number) FROM ${revisions} WHERE ${fk} = $1), 0) + 1,
-         'queued', 'revision', $2, $3, $4, $5${extraValues})
+         'queued', 'revision', $2, $3, $4, $5, $7${extraValues})
        RETURNING *`,
       params
     )
@@ -276,27 +278,52 @@ export async function activateRevisionInTransaction (client, kind, { materialId,
   return { status: 'activated', revision: rows[0] }
 }
 
-/** Activación pedida por el profesor: publicar una candidata o hacer rollback. */
-export function activateRevision ({ kind, materialId, revisionId, platformId, ownerSub }) {
+/**
+ * Activación pedida por el profesor: publicar una candidata o hacer rollback.
+ *
+ * Alcance de trabajo desde ADR-029: quien ve el material compartido también
+ * publica y vuelve atrás. Es la operación inversa de subir una versión y no
+ * puede ser de otro: quien puede sustituir el fichero tiene que poder deshacerlo
+ * sin esperar a que el autor se conecte. Nada se pierde por el camino —la
+ * revisión anterior se queda `retired`, con sus artefactos— y el historial dice
+ * quién subió cada una.
+ */
+export function activateRevision ({
+  kind, materialId, revisionId, platformId, ownerSub, contextId = null
+}) {
   const { table } = kindConfig(kind)
   return transaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT id FROM ${table} WHERE id = $1 AND platform_id = $2 AND owner_sub = $3`,
-      [materialId, platformId, ownerSub]
+      `SELECT m.id FROM ${table} m
+        WHERE m.id = $1 AND m.platform_id = $2
+          AND ${visibleClause('m', { platform: '$2', owner: '$3', context: '$4', kind })}`,
+      [materialId, platformId, ownerSub, contextId]
     )
     if (rows.length === 0) return { status: 'not_found' }
     return activateRevisionInTransaction(client, kind, { materialId, revisionId })
   })
 }
 
-/** Descarta una candidata que aún no se ha publicado; nunca toca la activa. */
-export function discardRevision ({ kind, materialId, revisionId, platformId, ownerSub }) {
+/**
+ * Descarta una candidata que aún no se ha publicado; nunca toca la activa.
+ *
+ * Con material compartido la puerta se abre menos que en publicar: el autor
+ * puede descartar cualquier candidata —si no, una subida ajena a medias le
+ * bloquearía la suya, porque el índice de candidata única sólo admite una viva—
+ * y los demás sólo la que subieron ellos. Cancelar el trabajo de otro no es
+ * corregir un material: es tirarle una subida en curso.
+ */
+export function discardRevision ({
+  kind, materialId, revisionId, platformId, ownerSub, contextId = null
+}) {
   const { table, revisions, fk, jobs } = kindConfig(kind)
   return transaction(async (client) => {
     const { rows: materials } = await client.query(
-      `SELECT id, active_revision_id FROM ${table}
-        WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 FOR UPDATE`,
-      [materialId, platformId, ownerSub]
+      `SELECT m.id, m.active_revision_id, (m.owner_sub = $3) AS mine FROM ${table} m
+        WHERE m.id = $1 AND m.platform_id = $2
+          AND ${visibleClause('m', { platform: '$2', owner: '$3', context: '$4', kind })}
+        FOR UPDATE`,
+      [materialId, platformId, ownerSub, contextId]
     )
     if (materials.length === 0) return { status: 'not_found' }
     if (materials[0].active_revision_id === revisionId) {
@@ -307,6 +334,9 @@ export function discardRevision ({ kind, materialId, revisionId, platformId, own
       [revisionId, materialId]
     )
     if (rows.length === 0) return { status: 'not_found' }
+    if (!materials[0].mine && rows[0].created_by_sub !== ownerSub) {
+      return { status: 'not_owned' }
+    }
 
     // Un trabajo en curso se cancela por el camino del worker (lease +
     // cancel_requested_at); borrar la fila por debajo dejaría un ffmpeg vivo.
@@ -662,6 +692,7 @@ export function publicRevision (row) {
     height: row.height ?? null,
     error: row.error ?? null,
     createdBy: row.created_by_sub,
+    createdByName: row.created_by_name ?? null,
     legalHold: Boolean(row.legal_hold),
     createdAt: row.created_at,
     readyAt: row.ready_at,
