@@ -511,6 +511,11 @@ material de su autor. De ahí la única limitación visible —se ve la bibliote
 del otro, no se escribe dentro— que la interfaz explica en vez de dejar que
 falle: subir o mover algo a una carpeta ajena responde 409 con el motivo.
 
+**Actualización (20 de agosto de 2026).** ADR-029 mueve **subir una versión
+nueva** a la columna de la izquierda: quien usa el material lo corrige donde
+está. La tabla de arriba se lee con esa línea cambiada de sitio; el resto sigue
+igual.
+
 **Consecuencias.** Todo lo publicado antes de la migración sigue privado:
 `is_public` nace en `false`. La biblioteca de un profesor puede crecer con
 material que no es suyo, así que las tarjetas dicen de quién es y esconden las
@@ -1089,3 +1094,89 @@ manual del pipeline vive en [`.github/README.md`](../.github/README.md).
 volver a disparar `cd-test.yml` con `branches: [main]` y quitar el job
 `frontera-entornos`. La rama `test` puede quedarse donde está; no la lee nadie
 más. Conviene no hacerlo: es volver a la situación que causó el incidente.
+
+---
+
+## ADR-029 · Corregir un material compartido es acceso de trabajo; lo irreversible sigue siendo del autor
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Amplía a ADR-018
+
+**Contexto.** ADR-018 dejó «subir una versión nueva» en la columna del autor, con
+un argumento que parecía sólido: cambia lo que ya están viendo los alumnos de
+otro profesor. El caso real lo desmiente. Quien detecta el error de un vídeo casi
+nunca es quien lo subió, sino quien lo está usando en clase, y con la regla
+anterior sólo le quedaban dos salidas, las dos malas:
+
+- **Pedírselo al autor** y esperar. Mientras tanto sus alumnos siguen viendo el
+  error, y el autor puede estar de baja, de vacaciones o haberse ido del centro.
+- **Subir su propia copia**, que es un UUID nuevo: otra transcodificación, otro
+  fichero en disco y —lo que de verdad importa— las actividades Moodle que ya
+  existen siguen apuntando al vídeo equivocado. Es exactamente el duplicado que
+  ADR-025 y T21 se inventaron para evitar.
+
+**Decisión.** La frontera de lo compartido deja de separar «mirar» de «tocar» y
+pasa a separar **lo reversible y firmado** de **lo que no tiene vuelta**:
+
+| Cualquier profesor que lo vea | Sólo el autor |
+|---|---|
+| Ver, abrir e insertar en su curso | Publicar y despublicar |
+| Editar título y descripción | Archivar, restaurar y borrar |
+| **Subir una versión corregida** | Purgar revisiones y retenerlas para una investigación |
+| **Publicar una versión y volver a una anterior** | Mover de carpeta y borrar la carpeta |
+| Descartar la candidata **que subió él** | Descartar cualquier candidata |
+| Componer, reordenar y duplicar una colección compartida | Renombrar sigue siendo de los dos |
+
+La puerta es exactamente la misma que ya abría editar metadatos: `visibleClause`
+de [`sharing.js`](../src/services/sharing.js) —propio, carpeta o colección
+compartida, o material desplegado en el curso desde el que entra (ADR-023)—. No
+se inventa ningún camino nuevo: un UUID que no se ve sigue respondiendo 404.
+
+Tres cierres van con la decisión, porque sin ellos sería sólo aflojar una regla:
+
+1. **Cada versión dice quién la subió.** `created_by_sub` ya se guardaba; la
+   migración `017` añade `created_by_name` para que el historial sea legible por
+   una persona y no un `sub` de LTI. La interfaz lo enseña en cada línea.
+2. **Se avisa antes, no después.** El diálogo de versiones de un material ajeno
+   dice de quién es y que publicar cambia lo que ven sus alumnos y los de
+   cualquier otro curso donde esté insertado.
+3. **Descartar la candidata de otro, no.** El autor puede con cualquiera —el
+   índice de candidata única sólo admite una viva, y si no pudiera, una subida
+   ajena a medias le bloquearía la suya—; los demás, sólo con la que subieron.
+   Cancelar el trabajo de otro no es corregir un material.
+
+**Razones.** Lo que hace revisable esta operación es que **no destruye nada**: la
+versión anterior queda `retired` con sus artefactos en disco, sale en el
+historial y cualquiera de los dos puede volver a ella con un clic. Frente a eso,
+archivar, purgar o borrar sí son puertas de un solo sentido, y ahí la propiedad
+sigue mandando.
+
+Y lo que se gana es justo el valor entero del versionado: la corrección llega
+**sola** a todo lo que ya enlaza ese UUID —las actividades Moodle insertadas, las
+colecciones que lo contienen, la biblioteca de los demás profesores— sin
+reinsertar nada en Moodle y sin que nadie tenga que enterarse de nada.
+
+**Consecuencias.**
+
+- Un profesor con acceso puede cambiar lo que ven los alumnos de otro. Es la
+  contrapartida deliberada, y por eso el historial firma quién y el rollback está
+  a un clic. Quien no quiera esto tiene la herramienta de siempre: dejar de
+  compartir la carpeta.
+- **No hay aviso al autor.** No existe canal de notificación en la herramienta;
+  el cambio se ve al abrir «Versiones…». Es una limitación conocida, no un
+  descuido.
+- `owner_sub` **no cambia**: el material sigue siendo de su autor, la firma T24
+  (`custom.resourcesig`) sigue calculándose igual y no hay ni una actividad que
+  reinsertar.
+- El almacenamiento de la versión nueva cuenta en la cuota del **autor**, porque
+  la revisión cuelga de su material; la reserva de la subida, en la de quien
+  sube. Es coherente con quién posee el contenido.
+- **Importar una carpeta sigue sin tocar material ajeno**:
+  `findOwnMaterialByTitle` filtra estrictamente por `owner_sub`, para que una
+  reimportación masiva no reescriba el material de otro por coincidir el título.
+  Corregir es un acto explícito sobre un material concreto.
+
+**Cómo revertirlo.** Devolver `createVideoRevisionAndJob`,
+`createDocumentRevisionAndJob`, `activateRevision` y `discardRevision` a
+`owner_sub = $3`, y quitar «Versiones…» del menú de las tarjetas compartidas en
+`catalog.js`. La columna `created_by_name` puede quedarse: es auditoría y no
+estorba a nadie.

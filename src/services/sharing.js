@@ -15,14 +15,17 @@ import { isUuid } from '../media/storage.js'
  *   · La propiedad. Compartir da acceso de **trabajo**, no de propiedad:
  *
  *        ver · abrir · insertar en un curso · editar metadatos ·
- *        componer y reordenar una colección compartida
+ *        componer y reordenar una colección compartida ·
+ *        subir una versión corregida, publicarla y volver atrás
  *                                                        → cualquier profesor
  *        publicar/despublicar · archivar · borrar · purgar revisiones ·
- *        subir una versión nueva · mover de carpeta
+ *        retener para una investigación · mover de carpeta
  *                                                        → sólo el autor
  *
- * Lo segundo no es cautela decorativa: son las operaciones irreversibles o las
- * que cambian lo que ya están viendo los alumnos de OTRO profesor.
+ * La línea no separa mirar de tocar, sino lo reversible de lo que no tiene
+ * vuelta (ADR-029): una versión nueva deja la anterior `retired` en disco y en
+ * el historial, firmada con quién la subió, y volver a ella es un clic. Ninguna
+ * de las de abajo se deshace, y por eso se quedan con el autor.
  */
 
 /**

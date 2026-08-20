@@ -252,7 +252,8 @@ catalog_folder           carpeta personal por (platform_id, owner_sub); anidable
                          is_public la comparte con el resto de la instancia
 catalog_folder_shared    VISTA: qué carpetas están compartidas, herencia incluida
 video                    identidad lógica, propietario, carpeta, revisión activa
-video_revision           fichero físico: estado, duración, segmentos, patrón
+video_revision           fichero físico: estado, duración, segmentos, patrón,
+                         y quién la subió (puede no ser el dueño del material)
 pdf_document             identidad lógica de un PDF
 pdf_revision             fichero físico: páginas, hash
 content_collection       colección propia, archivable
@@ -376,15 +377,25 @@ platform_id  ── frontera dura. Compartir NUNCA cruza instancias Moodle
 owner_sub    ── frontera con una puerta: is_public en carpeta o colección
 ```
 
-Compartir da acceso de **trabajo**, no de propiedad:
+Compartir da acceso de **trabajo**, no de propiedad. La línea no separa mirar de
+tocar: separa lo que se puede deshacer de lo que no ([ADR-029](decisiones.md)).
 
-| Cualquier profesor de la instancia | Sólo el autor |
+| Cualquier profesor que lo vea | Sólo el autor |
 |---|---|
 | Ver, abrir e insertar en su curso | Publicar y despublicar |
-| Editar título y descripción | Archivar, borrar y purgar revisiones |
-| Componer y reordenar una colección compartida | Subir una versión nueva |
-| Renombrar la carpeta | Mover de carpeta y borrar la carpeta |
-| Duplicar una colección en su biblioteca | |
+| Editar título y descripción | Archivar, restaurar y borrar |
+| **Subir una versión corregida** | Purgar revisiones y retenerlas para una investigación |
+| **Publicar una versión y volver a una anterior** | Mover de carpeta y borrar la carpeta |
+| Descartar la candidata que subió él | Descartar cualquier candidata |
+| Componer, reordenar y duplicar una colección compartida | |
+| Renombrar la carpeta | |
+
+Corregir el fichero de otro es reversible y queda firmado: la versión anterior se
+queda `retired` con sus artefactos, el historial dice quién subió cada una y
+volver atrás es un clic. Lo que cambia con la corrección lo hace **solo**, sin
+reinsertar nada: las actividades Moodle, las colecciones y la biblioteca de los
+demás apuntan al mismo UUID. Lo irreversible —archivar, purgar, borrar— se queda
+con el autor, y `owner_sub` no se mueve nunca.
 
 Las FK compuestas `(folder_id, platform_id, owner_sub)` siguen exigiendo que una
 carpeta contenga sólo material de su autor: se ve la biblioteca del otro, no se

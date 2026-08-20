@@ -25,7 +25,7 @@ import {
   revisionDir
 } from '../media/storage.js'
 import { receiveVideoUpload } from '../media/upload.js'
-import { displayOwnerName } from '../services/sharing.js'
+import { displayOwnerName, getVisibleMaterial } from '../services/sharing.js'
 import {
   releaseUploadReservation,
   reserveUpload,
@@ -156,8 +156,16 @@ videosRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res, n
   const reservationId = randomUUID()
   let destination = null
   try {
-    const owned = await getVideoForOwner(videoId, req.session.platformId, req.session.sub)
-    if (!owned) return res.status(404).json({ error: 'Vídeo no encontrado' })
+    // Ver el vídeo basta para sustituirlo (ADR-029): el compartido se corrige
+    // donde está y la corrección llega sola a lo que ya lo enlaza.
+    const visible = await getVisibleMaterial({
+      kind: 'video',
+      id: videoId,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      contextId: req.session.contextId
+    })
+    if (!visible) return res.status(404).json({ error: 'Vídeo no encontrado' })
 
     const declaredBytes = declaredUploadBytes(req, config.media.maxUploadBytes)
     await reserveUpload({
@@ -175,6 +183,8 @@ videosRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res, n
       videoId,
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
+      createdByName: displayOwnerName(req.session),
       sourcePath: upload.destination,
       sizeBytes: upload.size,
       sha256: upload.sha256,

@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { requireCatalogInstructor } from './auth.js'
 import { assertUuid } from '../media/storage.js'
-import { getOwnedMaterial, listMaterials } from '../services/materials.js'
+import { listMaterials } from '../services/materials.js'
+import { getVisibleMaterial } from '../services/sharing.js'
 import {
   activateRevision,
   archiveMaterial,
@@ -49,18 +50,29 @@ materialsRouter.get('/', requireCatalogInstructor, async (req, res, next) => {
   }
 })
 
+/**
+ * Historial de versiones. Lo ve quien ve el material —también el compartido de
+ * otro profesor (ADR-029)—, porque sin él no se puede publicar ni volver atrás.
+ *
+ * `owned` y `mine` son lo que la interfaz necesita para no ofrecer lo que el
+ * servidor va a rechazar: descartar una candidata ajena. El `sub` de quien la
+ * subió sólo viaja para el autor del material; a los demás les llega el nombre,
+ * que es lo que hay que leer, y no un identificador de otra persona.
+ */
 materialsRouter.get('/:kind/:id/revisions', requireCatalogInstructor, async (req, res, next) => {
   try {
     const kind = assertKind(req.params.kind)
     const id = assertUuid(req.params.id, 'Identificador de material')
-    const material = await getOwnedMaterial({
+    const material = await getVisibleMaterial({
       kind,
       id,
       platformId: req.session.platformId,
-      ownerSub: req.session.sub
+      ownerSub: req.session.sub,
+      contextId: req.session.contextId
     })
     if (!material) return res.status(404).json({ error: 'Material no encontrado' })
 
+    const owned = material.owner_sub === req.session.sub
     const revisions = await listRevisions({ kind, materialId: id })
     const candidate = await getCandidateRevision({ kind, materialId: id })
     res.json({
@@ -68,7 +80,14 @@ materialsRouter.get('/:kind/:id/revisions', requireCatalogInstructor, async (req
       candidateRevisionId: candidate && candidate.id !== material.active_revision_id
         ? candidate.id
         : null,
-      revisions: revisions.map(publicRevision)
+      owned,
+      ownerName: material.owner_name ?? null,
+      revisions: revisions.map((row) => {
+        const mine = row.created_by_sub === req.session.sub
+        const dto = publicRevision(row)
+        if (!owned && !mine) dto.createdBy = null
+        return { ...dto, mine }
+      })
     })
   } catch (err) {
     next(err)
@@ -88,7 +107,8 @@ materialsRouter.post('/:kind/:id/revisions/:rid/activate', requireCatalogInstruc
       materialId: assertUuid(req.params.id, 'Identificador de material'),
       revisionId: assertUuid(req.params.rid, 'Identificador de revisión'),
       platformId: req.session.platformId,
-      ownerSub: req.session.sub
+      ownerSub: req.session.sub,
+      contextId: req.session.contextId
     })
     if (result.status === 'not_found') return res.status(404).json({ error: 'Revisión no encontrada' })
     if (result.status === 'not_ready') {
@@ -112,9 +132,16 @@ materialsRouter.post('/:kind/:id/revisions/:rid/discard', requireCatalogInstruct
       materialId: assertUuid(req.params.id, 'Identificador de material'),
       revisionId: assertUuid(req.params.rid, 'Identificador de revisión'),
       platformId: req.session.platformId,
-      ownerSub: req.session.sub
+      ownerSub: req.session.sub,
+      contextId: req.session.contextId
     })
     if (result.status === 'not_found') return res.status(404).json({ error: 'Revisión no encontrada' })
+    if (result.status === 'not_owned') {
+      return res.status(409).json({
+        error: 'Esta versión la subió otro profesor: sólo puede descartarla quien la subió o el autor del material.',
+        code: 'revision_not_yours'
+      })
+    }
     if (result.status === 'active_revision') {
       return res.status(409).json({
         error: 'No se puede descartar la revisión publicada. Vuelve antes a otra versión.',
