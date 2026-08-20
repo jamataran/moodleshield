@@ -1,5 +1,5 @@
 import * as pdfjs from '/vendor/pdfjs/pdf.min.mjs'
-import { pdfMarkLabel } from './pdf-mark.js'
+import { pdfMarkLabel, pdfMarkTile } from './pdf-mark.js'
 
 /**
  * Visor de PDF con PDF.js.
@@ -64,30 +64,20 @@ function pageIdentityMark (user) {
   svg.setAttribute('aria-hidden', 'true')
   svg.setAttribute('focusable', 'false')
 
-  // Un patrón SVG RECORTA lo que se sale de la baldosa, no lo continúa en la
-  // siguiente. Con un DNI da igual, pero el sustituto es el nombre y
-  // «María del Carmen Fernández» se quedaría a medias, que es peor que no
-  // marcar: la baldosa se ensancha con la etiqueta.
-  // ~12 px por carácter con la fuente monoespaciada de `.pdf-page-mark`.
-  const textWidth = label.length * 12
-  const gap = 70
-  // Dos etiquetas por baldosa, cada una con su hueco: la segunda empieza donde
-  // acaba la primera más el hueco, así que la baldosa mide justo el doble y
-  // ninguna llega al borde.
-  const tileWidth = 2 * (textWidth + gap)
-  const tileHeight = 165
+  // Cada cuánto se repite: `pdfMarkTile`, que es donde se razona la densidad.
+  const tile = pdfMarkTile(label)
 
   const pattern = window.document.createElementNS(SVG_NS, 'pattern')
   pattern.setAttribute('id', id)
   pattern.setAttribute('patternUnits', 'userSpaceOnUse')
-  pattern.setAttribute('width', String(tileWidth))
-  pattern.setAttribute('height', String(tileHeight))
+  pattern.setAttribute('width', String(tile.width))
+  pattern.setAttribute('height', String(tile.height))
   // La diagonal evita que la marca se alinee con los renglones y se lea como
   // parte del texto; también sobrevive mejor a un recorte de la foto.
   pattern.setAttribute('patternTransform', 'rotate(-30)')
 
-  // Dos pasadas desplazadas por baldosa: cubren el hueco que deja la diagonal.
-  for (const [x, y] of [[0, 55], [textWidth + gap, 135]]) {
+  // Dos pasadas desplazadas por baldosa: así no quedan alineadas en columnas.
+  for (const [x, y] of tile.labels) {
     const text = window.document.createElementNS(SVG_NS, 'text')
     text.setAttribute('x', String(x))
     text.setAttribute('y', String(y))

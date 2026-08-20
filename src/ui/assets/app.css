@@ -1150,9 +1150,10 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
  * Marca de fondo con la identidad, repetida sobre toda la hoja.
  *
  * El equilibrio que se busca: invisible de facto al leer, presente en una foto
- * del monitor. Se calibra con --pdf-mark-alpha y nada más; por debajo de .10 la
- * compresión de una cámara de móvil se la puede comer, y por encima de .18
- * empieza a estorbar sobre texto pequeño.
+ * del monitor. Dos mandos, y este es sólo uno: cuánto se ve —--pdf-mark-alpha,
+ * aquí— y cada cuántos píxeles se repite, que vive en `pdfMarkTile` de
+ * `pdf-mark.js`. Por debajo de .10 la compresión de una cámara de móvil se la
+ * puede comer, y por encima de .18 empieza a estorbar sobre texto pequeño.
  *
  * Se sirve en el suelo de esa banda: con .13 los apuntes de texto denso se leían
  * peor de lo aceptable en pantalla. Bajar más exige salir de la banda, y eso ya

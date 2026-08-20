@@ -526,10 +526,15 @@ Conviene tener claro contra qué sirve cada cosa, porque es fácil confundirlas:
 | Sello de la descarga (ADR-017) | Dentro del PDF generado al vuelo | Una copia descargada, hasta que alguien la reprocese |
 | Nada | — | Una filtración de los bytes originales |
 
-La marca de fondo se calibra con `--pdf-mark-alpha` en `app.css`. El criterio es
-el más bajo que todavía se lea al fotografiar la pantalla: por debajo de `.10` la
-compresión de una cámara de móvil se la come, y por encima de `.18` empieza a
-molestar sobre texto pequeño.
+La marca de fondo tiene **dos** mandos, y conviene no confundirlos:
+
+| Mando | Dónde | Criterio |
+|---|---|---|
+| Cuánto se ve | `--pdf-mark-alpha` en `app.css` | el más bajo que todavía se lea al fotografiar la pantalla: por debajo de `.10` la compresión de una cámara de móvil se la come, y por encima de `.18` molesta sobre texto pequeño |
+| Cada cuánto se repite | `pdfMarkTile` en `pdf-mark.js` | una marca por cada cuadro de 480 px, unas cinco o seis por hoja; la densidad **no** la fija el largo de la etiqueta |
+
+El segundo importa tanto como el primero: un PDF de apuntes se estudia, y una
+marca cada dos renglones no deja leer por tenue que sea.
 
 | | Vídeo | PDF |
 |---|---|---|
