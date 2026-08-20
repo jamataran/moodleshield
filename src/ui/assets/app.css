@@ -1154,6 +1154,10 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
  * compresión de una cámara de móvil se la puede comer, y por encima de .18
  * empieza a estorbar sobre texto pequeño.
  *
+ * Se sirve en el suelo de esa banda: con .13 los apuntes de texto denso se leían
+ * peor de lo aceptable en pantalla. Bajar más exige salir de la banda, y eso ya
+ * no es un retoque de CSS sino renunciar a que la marca sobreviva a una foto.
+ *
  * Negro a baja opacidad en vez de un gris fijo: así el tono lo pone la propia
  * página y la marca funciona igual sobre blanco que sobre un PDF de fondo claro
  * con color.
@@ -1165,7 +1169,7 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   width: 100%;
   height: 100%;
   color: #000;
-  opacity: var(--pdf-mark-alpha, .13);
+  opacity: var(--pdf-mark-alpha, .10);
   pointer-events: none;
   user-select: none;
 }
@@ -1174,9 +1178,10 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-/* Si el usuario pide más contraste, la marca no debe ser la que se lo quite. */
+/* Si el usuario pide más contraste, la marca no debe ser la que se lo quite: por
+   debajo del suelo de la banda, asumiendo que ahí ya puede no salir en la foto. */
 @media (prefers-contrast: more) {
-  .pdf-page-mark { opacity: .09; }
+  .pdf-page-mark { opacity: .07; }
 }
 .pdf-page-legal {
   position: absolute;
@@ -1193,7 +1198,13 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   white-space: nowrap;
   opacity: .9;
 }
-.pdf-watermark { opacity: .32; }
+/*
+ * La etiqueta flotante hereda de .watermark el blanco con sombra dura, que está
+ * pensado para leerse sobre vídeo. Sobre una hoja blanca lo que se ve es la
+ * sombra, y cae justo encima de un renglón: al .32 del vídeo tapaba la línea.
+ * Aquí basta con insinuarla, porque debajo ya está la marca repetida.
+ */
+.pdf-watermark { opacity: .18; }
 
 /* ---- Móvil ---- */
 @media (max-width: 720px) {
