@@ -25,3 +25,38 @@ export function pdfMarkLabel (user) {
   }
   return null
 }
+
+/**
+ * Cada cuánto se repite la marca sobre la hoja.
+ *
+ * Es la decisión que separa «marca de fondo» de «ruido encima del texto», y por
+ * eso vive aquí y no dentro del dibujo: un PDF de apuntes se estudia, y una
+ * marca cada dos renglones no deja leer aunque sea tenue.
+ *
+ * La densidad **no la fija el largo de la etiqueta**. Antes la baldosa medía lo
+ * que midiera el texto más un hueco fijo, así que un DNI —nueve caracteres—
+ * salía unas cincuenta veces por hoja. Ahora la manda `CELDA`: una marca por
+ * cada cuadro de ese lado, salgan cinco o seis por página, y el largo de la
+ * etiqueta sólo interviene si no cabe.
+ *
+ * Dos filas por baldosa, la segunda desplazada media baldosa, para que no
+ * queden alineadas en columnas. Un patrón SVG **recorta** lo que se sale de su
+ * baldosa en vez de continuarlo en la siguiente, y de ahí el margen: el nombre
+ * completo —el sustituto cuando Moodle no manda identidad— tiene que caber
+ * entero o se leería a medias, que es peor que no marcar.
+ *
+ * ~12 px por carácter con la fuente monoespaciada de `.pdf-page-mark`.
+ */
+const CELDA = 480
+
+export function pdfMarkTile (label) {
+  const textWidth = String(label ?? '').length * 12
+  const cell = Math.max(textWidth + 120, CELDA)
+  return {
+    textWidth,
+    width: 2 * cell,
+    height: CELDA,
+    // [x, y] de cada etiqueta dentro de la baldosa.
+    labels: [[0, 165], [cell, 405]]
+  }
+}
