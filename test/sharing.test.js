@@ -56,6 +56,53 @@ test('la migración de compartición es aditiva y no destruye nada', async () =>
   assert.match(sql, /CREATE OR REPLACE VIEW catalog_folder_shared/)
 })
 
+/** Cuerpo de una función exportada, hasta la siguiente. */
+function cuerpoDe (fuente, nombre) {
+  const inicio = fuente.indexOf(`function ${nombre} (`)
+  assert.notEqual(inicio, -1, `falta ${nombre}`)
+  const siguiente = fuente.indexOf('\nexport ', inicio + 1)
+  return fuente.slice(inicio, siguiente === -1 ? undefined : siguiente)
+}
+
+test('corregir el fichero es trabajo; lo irreversible sigue siendo del autor', async () => {
+  // ADR-029. La línea no está donde parece: no separa «tocar» de «mirar», sino
+  // lo que se puede deshacer de lo que no. Sustituir el fichero deja las dos
+  // versiones en el historial y firmadas con quién las subió; archivar, purgar o
+  // retener para una investigación no tienen vuelta.
+  const revisions = await readFile(path.join(projectRoot, 'src/services/revisions.js'), 'utf8')
+  const videos = await readFile(path.join(projectRoot, 'src/services/videos.js'), 'utf8')
+  const documents = await readFile(path.join(projectRoot, 'src/services/documents.js'), 'utf8')
+
+  for (const [nombre, fuente] of [
+    ['createVideoRevisionAndJob', videos],
+    ['createDocumentRevisionAndJob', documents],
+    ['activateRevision', revisions],
+    ['discardRevision', revisions]
+  ]) {
+    assert.match(cuerpoDe(fuente, nombre), /visibleClause\(/,
+      `${nombre} debe filtrar por visibilidad, no sólo por propiedad`)
+  }
+
+  for (const nombre of [
+    'archiveMaterial', 'restoreMaterial', 'purgeRevisionManually', 'setRevisionLegalHold'
+  ]) {
+    const cuerpo = cuerpoDe(revisions, nombre)
+    assert.match(cuerpo, /owner_sub = \$3/, `${nombre} debe seguir exigiendo propiedad`)
+    assert.doesNotMatch(cuerpo, /visibleClause/,
+      `${nombre} no puede abrirse a material compartido: no tiene vuelta atrás`)
+  }
+})
+
+test('la migración que registra al autor de cada versión no destruye nada', async () => {
+  const sql = await readFile(path.join(projectRoot, 'migrations/017_revision_autor.sql'), 'utf8')
+  for (const prohibido of [/DROP\s+TABLE/i, /DROP\s+COLUMN/i, /TRUNCATE/i, /DELETE\s+FROM/i, /UPDATE\s+/i]) {
+    assert.doesNotMatch(sql, prohibido, `la migración 017 no puede contener ${prohibido}`)
+  }
+  for (const tabla of ['video_revision', 'pdf_revision']) {
+    assert.match(sql, new RegExp(`ALTER TABLE ${tabla}\\s+ADD COLUMN IF NOT EXISTS created_by_name text`))
+  }
+})
+
 test('las acciones que cambian lo que ven los alumnos siguen siendo del autor', async () => {
   const folders = await readFile(path.join(projectRoot, 'src/services/folders.js'), 'utf8')
   const collections = await readFile(path.join(projectRoot, 'src/services/collections.js'), 'utf8')

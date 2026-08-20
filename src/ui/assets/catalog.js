@@ -255,8 +255,8 @@ function childrenOf (parentId) {
 /**
  * `shared` distingue lo que otro profesor de este Moodle ha compartido. No es
  * un adorno: decide qué acciones se ofrecen, porque compartir da acceso de
- * trabajo (ver, editar, insertar) y no de propiedad — archivar, borrar, mover
- * de carpeta, versiones y compartir siguen siendo del autor.
+ * trabajo (ver, editar, insertar y subir una versión corregida) y no de
+ * propiedad — archivar, borrar, mover de carpeta y compartir son del autor.
  */
 function isShared (item) {
   return Boolean(item?.shared)
@@ -921,11 +921,12 @@ function materialCard (item) {
     actions.append(edit)
   }
 
-  // Compartido ≠ propio: se puede usar y corregir el título, pero archivar,
-  // borrar, mover de carpeta o publicar una versión nueva cambiaría lo que ya
-  // están viendo los alumnos de otro profesor. Eso se queda con su autor.
+  // Compartido ≠ propio. Corregir el fichero SÍ (ADR-029): quien usa el material
+  // lo arregla donde está, y la corrección llega sola a las actividades y
+  // colecciones que ya lo enlazan. Archivar, borrar o moverlo de carpeta no:
+  // eso es irreversible o es la biblioteca de su autor.
   const acciones = isShared(item)
-    ? []
+    ? [{ label: 'Versiones…', run: () => { void openRevisions(item) } }]
     : [
         !item.archived && { label: 'Mover a…', run: () => { void openMove({ type: 'material', item }) } },
         { label: 'Versiones…', run: () => { void openRevisions(item) } },
@@ -1197,6 +1198,7 @@ let revisionXhr = null
 async function openRevisions (item) {
   revisioning = item
   el('revisions-heading').textContent = `Versiones de «${item.title}»`
+  el('revision-shared-hint').hidden = true
   el('revision-file').accept = item.kind === 'pdf' ? '.pdf,application/pdf' : VIDEO_EXTENSIONS.join(',')
   el('revision-upload').reset()
   el('revision-submit').disabled = false
@@ -1211,6 +1213,19 @@ async function renderRevisions () {
   list.replaceChildren()
   try {
     const data = await apiJson(`/materials/${item.kind}/${item.id}/revisions`)
+
+    // Sustituir material ajeno cambia lo que ven los alumnos de otro profesor:
+    // se dice antes de subir, no después. `!== false` y no `!`: un servidor
+    // anterior a ADR-029 no manda el campo, y ahí el material sólo puede ser mío.
+    const esMio = data.owned !== false
+    const aviso = el('revision-shared-hint')
+    aviso.hidden = esMio
+    if (!aviso.hidden) {
+      aviso.textContent = `Este material es de ${data.ownerName || 'otro profesor'}. ` +
+        'Al publicar una versión cambia para todos: sus alumnos y los de cualquier ' +
+        'otro curso donde esté insertado. Queda registrado que la subiste tú.'
+    }
+
     list.replaceChildren(...data.revisions.map((revision) => {
       const li = document.createElement('li')
       const text = document.createElement('span')
@@ -1219,7 +1234,8 @@ async function renderRevisions () {
         revision.active ? '· publicada' : '',
         `· ${STATUS_LABEL[revision.status] ?? revision.status}`,
         revision.sizeBytes ? `· ${(revision.sizeBytes / 1048576).toFixed(1)} MB` : '',
-        `· ${new Date(revision.createdAt).toLocaleString('es-ES')}`
+        `· ${new Date(revision.createdAt).toLocaleString('es-ES')}`,
+        revision.createdByName ? `· subida por ${revision.createdByName}` : ''
       ].filter(Boolean).join(' ')
       li.append(text)
 
@@ -1250,7 +1266,11 @@ async function renderRevisions () {
         li.append(activate)
       }
 
-      if (!revision.active && ['uploaded', 'queued', 'processing'].includes(revision.status)) {
+      // Descartar la candidata de otro es tirarle una subida en curso: el autor
+      // del material puede con cualquiera, los demás sólo con la suya.
+      const puedeDescartar = esMio || revision.mine
+      if (puedeDescartar && !revision.active &&
+          ['uploaded', 'queued', 'processing'].includes(revision.status)) {
         const discard = document.createElement('button')
         discard.type = 'button'
         discard.textContent = 'Descartar'

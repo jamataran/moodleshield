@@ -83,7 +83,7 @@ sueltos. Antes de tocar nada:
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
 | [`docs/revision-seguridad-2026-08-10.md`](docs/revision-seguridad-2026-08-10.md) | Estado de seguridad vigente: rama frente a producción, riesgos y gates de despliegue |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…027: por qué cada decisión y cómo revertirla |
+| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…029: por qué cada decisión y cómo revertirla |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
 | [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría histórica de la entrega del 6 de agosto; no usar como estado vigente |
 | [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Mapa de fases y dependencias |
@@ -146,7 +146,10 @@ la biblioteca por carpetas, con buscador global.
   colección (ADR-018), y el material **desplegado en el curso** desde el que
   entra ese profesor (ADR-023). La segunda no sale del UUID sino de una fila de
   `resource_placement`, así que revocarla la cierra y T24 sigue en pie.
-  `platform_id` no tiene ninguna.
+  `platform_id` no tiene ninguna. Al otro lado de esas puertas se **trabaja**:
+  ver, insertar, editar metadatos y **subir una versión corregida y publicarla**
+  (ADR-029). Lo que no se deshace —archivar, borrar, purgar, mover de carpeta—
+  se queda con el autor, y `owner_sub` no se mueve nunca.
 - **La autorización va en la sesión, no en el UUID.** Un token de un recurso no
   abre otro. El helper es `authorizeResource(session, kind, id)`.
 - **Importar un fichero que ya existe es una revisión, no un duplicado**

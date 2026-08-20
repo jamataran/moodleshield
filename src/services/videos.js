@@ -113,6 +113,7 @@ export function createVideoAndJob ({
     const revision = await insertRevision(client, 'video', {
       materialId: id,
       createdBySub: ownerSub ?? 'desconocido',
+      createdByName: ownerName ?? null,
       originalFilename,
       sizeBytes,
       sha256
@@ -131,11 +132,19 @@ export function createVideoAndJob ({
 /**
  * Sustitución: crea la revisión N+1 de un vídeo que ya existe. El UUID lógico no
  * cambia, así que ninguna actividad Moodle hay que tocarla.
+ *
+ * La condición es **ver** el vídeo, no ser su autor (ADR-029): quien usa un
+ * material compartido puede corregirlo, y la corrección llega sola a las
+ * actividades y colecciones que ya lo enlazan, que es justo por lo que no se
+ * duplica el material. La fila sigue siendo de su autor —`owner_sub` no se
+ * toca— y la revisión guarda quién la subió.
  */
 export function createVideoRevisionAndJob ({
   videoId,
   platformId,
   ownerSub,
+  contextId = null,
+  createdByName = null,
   sourcePath,
   sizeBytes,
   sha256,
@@ -143,14 +152,18 @@ export function createVideoRevisionAndJob ({
 }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT id FROM video WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 FOR UPDATE`,
-      [videoId, platformId, ownerSub]
+      `SELECT m.id FROM video m
+        WHERE m.id = $1 AND m.platform_id = $2
+          AND ${visibleClause('m', { platform: '$2', owner: '$3', context: '$4', kind: 'video' })}
+        FOR UPDATE`,
+      [videoId, platformId, ownerSub, contextId]
     )
     if (rows.length === 0) return { status: 'not_found' }
 
     const revision = await insertRevision(client, 'video', {
       materialId: videoId,
       createdBySub: ownerSub,
+      createdByName,
       originalFilename,
       sizeBytes,
       sha256

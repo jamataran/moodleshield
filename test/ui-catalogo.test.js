@@ -124,3 +124,32 @@ test('el material se ordena como se lee, con los números en su sitio', async ()
     ['2 · Límites', '9 · Derivadas', '10 · Repaso']
   )
 })
+
+/**
+ * ADR-029: el material compartido se corrige donde está. La tarjeta de otro
+ * profesor ofrece «Versiones…» y sólo eso, y el diálogo dice de quién es antes
+ * de que nadie suba nada, porque publicar cambia lo que ven sus alumnos.
+ */
+test('la tarjeta compartida ofrece versiones, y avisa de quién es el material', async () => {
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+
+  // Rama compartida del ternario: desde `isShared(item)` hasta el `: [` de la otra.
+  const inicio = code.indexOf('const acciones = isShared(item)')
+  assert.notEqual(inicio, -1, 'falta el menú de acciones de la tarjeta')
+  const compartida = code.slice(inicio, code.indexOf('    : [', inicio))
+  assert.match(compartida, /\{ label: 'Versiones…', run: \(\) => \{ void openRevisions\(item\) \} \}/,
+    'el menú de lo compartido tiene que ofrecer las versiones')
+  for (const prohibida of ['Archivar', 'Borrar definitivamente', 'Mover a…']) {
+    assert.doesNotMatch(compartida, new RegExp(prohibida),
+      `${prohibida} no puede ofrecerse sobre material de otro profesor`)
+  }
+
+  assert.match(html, /id="revision-shared-hint"/, 'falta el aviso en el diálogo')
+  assert.match(code, /const esMio = data\.owned !== false\n\s*const aviso = el\('revision-shared-hint'\)\n\s*aviso\.hidden = esMio/,
+    'el aviso sale exactamente cuando el material es de otro')
+  assert.match(code, /revision\.createdByName \? `· subida por \$\{revision\.createdByName\}` : ''/,
+    'cada versión tiene que decir quién la subió')
+  assert.match(code, /const puedeDescartar = esMio \|\| revision\.mine/,
+    'descartar la candidata de otro no se ofrece: el servidor la rechaza')
+})

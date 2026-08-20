@@ -30,7 +30,7 @@ import {
 import { receiveDocumentUpload } from '../media/upload.js'
 import { parseRangeHeader } from '../media/range.js'
 import { stampPdfForViewer } from '../media/pdf-stamp.js'
-import { displayOwnerName } from '../services/sharing.js'
+import { displayOwnerName, getVisibleMaterial } from '../services/sharing.js'
 import {
   releaseUploadReservation,
   reserveUpload,
@@ -140,8 +140,15 @@ documentsRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res
   const reservationId = randomUUID()
   let destination = null
   try {
-    const owned = await getDocumentForOwner(documentId, req.session.platformId, req.session.sub)
-    if (!owned) return res.status(404).json({ error: 'Documento no encontrado' })
+    // Mismo criterio que en vídeo (ADR-029): quien ve el PDF puede corregirlo.
+    const visible = await getVisibleMaterial({
+      kind: 'pdf',
+      id: documentId,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      contextId: req.session.contextId
+    })
+    if (!visible) return res.status(404).json({ error: 'Documento no encontrado' })
 
     await reserveUpload({
       id: reservationId,
@@ -158,6 +165,8 @@ documentsRouter.post('/:id/revisions', requireCatalogInstructor, async (req, res
       documentId,
       platformId: req.session.platformId,
       ownerSub: req.session.sub,
+      contextId: req.session.contextId,
+      createdByName: displayOwnerName(req.session),
       sourcePath: upload.destination,
       sizeBytes: upload.size,
       sha256: upload.sha256,

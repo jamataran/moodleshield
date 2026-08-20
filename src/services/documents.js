@@ -83,6 +83,7 @@ export function createDocumentAndJob ({
     const revision = await insertRevision(client, 'pdf', {
       materialId: id,
       createdBySub: ownerSub ?? 'desconocido',
+      createdByName: ownerName ?? null,
       originalFilename,
       sizeBytes,
       sha256
@@ -98,10 +99,13 @@ export function createDocumentAndJob ({
   })
 }
 
+/** Mismo criterio que en vídeo: quien ve el PDF compartido puede corregirlo. */
 export function createDocumentRevisionAndJob ({
   documentId,
   platformId,
   ownerSub,
+  contextId = null,
+  createdByName = null,
   sourcePath,
   sizeBytes,
   sha256,
@@ -109,14 +113,18 @@ export function createDocumentRevisionAndJob ({
 }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT id FROM pdf_document WHERE id = $1 AND platform_id = $2 AND owner_sub = $3 FOR UPDATE`,
-      [documentId, platformId, ownerSub]
+      `SELECT m.id FROM pdf_document m
+        WHERE m.id = $1 AND m.platform_id = $2
+          AND ${visibleClause('m', { platform: '$2', owner: '$3', context: '$4', kind: 'pdf' })}
+        FOR UPDATE`,
+      [documentId, platformId, ownerSub, contextId]
     )
     if (rows.length === 0) return { status: 'not_found' }
 
     const revision = await insertRevision(client, 'pdf', {
       materialId: documentId,
       createdBySub: ownerSub,
+      createdByName,
       originalFilename,
       sizeBytes,
       sha256
