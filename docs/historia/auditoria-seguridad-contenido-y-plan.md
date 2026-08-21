@@ -6,11 +6,15 @@
 > **Worktree:** `moodleshield-security-audit`; rama `codex/security-content-audit`.
 
 > [!IMPORTANT]
-> **Este documento es la foto del 7 de agosto de 2026 y no se actualiza.** La candidata
-> posterior cerró los hallazgos técnicos mediante, entre otros controles, placements LTI,
-> grants revocables, límites de procesado y roles runtime. Para el estado vigente manda la
-> [`revisión del 10 de agosto`](revision-seguridad-2026-08-10.md); el índice resumido está
-> en [`docs/README.md`](README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
+> **Este documento es la foto del 7 de agosto de 2026 y no se actualiza.** El
+> endurecimiento posterior cerró los hallazgos técnicos mediante, entre otros controles,
+> placements LTI, grants revocables, límites de procesado y roles runtime, y está
+> desplegado en producción desde `v1.0.6`.
+>
+> **Para el estado vigente manda [`docs/seguridad.md`](../seguridad.md)**, que lleva la
+> tabla de dónde está hoy cada uno de estos 16 hallazgos. Entre este documento y aquél,
+> hay además una [revisión intermedia del 10 de agosto](revision-seguridad-2026-08-10.md),
+> también histórica.
 
 ## 1. Veredicto ejecutivo
 

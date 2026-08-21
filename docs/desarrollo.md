@@ -138,8 +138,8 @@ Salida esperada: dos patrones distintos, del estilo `AABBBAAAAA` y `BBABABBAAB`.
 
 ```bash
 npm run lint              # ESLint
-npm test                  # 306 unitarias, sin base de datos (9 se saltan, ver abajo)
-npm run test:integration  # contra Postgres real
+npm test                  # 388 unitarias, sin base de datos (9 se saltan, ver abajo)
+npm run test:integration  # 154 contra Postgres real
 npm run test:coverage     # cobertura nativa de node:test
 ```
 
@@ -192,6 +192,7 @@ aquí, pasa en CI.
 | `test/*.test.js` | Unitario. **Sin base de datos, sin red, sin filesystem compartido** |
 | `test/integration/*.integration.js` | Necesita Postgres. Se ejecuta con `--test-concurrency=1` |
 | `test/ui-iframe.test.js` | Vigila que la UI no use `alert`/`confirm`/`prompt`. **No lo ignores si falla** |
+| `test/guardia-datos.test.js` | Vigila el hook que aplica la Regla 0 (`.claude/hooks/guardia-datos.mjs`): qué corta y, sobre todo, qué **no** puede cortar. Un guardia que bloquea el trabajo normal acaba desactivado |
 
 ---
 
@@ -329,9 +330,8 @@ Utilidades:
 | `scripts/generate-secrets.sh` | Rellena los secretos de un `.env` local |
 | `scripts/generate-env.sh` | Genera el bloque de variables para Portainer (**no** para local) |
 
-> ⚠️ La rama de seguridad redacta tokens y queries sensibles, pero los logs siguen
-> conteniendo datos operativos y personales. **No pegues logs en una issue pública** sin
-> revisarlos; `v1.0.5` además es anterior a esa redacción.
+> ⚠️ Los logs redactan tokens y queries sensibles desde `v1.0.6`, pero siguen conteniendo
+> datos operativos y personales. **No pegues logs en un issue público** sin revisarlos.
 
 ---
 
@@ -362,19 +362,24 @@ Las que más se tocan durante el desarrollo:
 
 ## Flujo de Git y despliegue
 
-**Las ramas de trabajo entran en `main` por PR, y `main` es la única rama que despliega.**
-Producción no se construye aparte: se promociona la imagen que ya pasó por test.
+**El entorno es la rama** ([ADR-028](decisiones.md)): `test` es el entorno de pruebas y
+**`main` es producción**. Las ramas de trabajo salen de `test` y vuelven a `test` por PR.
+A `main` no se mergea nunca a mano: sólo la mueve la promoción, que no reconstruye nada.
+
+Y antes de la rama va un **issue**. Es donde vive el «qué» y el «por qué», y donde se
+anota la evidencia al cerrarlo; `docs/` describe el sistema, no el trabajo pendiente.
 
 ```bash
-git switch main
-git pull --ff-only origin main
-git switch -c feature/mi-cambio
+git switch test
+git pull --ff-only origin test
+git switch -c feature/mi-cambio      # o fix/… , docs/… , chore/…
 
 # editar, probar
 npm run lint && npm test
 
 git commit -m "feat: describe el cambio"
 git push -u origin feature/mi-cambio
+gh pr create --base test --fill      # el PR va SIEMPRE contra `test`
 ```
 
 ### Worktrees: siempre dentro de `.claude/worktrees/`
@@ -409,10 +414,8 @@ las herramientas reales, migraciones idempotentes contra Postgres, validación d
 Compose, comprobación de que no hay secretos en los `.env` versionados y una construcción
 Docker sin publicar.
 
-**El entorno es la rama** (ADR-028). `test` es el entorno de pruebas y `main` es
-producción; cada Portainer sigue la suya. Todo el trabajo —features y dependabot—
-se mergea a `test`, y **a `main` no se mergea a mano nunca**: sólo lo mueve la
-promoción.
+Cada Portainer sigue su rama, y por eso el trabajo —features y dependabot— entra
+**siempre** por `test`.
 
 Qué pasa después del merge (esto sólo aplica al repositorio canónico):
 

@@ -282,11 +282,12 @@ Tres decisiones que conviene tener presentes al leer el esquema:
   fuente de verdad es la tabla de revisiones; la proyección existe para que el
   catálogo y las consultas anteriores sigan funcionando sin reescribirse.
 
-Detalle y motivos en [`tasks/T02`](tasks/done/T02-esquema-base-datos.md) y en las
-fichas [T17](tasks/done/T17-carpetas-biblioteca-profesor.md),
-[T18](tasks/done/T18-colecciones-una-actividad.md),
-[T20](tasks/done/T20-materiales-pdf.md) y
-[T21](tasks/done/T21-versionado-sustitucion-materiales.md).
+Detalle y motivos en las fichas de cierre archivadas como issues:
+[T02](https://github.com/jamataran/moodleshield/issues/41),
+[T17](https://github.com/jamataran/moodleshield/issues/54),
+[T18](https://github.com/jamataran/moodleshield/issues/55),
+[T20](https://github.com/jamataran/moodleshield/issues/57) y
+[T21](https://github.com/jamataran/moodleshield/issues/58).
 
 ## Endpoints
 
@@ -632,7 +633,7 @@ automática con aviso al profesor está en la lista de evolución del plan.
 
 Lo que se puede mover si el sistema se queda corto, por orden de utilidad:
 
-1. **Un worker más rápido**: la candidata soporta una sola réplica. `SKIP LOCKED`
+1. **Un worker más rápido**: la topología soportada es **un solo worker**. `SKIP LOCKED`
    reparte trabajos, pero antes de escalar horizontalmente la reserva de capacidad del
    artefacto debe convertirse en transaccional.
 2. **Aceleración hardware**: `h264_qsv` (iGPU Intel) o `h264_nvenc` (NVIDIA)
@@ -645,3 +646,10 @@ Lo que se puede mover si el sistema se queda corto, por orden de utilidad:
 
 El cuello de botella es siempre la transcodificación, no la reproducción — que
 es exactamente el objetivo del diseño.
+
+> [!WARNING]
+> **Los puntos 1 y 4 no fallan con un error, fallan sirviendo de más.** Con dos réplicas
+> de app cada una lleva su propia cuenta de límites, y la detección de «cuarta IP
+> distinta» —lo que hoy revoca automáticamente una sesión compartida— puede no dispararse
+> nunca. Antes de tocar `deploy.replicas`, lee
+> [#68](https://github.com/jamataran/moodleshield/issues/68).
