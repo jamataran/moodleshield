@@ -16,9 +16,11 @@ Si sólo lees dos frases, que sean estas:
 
 ---
 
-## El día a día, en cinco pasos
+## El día a día, en seis pasos
 
 ```
+0. Se abre un issue ─────────────────  qué hay que hacer, y por qué
+        │                              (en docs/ vive la documentación, no las tareas)
 1. Rama de trabajo desde `test`
         │
 2.      └── PR a `test` ─────────────► [AUTO] CI · valida cada PR
@@ -35,8 +37,12 @@ Si sólo lees dos frases, que sean estas:
                                          infra/prod/compose.yml → despliega PROD)
 ```
 
-Tú haces tres cosas: **abrir la PR**, **aprobarla y mergearla**, y **pulsar el
-botón de promoción cuando test te convenza**. Lo demás ocurre solo.
+Tú haces cuatro cosas: **abrir el issue**, **abrir la PR**, **aprobarla y
+mergearla**, y **pulsar el botón de promoción cuando test te convenza**. Lo demás
+ocurre solo.
+
+El issue no es burocracia: es donde queda escrito el «por qué» y donde se anota
+la evidencia al cerrarlo. La PR enlaza al issue con `Closes #NN`.
 
 ---
 
@@ -116,8 +122,9 @@ ya existe sobre el commit correcto y continúa desde donde se quedó.
 
 ### En el `.env` de los dos stacks
 
-Dos variables nuevas frente a `v1.0.5`, y **el stack no arranca sin ellas**
-(`${DB_APP_PASSWORD:?falta DB_APP_PASSWORD}`):
+Dos variables que **el stack exige para arrancar** desde `v1.0.6`
+(`${DB_APP_PASSWORD:?falta DB_APP_PASSWORD}`). Producción y test ya las tienen; esto
+es para dar de alta un entorno nuevo:
 
 ```
 DB_APP_PASSWORD=<openssl rand -hex 32>
@@ -243,5 +250,5 @@ situación que causó el incidente de ADR-028.
 - [ADR-028](../docs/decisiones.md) — el entorno es la rama
 - [`docs/desarrollo.md`](../docs/desarrollo.md) — entorno local, tests, convenciones y flujo de Git
 - [`infra/README.md`](../infra/README.md) — alta de los stacks en Portainer
-- [`docs/revision-seguridad-2026-08-10.md`](../docs/revision-seguridad-2026-08-10.md) — transición desde `v1.0.5`
+- [`docs/seguridad.md`](../docs/seguridad.md) — estado de seguridad vigente y qué se comprueba en cada release
 - [`CLAUDE.md`](../CLAUDE.md) — reglas del proyecto (Regla 0: hay producción con material real dentro)

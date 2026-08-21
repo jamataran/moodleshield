@@ -12,7 +12,7 @@ No proprietary DRM, no per-view licensing, no shipping your videos to someone el
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
-[![Tests](https://img.shields.io/badge/tests-426-success)](docs/desarrollo.md#tests)
+[![Tests](https://img.shields.io/badge/tests-542-success)](docs/desarrollo.md#tests)
 [![No frontend frameworks](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
@@ -21,29 +21,26 @@ No proprietary DRM, no per-view licensing, no shipping your videos to someone el
 </div>
 
 > [!WARNING]
-> **Version 0.x — read this before deploying it to real students.** The video pipeline, the
-> LTI integration and the library work and are tested. An
-> [internal security audit](docs/auditoria-seguridad-contenido-y-plan.md) from August 2026
-> found 16 findings, and two hardening passes closed most of them
-> ([finding-by-finding detail](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)).
-> What **still affects what this README promises**:
+> **Read this before deploying it to real students.** The video pipeline, the LTI
+> integration and the library work, are tested, and there is a **production** install
+> serving real material. Two internal security audits found 16 prioritised findings, and
+> the hardening that closes them has been deployed since `v1.0.6`
+> ([finding-by-finding state](docs/seguridad.md), in Spanish). What **still affects what
+> this README promises**:
 >
-> - **`feature/seguridad-auditoria` is the security candidate for test.** Its unit,
->   integration, native-tooling and real-stack tests, lint, dependency audit and Compose
->   validation pass. Build the exact commit and complete the image CI and Moodle/browser
->   gates before promotion. See the
->   [current security review](docs/revision-seguridad-2026-08-10.md).
 > - **Attribution cannot be promised yet.** The A/B pattern reader was broken and is now
 >   fixed and tested, but the mark only lives in two corners of the frame: **cropping the
 >   edges removes it**, and two students comparing copies can forge a third that points at
 >   nobody (F-07). Use it to deter and to investigate; **not to sustain disciplinary
 >   proceedings**.
-> - **The development profile (`infra/local`) ships known secrets**, and they are now public
+> - **PDFs carry no forensic mark.** The download seal and the viewer background are
+>   visible deterrence; a leaked PDF is **not attributable** (F-08).
+> - **The development profile (`infra/local`) ships known secrets**, and they are public
 >   (F-01). It's fine for `localhost` development; **never** expose it to the internet.
 >
-> The real state, finding by finding, is in [`docs/README.md`](docs/README.md#estado-del-proyecto).
-> This is documented on purpose: a security project that hides its own audit hasn't earned
-> your trust.
+> The full state is in [`docs/seguridad.md`](docs/seguridad.md), and the audits themselves
+> in [`docs/historia/`](docs/historia/README.md). They are published on purpose: a security
+> project that hides its own audit hasn't earned your trust.
 
 > **Note on language.** The codebase, comments, error messages, UI and reference
 > documentation are in **Spanish** — see [`docs/`](docs/). This file is the English entry
@@ -104,7 +101,7 @@ Most likely source: Ana García Pérez (12345678Z) — 100.0% match.
 > divergent playlists is built and tested, and the **reader** that interprets the pattern
 > back out — which until August 2026 misclassified and could point at an innocent student —
 > is now fixed and covered by tests, including an end-to-end one with real ffmpeg
-> ([T13](docs/tasks/done/T13-trazado-forense.md)).
+> ([T13](https://github.com/jamataran/moodleshield/issues/51)).
 >
 > What has **not** changed is where the mark lives: two boxes in the lower corners.
 > Cropping the edges still removes it, collusion still works, and an audio-only extract
@@ -139,7 +136,7 @@ serving static files with nginx. It makes no difference whether you have 10 stud
 | ♻️ **Revisions** | Replace a file without changing the UUID Moodle has embedded; rollback included |
 | 🏢 **Multi-tenant** | Multiple Moodle instances and teachers isolated by `platform_id` + `owner_sub` |
 | 🪶 **Lightweight** | The web service sits at ~45 MB RSS. It fits on a NAS |
-| 🔍 **Forensic tracing** | A CLI that matches the pattern against everyone who watched, and **refuses to conclude** when the sample is too weak. 🚧 The reader isn't reliable yet ([T13](docs/README.md#hoja-de-ruta)) |
+| 🔍 **Forensic tracing** | A CLI that matches the pattern against everyone who watched, and **refuses to conclude** when the sample is too weak. The reader is fixed and tested; the mark still only lives in the corners ([#70](https://github.com/jamataran/moodleshield/issues/70)) |
 
 ## What it protects against, and what it doesn't
 
@@ -165,8 +162,9 @@ is still there) · opening a material with another activity's token.
 the video edges, which removes the marks · collusion
 (two students comparing copies to build a third) · capture itself.
 
-The first two have known solutions — marks in multiple positions, Tardos codes — and are on
-the [roadmap](docs/README.md#hoja-de-ruta).
+The first two have known solutions — marks in multiple positions, Tardos codes — and are
+tracked in [#70](https://github.com/jamataran/moodleshield/issues/70); the map by priority
+is in the [roadmap](docs/README.md#hoja-de-ruta).
 
 ---
 
@@ -318,7 +316,8 @@ All reference documentation is in Spanish.
 |---|---|
 | 🧭 [`docs/README.md`](docs/README.md) | **Documentation index, project status and roadmap** |
 | 🏗️ [`docs/arquitectura.md`](docs/arquitectura.md) | Flows, data model, endpoints, security model |
-| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…024: why each decision, and how to reverse it |
+| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…029: why each decision, and how to reverse it |
+| 🔒 [`docs/seguridad.md`](docs/seguridad.md) | **Current security state**: layers, findings, accepted limits, permanent secrets |
 | 💻 [`docs/desarrollo.md`](docs/desarrollo.md) | **Developer guide**: environment, tests, conventions, debugging |
 | 🎓 [`docs/moodle-setup.md`](docs/moodle-setup.md) | Registering the tool in Moodle, in six steps, with troubleshooting |
 | 🔐 [`docs/https-tunel.md`](docs/https-tunel.md) | Public HTTPS and tunnels for local development |
@@ -394,32 +393,27 @@ attributable**, and this project isn't going to claim otherwise.
 <details>
 <summary><b>Is it production-ready?</b></summary>
 
-**The `feature/seguridad-auditoria` branch is approved as the test candidate.** The core —
-LTI, A/B pipeline, playlists, signed delivery, library, PDF and revisions — and the audit's
-technical controls are implemented and verified.
+**Yes, and there is a production install serving real material.** The core — LTI, A/B
+pipeline, playlists, signed delivery, library, PDF and revisions — and the technical
+controls from both audits are implemented, verified and deployed.
 
-On that branch, the hardening the audit flagged is applied: the session token no longer
-travels in the URL (F-02), logs carry no tokens (F-03), signed delivery is mandatory in production (F-04),
+The hardening the audits flagged has been applied since `v1.0.6`: the session token no
+longer travels in the URL (F-02), logs carry no tokens (F-03), signed delivery is mandatory
+in production (F-04), every LTI placement is bound server-side to its activity (F-05),
 `pdfjs` is current (F-09), the CSP no longer needs `unsafe-inline` (F-13), purging a
-revision no longer destroys the forensic evidence (F-14), sessions are revocable, upload
-quotas and rate limits are enforced, and the worker runs without Internet access using a
-least-privilege database role.
+revision no longer destroys the forensic evidence (F-14), sessions are revocable and
+sharing is detected, upload quotas and rate limits are enforced, and the worker — the
+component that opens teacher-supplied files — runs isolated, without Internet access, with
+a read-only rootfs and a least-privilege database role.
 
-The branch is technically approved as a test candidate. It must be built into immutable
-images, tested there and promoted before claiming production has those protections. The
-**forensic promise** is still not closed — the
-reader works, but cropping the edges removes the mark (F-07). **Cross-teacher isolation**
-(F-05) is mandatory in production; every activity predating migration `014` must be
-reinserted so Moodle stores its server-side placement. An older signed reference alone is
-not sufficient. The finding-by-finding state is in
-[`docs/README.md`](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
-
-The exact separation between production, branch and open work is in the
-[`10 August security review`](docs/revision-seguridad-2026-08-10.md).
+What is **not** closed is the **forensic promise**: the reader works, but cropping the
+edges removes the mark and collusion still works (F-07). And PDFs offer no attribution
+(F-08).
 
 In practice: use it to impose order and deter, not to sustain disciplinary proceedings
 against a student. And deploy it behind the reverse proxy with `MEDIA_DELIVERY=signed`,
-never with the `infra/local` profile.
+never with the `infra/local` profile. The finding-by-finding state, and the limits you have
+to accept in writing, are in [`docs/seguridad.md`](docs/seguridad.md) (Spanish).
 </details>
 
 <details>
@@ -436,14 +430,18 @@ changes.
 
 Help is welcome, and there is clearly scoped work waiting.
 
-1. **What's missing and what's broken**: [`docs/README.md`](docs/README.md#hoja-de-ruta) —
-   every task has a card with scope, acceptance criteria and known traps.
+1. **What's missing and what's broken**: the
+   [open issues](https://github.com/jamataran/moodleshield/issues) — each one carries
+   context, acceptance criteria and known traps. The map by priority is in the
+   [roadmap](docs/README.md#hoja-de-ruta).
 2. **How to set up the environment and which conventions to follow**:
    [`docs/desarrollo.md`](docs/desarrollo.md).
 3. **How to open a PR**: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Good first topics: the player's browser matrix, the forensic trace reading algorithm (T13,
-currently incorrect), and running the whole thing against a real Moodle.
+Good first topics: the
+[player's browser matrix](https://github.com/jamataran/moodleshield/issues/61), running the
+whole thing against a real Moodle, and — the most valuable one — making the mark
+[resistant to cropping and collusion](https://github.com/jamataran/moodleshield/issues/70).
 
 Found a security flaw? Don't open a public issue: [`SECURITY.md`](SECURITY.md).
 

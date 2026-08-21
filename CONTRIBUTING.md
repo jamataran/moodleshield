@@ -14,25 +14,26 @@ también la que no es código.
 1. **Lee la documentación, no el código.** El proyecto está documentado a propósito para
    que no haga falta reconstruir el modelo mental leyendo ficheros sueltos:
    [`docs/README.md`](docs/README.md) → [`docs/arquitectura.md`](docs/arquitectura.md) →
-   la ficha de la tarea que vayas a tocar.
+   el issue que vayas a resolver.
 2. **Monta el entorno** siguiendo [`docs/desarrollo.md`](docs/desarrollo.md). Son tres
    modos según lo que vayas a cambiar; el del día a día son dos comandos.
-3. **Mira si ya hay una ficha.** Casi todo lo pendiente tiene una en
-   [`docs/tasks/`](docs/tasks/README.md), con alcance, criterios de aceptación y trampas
-   conocidas. Leerla suele ahorrar una tarde.
+3. **Mira si ya hay un issue.** Todo lo pendiente tiene el suyo, con contexto, criterio de
+   aceptación y trampas conocidas: [issues abiertos](https://github.com/jamataran/moodleshield/issues).
+   Leerlo entero suele ahorrar una tarde. En `docs/` **sólo vive documentación**; las
+   tareas viven en GitHub.
 
 ## Qué hace falta ahora mismo
 
 Ordenado por «impacto alto, contexto necesario bajo». El detalle está en la
 [hoja de ruta](docs/README.md#hoja-de-ruta):
 
-| | Tarea | Requiere código |
+| | Trabajo | Requiere código |
 |---|---|---|
-| 🥇 | **Probar el conjunto contra un Moodle real** y reportar lo que se rompa | No |
-| 🥈 | **Matriz de navegadores del player** (T11): Chrome, Safari, Firefox, iOS | Poco |
-| 🥉 | **Diagnosticar el trazado forense** (T13): el algoritmo de lectura falla | Sí |
-| | **Purgar tokens de los logs** (parte de T16) | Sí |
-| | **Auditar y cerrar T22** (verificación más que código) | Poco |
+| 🥇 | **Probar el conjunto contra un Moodle real** y reportar lo que se rompa ([#61](https://github.com/jamataran/moodleshield/issues/61)) | No |
+| 🥈 | **Programar la copia de seguridad y probar una restauración** ([#60](https://github.com/jamataran/moodleshield/issues/60)) | Poco |
+| 🥉 | **Validar el lector forense contra una grabación de pantalla real** ([#66](https://github.com/jamataran/moodleshield/issues/66)) | Poco |
+| | **Marca repartida por el fotograma y códigos de Tardos** ([#70](https://github.com/jamataran/moodleshield/issues/70)) | Sí, y del difícil |
+| | **Fallos conocidos menores** de biblioteca y compositor ([#69](https://github.com/jamataran/moodleshield/issues/69)) | Sí, pero acotado |
 
 También son bienvenidos: traducciones de la documentación, mejoras de accesibilidad en la
 UI, y probar la herramienta en LMS distintos de Moodle (la integración es LTI 1.3 estándar).
@@ -42,8 +43,8 @@ UI, y probar la herramienta en LMS distintos de Moodle (la integración es LTI 1
 ## El flujo
 
 ```bash
-git switch main
-git pull --ff-only origin main
+git switch test
+git pull --ff-only origin test
 git switch -c feature/mi-cambio      # o fix/… , docs/… , chore/…
 
 # editar
@@ -52,9 +53,15 @@ npm test
 
 git commit -m "feat: describe el cambio"
 git push -u origin feature/mi-cambio
+gh pr create --base test --fill
 ```
 
-Y abre un PR contra `main`. No se trabaja directamente sobre `main`.
+**El PR va contra `test`, nunca contra `main`.** El entorno es la rama
+([ADR-028](docs/decisiones.md)): `test` es el entorno de pruebas y **`main` es
+producción**, movida sólo por el botón de promoción. Un PR hacia `test` que toque
+`infra/prod/` lo rechaza el job «Frontera entre entornos».
+
+En el cuerpo del PR, `Closes #NN` con el issue que resuelve.
 
 ### Qué se espera de un PR
 
@@ -95,13 +102,19 @@ La lista completa de invariantes está en
 
 ## Issues
 
+Los issues son donde vive **todo** el trabajo del proyecto: `docs/` describe lo que el
+sistema es, y GitHub lo que le falta. Hay plantillas para los tres casos.
+
 - **Fallo**: qué esperabas, qué pasó, cómo reproducirlo, y en qué modo de los tres
-  arrancaste. Si hay logs, **revísalos antes de pegarlos**: hoy `LOG_LEVEL=debug` registra
-  queries que contienen tokens de sesión (fallo conocido, parte de T16).
-- **Funcionalidad**: cuenta el problema antes que la solución. Si encaja con alguna ficha
-  existente, enlázala.
+  arrancaste. Si hay logs, **revísalos antes de pegarlos**: contienen datos operativos y
+  personales aunque los tokens estén redactados.
+- **Trabajo**: cuenta el problema antes que la solución, y di qué le pasa a lo que ya está
+  desplegado si el cambio se implementa. Esa pregunta es obligatoria aquí (Regla 0-bis).
 - **Duda**: adelante. Que haya que preguntar algo suele significar que la documentación
   tiene un hueco, y eso también se arregla.
+
+Un issue se cierra **con evidencia**: qué se probó, con qué salida y en qué entorno. Si
+queda una comprobación pendiente, se abre uno de seguimiento en vez de cerrar a medias.
 
 ## Seguridad
 
