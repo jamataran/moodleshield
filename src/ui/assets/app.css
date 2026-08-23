@@ -686,6 +686,54 @@ dialog label { display: block; font-size: .875rem; color: var(--muted); margin-b
 .report-sin-acceso td { color: var(--muted); }
 .report-detail { font-size: .8rem; padding: .2rem .5rem; }
 
+/* El árbol del informe: carpeta > … > colección > materiales. Se pinta con
+   <details>, así que un aula con cien materiales se puede plegar por ramas. */
+.report-tree { list-style: none; margin: 0; padding-left: 0; }
+.report-tree .report-tree { padding-left: 1.1rem; border-left: 1px solid var(--border); }
+.report-tree-item, .report-tree-branch { padding: .2rem 0; }
+.report-tree-item { display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline; }
+.report-tree summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline; }
+.report-tree-kind {
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 .35rem;
+}
+.report-tree .report-identity { display: inline; }
+
+/* Lector del contrato de la API (/api/v1/docs). */
+.api-description p { max-width: 70ch; }
+.api-op { border-top: 1px solid var(--border); padding: .9rem 0; }
+.api-op:first-of-type { border-top: 0; }
+.api-op p { max-width: 70ch; }
+.api-op-head { display: flex; gap: .5rem; align-items: baseline; margin: 0 0 .3rem; }
+.api-method {
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  border-radius: var(--radius);
+  padding: .1rem .4rem;
+  border: 1px solid var(--border);
+}
+.api-method-get { color: var(--ok, inherit); }
+.api-method-post, .api-method-put, .api-method-delete { color: var(--warn, inherit); }
+.api-params p { display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline; }
+.api-params input { min-width: 16rem; }
+.api-output {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .6rem .7rem;
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: .82rem;
+}
+
 #collection-dialog { width: min(62rem, 96vw); }
 .collection-editor-grid {
   display: grid;

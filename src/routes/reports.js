@@ -35,7 +35,11 @@ reportsRouter.get('/course', requireCatalogInstructor, async (req, res, next) =>
     if (!contextId) return
     const report = await getCourseReport({
       platformId: req.session.platformId,
-      contextId
+      contextId,
+      // Quién mira: recorta del árbol los nombres de las carpetas privadas de
+      // otros profesores. El material sale igual —es del curso—; lo que no sale
+      // es cómo lo tiene organizado su dueño en su biblioteca (ADR-016).
+      viewerSub: req.session.sub
     })
     // Lleva nombres, identificadores y horas de alumnos: ni caché compartida ni
     // historial del navegador.
@@ -56,7 +60,8 @@ reportsRouter.get('/course/students/:sub', requireCatalogInstructor, async (req,
     const report = await getStudentCourseReport({
       platformId: req.session.platformId,
       contextId,
-      sub
+      sub,
+      viewerSub: req.session.sub
     })
     // 404 y no 403: un alumno de otro curso no existe para este informe.
     if (!report) return res.status(404).json({ error: 'Alumno no encontrado' })

@@ -126,6 +126,21 @@ aceptarlos explícitamente.
   salen por ese camino —ninguna consulta de `services/course-report.js` los selecciona, y
   una prueba lo vigila—, y el token de informes **sólo lee** y no vale para la API de
   contenido.
+- **La consola de administración ve más que cualquier profesor** (ADR-031). Su vista de
+  seguimiento enseña el avance de **todos** los alumnos de **todas** las aulas de una
+  instancia, mientras un profesor sólo ve la suya (ADR-023). Es coherente con
+  `/admin/platforms/:id/contenido`, que ya no filtra por propietario, pero es un alcance
+  mayor sobre datos personales y entra en el mismo #65. Es de sólo lectura, va detrás de
+  la cookie de administrador y **no** deja rastro en `admin_audit_event`: la consola sólo
+  audita escrituras, y valorar si esta lectura debería auditarse es decisión del operador.
+  Lo que sí está cerrado por código: aquí tampoco salen `ip` ni `user_agent`, y
+  `REPORTS_API_TOKEN` no baja al navegador.
+- **La ruta de carpetas de un profesor no se le enseña a otro** (ADR-031). El árbol de la
+  biblioteca es organización privada (ADR-016) y sus nombres son información del claustro
+  —«Borradores baja de Ana»—, no de la asignatura. En `GET /reports/course` el material
+  ajeno cuelga de un nodo `restricted` que sólo dice de quién es, salvo que la carpeta esté
+  compartida (ADR-018). El recorte lo decide un `viewerSub` que sale de la sesión LTI, no
+  del cliente.
 - **Una imagen endurecida reduce el riesgo; no vuelve infalibles** a ffmpeg, Ghostscript,
   Node, nginx, PostgreSQL ni Moodle. Hay que mantener parches y repetir el gate en cada
   release ([#64](https://github.com/jamataran/moodleshield/issues/64)).

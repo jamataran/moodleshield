@@ -210,7 +210,12 @@ ltiRouter.post('/launch', async (req, res, next) => {
 
     // Identificador visible del alumno: el parámetro personalizado configurado
     // en Moodle (por defecto el username) y, si no llega, lis_person_sourcedid.
-    const identity = context.custom?.[config.lti.identityCustomParam] ?? context.lisPersonSourcedId ?? null
+    // Se descarta lo vacío, no sólo lo ausente: un parámetro personalizado mal
+    // sustituido llega como '' y con `??` se daba por bueno, dejando el
+    // respaldo sin usar y al alumno sin ningún identificador legible.
+    const identity = [context.custom?.[config.lti.identityCustomParam], context.lisPersonSourcedId]
+      .map((valor) => String(valor ?? '').trim())
+      .find(Boolean) ?? null
     logger.info(
       {
         sub: context.sub,

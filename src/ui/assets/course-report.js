@@ -71,6 +71,32 @@ export function textoAvance (entrada, material) {
   return `${visto} de ${duracion(total)}${entrada.percent === null ? '' : ` · ${entrada.percent}%`}`
 }
 
+/**
+ * Cómo se llama un alumno en el informe.
+ *
+ * Moodle omite los claims de nombre según su configuración de privacidad, y hay
+ * despliegues donde ni el nombre ni el username llegan. Se prueba por
+ * truthiness y no con `??`, porque lo que llegaba era una cadena vacía —un
+ * valor— y `??` la daba por buena: la celda quedaba en blanco. Un alumno del
+ * que sólo se conoce el `sub` sale con su `sub` abreviado, nunca con un hueco.
+ */
+export function etiquetaAlumno (alumno) {
+  for (const valor of [alumno?.name, alumno?.identity]) {
+    const texto = String(valor ?? '').trim()
+    if (texto) return texto
+  }
+  const sub = String(alumno?.sub ?? '').trim()
+  if (!sub) return 'Alumno sin identificar'
+  return sub.length > 16 ? `${sub.slice(0, 15)}…` : sub
+}
+
+/** El username debajo del nombre, sólo si aporta algo distinto. */
+export function identidadSecundaria (alumno) {
+  const identidad = String(alumno?.identity ?? '').trim()
+  if (!identidad) return null
+  return identidad === etiquetaAlumno(alumno) ? null : identidad
+}
+
 /** Alumnos que no han tocado nada aparecen igual: no verlos también es dato. */
 function resumenAlumno (alumno, materiales) {
   const conAcceso = alumno.materials.filter((entrada) => entrada.sessions > 0).length
@@ -165,9 +191,12 @@ export function createCourseReport ({ sessionToken }) {
       const fila = document.createElement('tr')
 
       const alumnoCelda = document.createElement('td')
-      alumnoCelda.append(nodo('strong', null, alumno.name ?? alumno.identity ?? alumno.sub))
-      if (alumno.identity && alumno.name) {
-        alumnoCelda.append(nodo('span', 'muted report-identity', alumno.identity))
+      const principal = nodo('strong', null, etiquetaAlumno(alumno))
+      principal.title = alumno.sub ?? ''
+      alumnoCelda.append(principal)
+      const secundaria = identidadSecundaria(alumno)
+      if (secundaria) {
+        alumnoCelda.append(nodo('span', 'muted report-identity', secundaria))
       }
 
       const boton = nodo('button', 'report-detail', 'Detalle')
@@ -238,8 +267,9 @@ export function createCourseReport ({ sessionToken }) {
     }
 
     cuerpoEl.replaceChildren(...filas)
-    tituloEl.textContent = `${alumno.name ?? alumno.identity ?? alumno.sub}` +
-      `${alumno.identity && alumno.name ? ` · ${alumno.identity}` : ''}` +
+    const secundaria = identidadSecundaria(alumno)
+    tituloEl.textContent = etiquetaAlumno(alumno) +
+      (secundaria ? ` · ${secundaria}` : '') +
       ` · ${detalle.course.title ?? detalle.course.contextId}`
   }
 

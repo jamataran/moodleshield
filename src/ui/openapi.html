@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>API de integración · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
+</head>
+<body class="admin" data-page="openapi">
+  <header class="bar admin-bar">
+    <div><p class="eyebrow">MoodleShield</p><h1 id="specTitle">API de integración</h1></div>
+    <nav><span class="build" title="Entorno y compilación que sirven esta página"><b class="build-env">{{APP_ENV}}</b> {{APP_VERSION}}</span>
+      <a class="btn" id="downloadSpec" href="/api/v1/openapi.json">openapi.json</a>
+    </nav>
+  </header>
+
+  <main class="admin-main">
+    <p class="muted" id="specSummary"></p>
+    <div id="specError" class="notice warning" hidden></div>
+    <div id="specDescription" class="panel api-description" hidden></div>
+
+    <section class="panel">
+      <h2>Probar</h2>
+      <p class="muted">
+        El token se queda en esta pestaña: no se guarda en el navegador ni sale de este origen.
+        Sólo se puede probar la <strong>API de informes</strong>, que es de sólo lectura; la de
+        contenido escribe suplantando a un profesor y su token no debe pasearse por un navegador.
+      </p>
+      <p>
+        <label for="token">Token de informes</label>
+        <input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="REPORTS_API_TOKEN">
+      </p>
+      <p>
+        <label for="platformId">platformId</label>
+        <input type="text" id="platformId" autocomplete="off" spellcheck="false"
+               placeholder="00000000-0000-4000-8000-000000000000">
+      </p>
+    </section>
+
+    <div id="operations"></div>
+  </main>
+
+  <script type="module" src="/assets/openapi.js?v={{ASSET_VERSION}}"></script>
+</body>
+</html>

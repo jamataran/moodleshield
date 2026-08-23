@@ -6,6 +6,7 @@ import { runMigrations } from '../../src/db/migrate.js'
 import { createVideoAndJob, recordView } from '../../src/services/videos.js'
 import { createDocumentAndJob, recordDocumentView } from '../../src/services/documents.js'
 import { createCollection } from '../../src/services/collections.js'
+import { createFolder } from '../../src/services/folders.js'
 import { createResourcePlacements } from '../../src/services/resource-placements.js'
 import { rememberContext } from '../../src/services/lti-contexts.js'
 import { saveVideoBeat, normalizeVideoBeat } from '../../src/services/viewing-stats.js'
@@ -37,6 +38,7 @@ let HISTORICO
 let HISTORICO_REVISION
 let COLECCION
 let ITEM_VIDEO
+let CARPETA_TEMA2
 
 async function nuevoVideo (title, { duracion = null } = {}) {
   const id = randomUUID()
@@ -137,11 +139,21 @@ test.before(async () => {
   ITEM_VIDEO = itemVideo
   const otroCurso = await nuevoVideo('Óptica', { duracion: 100 })
 
+  // Álgebra > Tema 2: dos niveles, para que el árbol del informe tenga algo
+  // que reproducir. La carpeta es organización privada de Ana (ADR-016).
+  const algebra = await createFolder({
+    platformId: PLATFORM, ownerSub: ANA, ownerName: 'Ana', name: 'Álgebra'
+  })
+  CARPETA_TEMA2 = await createFolder({
+    platformId: PLATFORM, ownerSub: ANA, ownerName: 'Ana', name: 'Tema 2', parentId: algebra.id
+  })
+
   COLECCION = await createCollection({
     platformId: PLATFORM,
     ownerSub: ANA,
     ownerName: 'Ana',
     title: 'Tema 1',
+    folderId: CARPETA_TEMA2.id,
     items: [{ kind: 'video', id: itemVideo.id }]
   })
 
@@ -282,6 +294,86 @@ test('#76: un alumno de otro curso no existe para este informe', async () => {
     await getStudentCourseReport({ platformId: PLATFORM, contextId: CURSO, sub: 'nadie' }),
     null
   )
+})
+
+test('el informe devuelve el nombre y el username del alumno, no un hueco', async () => {
+  // El bug: Moodle omite el claim de nombre según su privacidad, llegaba '' y
+  // ese vacío se guardaba en los eventos y atravesaba `name ?? identity ?? sub`
+  // hasta dejar la celda «Alumno» en blanco.
+  const informe = await buildCourseReport({ platformId: PLATFORM, contextId: CURSO })
+  const alumno = informe.students.find((student) => student.sub === ALUMNO)
+  assert.equal(alumno.name, 'Vega Solano')
+  assert.equal(alumno.identity, 'vsolano')
+
+  // Y una fila escrita con nombre vacío —las que ya están en test y producción,
+  // que no se tocan— se lee como ausencia, no como un nombre en blanco.
+  const anonimo = 'alumno-sin-nombre'
+  await query(
+    `INSERT INTO activity_open_event
+       (platform_id, context_id, resource_link_id, resource_kind, resource_id,
+        user_sub, user_name, user_identity, session_jti)
+     VALUES ($1,$2,'rl-1','video',$3,$4,'','',$5)`,
+    [PLATFORM, CURSO, VIDEO.id, anonimo, randomUUID()]
+  )
+  const conVacios = await buildCourseReport({ platformId: PLATFORM, contextId: CURSO })
+  const sinNombre = conVacios.students.find((student) => student.sub === anonimo)
+  assert.equal(sinNombre.name, null)
+  assert.equal(sinNombre.identity, null)
+})
+
+test('el árbol del informe reproduce la biblioteca: Álgebra > Tema 2 > colección', async () => {
+  const informe = await buildCourseReport({ platformId: PLATFORM, contextId: CURSO })
+
+  const algebra = informe.tree.find((nodo) => nodo.name === 'Álgebra')
+  assert.ok(algebra, 'la carpeta raíz del material tiene que salir en el árbol')
+  const tema2 = algebra.children.find((nodo) => nodo.name === 'Tema 2')
+  assert.ok(tema2, 'la carpeta anidada también')
+
+  const coleccion = tema2.children.find((nodo) => nodo.type === 'collection')
+  assert.equal(coleccion.id, COLECCION.id)
+  assert.deepEqual(coleccion.items.map((item) => item.id), [ITEM_VIDEO.id])
+
+  // Lo que no está en carpeta cuelga de «Sin carpeta», y el histórico va marcado.
+  const sueltos = informe.tree.find((nodo) => nodo.name === 'Sin carpeta')
+  assert.ok(sueltos.children.some((nodo) => nodo.id === VIDEO.id))
+  assert.ok(sueltos.children.some((nodo) => nodo.id === HISTORICO.id && nodo.historical))
+})
+
+test('el árbol de un alumno lleva su avance en cada hoja y la suma en cada carpeta', async () => {
+  const detalle = await getStudentCourseReport({
+    platformId: PLATFORM, contextId: CURSO, sub: ALUMNO
+  })
+
+  const sueltos = detalle.tree.find((nodo) => nodo.name === 'Sin carpeta')
+  const video = sueltos.children.find((nodo) => nodo.id === VIDEO.id)
+  assert.equal(video.progress.sessions, 2)
+  assert.equal(video.progress.percent, 50)
+
+  const pdf = sueltos.children.find((nodo) => nodo.id === PDF.id)
+  assert.equal(pdf.progress.downloads, 1)
+
+  // La carpeta suma lo que cuelga de ella, sin que el consumidor cruce por id.
+  assert.ok(sueltos.summary.sessions >= 3)
+  assert.equal(sueltos.summary.materials, sueltos.children.length)
+})
+
+test('el árbol no le enseña a un profesor las carpetas privadas de otro', async () => {
+  // ADR-016: el árbol es organización privada. El material del aula sí sale
+  // —es del curso—, pero sin el nombre de la carpeta de su dueño.
+  const otroProfesor = await buildCourseReport({
+    platformId: PLATFORM, contextId: CURSO, viewerSub: 'teacher-luis'
+  })
+  const json = JSON.stringify(otroProfesor.tree)
+  assert.doesNotMatch(json, /Álgebra/)
+  assert.match(json, /Biblioteca de Ana/)
+  // El material sigue estando: no se oculta contenido, sólo su organización.
+  assert.match(json, new RegExp(COLECCION.id))
+
+  // Su dueña sí ve su propia ruta.
+  const comoAna = await buildCourseReport({
+    platformId: PLATFORM, contextId: CURSO, viewerSub: ANA
+  })
+  assert.match(JSON.stringify(comoAna.tree), /Álgebra/)
 })
 
 test('#76: la fila de acceso sigue siendo la del registro forense', async () => {

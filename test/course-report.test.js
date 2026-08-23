@@ -9,7 +9,7 @@ import {
   getStudentCourseReport,
   listKnownCourses
 } from '../src/services/course-report.js'
-import { textoAvance } from '../src/ui/assets/course-report.js'
+import { etiquetaAlumno, identidadSecundaria, textoAvance } from '../src/ui/assets/course-report.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -38,8 +38,10 @@ test('el informe no selecciona jamás ip ni user_agent', async () => {
   // externa o en la pantalla de un profesor.
   for (const file of [
     'src/services/course-report.js',
+    'src/services/report-tree.js',
     'src/routes/reports.js',
-    'src/routes/reports-api.js'
+    'src/routes/reports-api.js',
+    'src/admin/reports.js'
   ]) {
     const code = soloCodigo(await readFile(path.join(root, file), 'utf8'))
     assert.doesNotMatch(code, /user_agent/, `${file} selecciona user_agent`)
@@ -69,6 +71,61 @@ test('la lista de espectadores la abre ver el material, no ser su autor', async 
     assert.match(cuerpo, /contextId: req\.session\.contextId/)
     assert.doesNotMatch(cuerpo, /ForOwner/, `${file}: /viewers ya no filtra por propietario`)
   }
+})
+
+test('el seguimiento de la consola es sólo lectura y va detrás de requireAdmin', async () => {
+  const rutas = soloCodigo(await readFile(path.join(root, 'src/admin/routes.js'), 'utf8'))
+  const montaje = rutas.indexOf("adminRouter.use('/platforms/:id/seguimiento'")
+  assert.ok(montaje > 0, 'el seguimiento tiene que montarse en la consola')
+  assert.ok(
+    montaje > rutas.indexOf('adminRouter.use(requireAdmin)'),
+    'montarlo antes de requireAdmin lo dejaría abierto sin cookie de administrador'
+  )
+
+  const consola = soloCodigo(await readFile(path.join(root, 'src/admin/reports.js'), 'utf8'))
+  assert.doesNotMatch(consola, /adminReportsRouter\.(post|put|patch|delete)/,
+    'la consola de seguimiento no escribe nada')
+  // El token de la API de informes es un secreto de servidor: aquí manda la
+  // cookie de administrador, y ese token no debe aparecer ni de lejos.
+  assert.doesNotMatch(consola, /REPORTS_API_TOKEN|reportsApi/)
+
+  // La página no hace fetch: los datos van en el bootstrap, como el resto de la
+  // consola, así que no hay una API nueva que proteger.
+  const vista = soloCodigo(await readFile(path.join(root, 'src/ui/assets/admin-report.js'), 'utf8'))
+  assert.doesNotMatch(vista, /fetch\(/)
+  assert.doesNotMatch(vista, /innerHTML/)
+})
+
+test('el operador ve las rutas de carpeta; un profesor del aula, no', () => {
+  // ADR-016 frente a ADR-023: el material del aula lo ve cualquier profesor,
+  // pero cómo lo tiene organizado su dueño en su biblioteca es cosa suya.
+  assert.match(
+    String(buildCourseReport),
+    /viewerSub/,
+    'el informe tiene que saber quién mira'
+  )
+})
+
+test('la celda del alumno nunca queda en blanco, ni con nombre vacío', () => {
+  // El fallo real: Moodle no comparte el nombre, `toLaunchContext` devolvía ''
+  // en vez de null y `name ?? identity ?? sub` daba por bueno el vacío. La
+  // columna «Alumno» aparecía en blanco mientras el resto de la fila se pintaba.
+  assert.equal(etiquetaAlumno({ name: 'Vega Solano', identity: 'vsolano', sub: 's-1' }), 'Vega Solano')
+  assert.equal(etiquetaAlumno({ name: '', identity: 'vsolano', sub: 's-1' }), 'vsolano')
+  assert.equal(etiquetaAlumno({ name: '   ', identity: '', sub: 'moodle-user-42' }), 'moodle-user-42')
+  assert.equal(etiquetaAlumno({ name: null, identity: null, sub: null }), 'Alumno sin identificar')
+  // Un `sub` largo se abrevia para no reventar la columna; el completo va en title.
+  assert.equal(
+    etiquetaAlumno({ sub: '2b9f4a1c-7d3e-4f8a-9c1b-556677889900' }),
+    '2b9f4a1c-7d3e-4…'
+  )
+})
+
+test('el username sólo se repite debajo del nombre si aporta algo', () => {
+  assert.equal(identidadSecundaria({ name: 'Vega Solano', identity: 'vsolano' }), 'vsolano')
+  // Si el username ES la etiqueta principal, repetirlo debajo es ruido.
+  assert.equal(identidadSecundaria({ name: '', identity: 'vsolano', sub: 's-1' }), null)
+  assert.equal(identidadSecundaria({ name: 'Vega Solano', identity: '' }), null)
 })
 
 test('un material sin telemetría dice «sin datos», nunca cero', () => {

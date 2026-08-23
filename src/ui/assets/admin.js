@@ -47,7 +47,11 @@ function renderPlatforms () {
     importar.className = 'btn'
     importar.href = `/admin/platforms/${encodeURIComponent(platform.id)}/importar`
     importar.textContent = 'Importar'
-    action.append(link, ' ', content, ' ', importar)
+    const seguimiento = document.createElement('a')
+    seguimiento.className = 'btn'
+    seguimiento.href = `/admin/platforms/${encodeURIComponent(platform.id)}/seguimiento`
+    seguimiento.textContent = 'Seguimiento'
+    action.append(link, ' ', content, ' ', importar, ' ', seguimiento)
     tr.append(action)
     rows.append(tr)
   }
