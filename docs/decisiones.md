@@ -1266,3 +1266,63 @@ truco de `position=0` al terminar lo hace inservible como medida de completitud
 demás sigue igual, porque nada del camino de reproducción depende de esta capa.
 Las tablas pueden quedarse vacías sin estorbar; borrarlas es opcional y, por
 Regla 0, se documenta antes de hacerse.
+
+## ADR-031 · El informe también se lee con la forma de la biblioteca, y la ruta de carpetas es privada de su profesor
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Extiende ADR-030 · Convive con ADR-016, ADR-018 y ADR-023
+
+**Contexto.** ADR-030 dejó el informe como una matriz plana: `activities` y
+`materials` responden «¿qué ha visto este alumno?». Falta la otra pregunta, la
+que el profesor se hacía de un vistazo cuando cada recurso era una actividad
+Moodle distinta y el curso se leía en orden: **«¿por dónde va?»**. Con
+colecciones y carpetas anidadas (ADR-013, ADR-016) esa lectura se perdió, y la
+herramienta externa del operador tampoco podía reconstruirla: la ruta de carpetas
+no salía por ninguna parte del informe.
+
+**Decisión.** El informe gana un campo **`tree`** con la forma de la biblioteca
+—carpeta > carpeta > … > colección > materiales—, y una vista de sólo lectura en
+la consola de administración que lo enseña por aula y por alumno.
+
+- **`tree` se añade; no sustituye a nada.** `activities` y `materials` son
+  contrato ya emitido a la herramienta externa y a la interfaz del profesor: si
+  el árbol los reemplazara, una integración escrita hoy dejaría de funcionar
+  mañana (Regla 0-bis). El árbol se monta con los mismos datos ya consultados,
+  en una función **pura** (`services/report-tree.js`), probable sin Postgres.
+- **La ruta de carpetas no es del curso, es del profesor.** El árbol es
+  organización privada (ADR-016) y el informe lo ve cualquier profesor del aula
+  (ADR-023). «Rehacer 2025» o «Borradores baja de Ana» son información del
+  claustro, no de la asignatura. A un compañero se le enseña el material —eso sí
+  es del curso— colgado de un nodo `restricted: true` («Biblioteca de …») salvo
+  que la carpeta esté compartida (ADR-018), en cuyo caso sale su ruta real. Lo
+  decide un `viewerSub` que en el camino del profesor sale **de la sesión**.
+- **El operador no tiene ese recorte.** La consola de administración y la API de
+  informes ven la ruta entera, igual que `/admin/platforms/:id/contenido` ya
+  enseña todo el inventario de una instancia. Son secretos de operador, no
+  sesiones de profesor.
+- **El porcentaje de un nodo es la media de los materiales CON dato.** Un
+  material sin telemetría no cuenta como 0: enseñar «0 %» de algo que no se midió
+  es la misma acusación falsa que ADR-030 se prohibió.
+- **La consola de administración es la cuarta pantalla, no una API nueva.** Los
+  datos van incrustados en el bootstrap, como el resto de la consola, y la
+  autenticación es su cookie: `REPORTS_API_TOKEN` es un secreto de servidor y no
+  baja al navegador de nadie.
+- **El contrato se escribe a mano y vive en `src/`.** `src/api/openapi.json` es
+  OpenAPI 3.1 y se sirve en `GET /api/v1/openapi.json`, recortado a las APIs que
+  ese despliegue tiene activas: prometer una operación que responde 404 porque su
+  token no está puesto es peor que no documentarla. No se genera —no hay
+  decoradores ni esquemas de los que derivarlo— y no vive en `docs/`, que
+  `.dockerignore` excluye del contexto de build. Lo que impide que envejezca es
+  `test/openapi.test.js`, que compara sus rutas con las que registran los routers.
+- **El probador no es Swagger UI.** `swagger-ui-dist` son ~12 MB y sería la
+  primera dependencia de producción que existe sólo para documentar; además
+  habría que comprobar que su bundle no exige `'unsafe-eval'`, y la CSP de esta
+  aplicación es `script-src 'self'` sin excepciones (T32). `GET /api/v1/docs` lo
+  sustituye con un módulo propio, y sólo deja probar la **API de informes**: un
+  formulario que invite a pegar `CONTENT_API_TOKEN` en un navegador deja en un
+  historial ajeno una credencial que suplanta a cualquier profesor.
+
+**Cómo revertirlo.** Quitar `tree` del retorno de `buildCourseReport` y
+`getStudentCourseReport` y desmontar `/admin/platforms/:id/seguimiento` y
+`/api/v1` → `openapiRouter` en `app.js`. Nada más depende de ello: el informe
+plano, la telemetría y el registro forense siguen exactamente igual, y no hay
+ninguna migración que deshacer — el árbol se calcula, no se guarda.

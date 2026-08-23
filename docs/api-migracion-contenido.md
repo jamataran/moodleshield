@@ -1,8 +1,21 @@
-# API de migración de contenido
+# APIs de integración (`/api/v1`)
+
+Dos APIs bajo el mismo prefijo y con **tokens distintos y no intercambiables**:
+la de **contenido**, que escribe (este documento, de aquí abajo), y la de
+**[informes](#api-de-informes)**, que sólo lee.
+
+## API de contenido
 
 La API `/api/v1` permite importar vídeos y PDF desde Postman o un script sin
 crear un segundo pipeline. Usa la misma recepción fragmentada, las mismas
 validaciones, las mismas tablas de trabajo y el mismo worker que la interfaz.
+
+> [!TIP]
+> El contrato completo de `/api/v1` —ésta y la [API de informes](#api-de-informes)—
+> está en [`src/api/openapi.json`](../src/api/openapi.json) (OpenAPI 3.1). La propia
+> herramienta lo sirve en `GET /api/v1/openapi.json`, recortado a las APIs que ese
+> despliegue tiene activas, y lo enseña con un probador en `GET /api/v1/docs`.
+> Vive en `src/` y no aquí porque `.dockerignore` excluye `docs/` de la imagen.
 
 > [!WARNING]
 > `CONTENT_API_TOKEN` es una **credencial administrativa potente**: quien la tenga puede
@@ -214,3 +227,81 @@ son `ready`, `failed` o `cancelled`. No lances varios contenedores `worker` si b
 procesamiento global estrictamente secuencial: cada proceso respeta concurrencia uno,
 pero dos réplicas pueden reclamar trabajos distintos gracias a `SKIP LOCKED`. Las cuotas
 de jobs se calculan en PostgreSQL y no se eluden levantando más procesos web.
+
+## API de informes
+
+Segunda API bajo el mismo prefijo, **de sólo lectura** y con **token propio**:
+`REPORTS_API_TOKEN`. Es la que se integra con una herramienta externa de
+seguimiento de alumnos. No es intercambiable con `CONTENT_API_TOKEN` —ese
+escribe eligiendo `owner_sub`, es decir, suplantando a cualquier profesor— y la
+aplicación **rechaza el arranque si los dos coinciden**.
+
+```sh
+REPORTS_API_TOKEN=<openssl rand -hex 32>
+REPORTS_API_ALLOWED_PLATFORM_IDS=<uuid-plataforma-1>,<uuid-plataforma-2>
+```
+
+Con el token vacío, estas rutas responden `404`. En producción exige 32
+caracteres como mínimo y la lista de plataformas no puede estar vacía.
+
+| Método | Ruta | Qué devuelve |
+|---|---|---|
+| GET | `/api/v1/reports/courses?platformId=` | Aulas conocidas de esa instancia (tope 200) |
+| GET | `/api/v1/reports/courses/{contextId}?platformId=` | El informe completo del aula: el mismo JSON que ve el profesor |
+| GET | `/api/v1/reports/students?platformId=&identity=` | El avance de un alumno **por su username de Moodle**, en cada aula donde tenga rastro (tope 20) |
+
+La plataforma viaja por query y no por cabecera: aquí no hay sesión LTI de la
+que sacarla. Ni `ip` ni `user_agent` salen por esta API (ADR-030); sí
+`userName` y `userIdentity`, que son justo la clave del cruce.
+
+### El informe agregado de un alumno
+
+`GET /api/v1/reports/students` es lo que responde «¿por dónde va este alumno?».
+Cada entrada trae, además de la matriz plana (`materials`, `activities`,
+`progress`, `timeline`), un campo **`tree`** con la forma de la biblioteca del
+profesor —carpeta > carpeta > … > colección > materiales—, el avance del alumno
+en cada hoja y la suma en cada nodo:
+
+```sh
+curl -sS "$MOODLESHIELD_URL/api/v1/reports/students?platformId=$PLATFORM_ID&identity=vsolano" \
+  -H "Authorization: Bearer $REPORTS_API_TOKEN" | jq '.students[0].tree'
+```
+
+```json
+[
+  { "type": "folder", "name": "Álgebra", "restricted": false,
+    "owner": { "sub": "profe-ana", "name": "Ana Ruiz" },
+    "summary": { "materials": 2, "accessed": 2, "sessions": 3, "downloads": 1, "percent": 42 },
+    "children": [
+      { "type": "folder", "name": "Tema 2", "children": [
+        { "type": "collection", "id": "e49879aa-…", "title": "Prácticas del Tema 2",
+          "items": [
+            { "type": "material", "kind": "video", "id": "859736f2-…",
+              "title": "Derivadas: introducción", "durationSeconds": 600,
+              "progress": { "sessions": 2, "uniqueSeconds": 372, "percent": 62,
+                            "completedAt": null, "lastAt": "2026-08-23T19:27:51.226Z" } },
+            { "type": "material", "kind": "pdf", "id": "882f58ea-…",
+              "title": "Boletín de ejercicios", "pageCount": 24,
+              "progress": { "sessions": 1, "uniquePages": 5, "percent": 21, "downloads": 1 } }
+          ] } ] } ] }
+]
+```
+
+Tres cosas que conviene tener claras al consumirlo:
+
+- **`percent: null` significa «no medido», no cero.** La telemetría de tiempo y
+  páginas es posterior al despliegue inicial; `telemetry.{opensSince,
+  videoStatsSince, pdfStatsSince}` dice desde cuándo hay dato. Pintar «0 %» sobre
+  un material que un alumno vio antes sería una acusación falsa (ADR-030).
+- **El orden de `items` es el que compuso el profesor**, no alfabético.
+- **`historical: true`** marca lo que tiene accesos pero ya no está desplegado en
+  el aula: cuenta igual, sin reinsertar nada.
+
+`GET /api/v1/reports/courses/{contextId}` devuelve el mismo `tree` pero **sin**
+`progress` en las hojas: ahí es sólo estructura, y el avance está en
+`students[].materials`, indexado por `materialId`.
+
+Un `contextId` desconocido responde **200 con un informe vacío**, y una búsqueda
+de alumno sin coincidencia devuelve `{"students": []}`. En ninguno de los dos
+casos es un 404: para un integrador «todavía no ha abierto nada» es una
+respuesta legítima.

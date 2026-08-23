@@ -306,11 +306,16 @@ Detalle y motivos en las fichas de cierre archivadas como issues:
 | GET | `/lti/config` | — | Datos de alta en Moodle |
 | POST | `/lti/deeplink/response` | token de Deep Linking | Devuelve la selección a Moodle |
 | GET/POST | `/lti/platforms` | `LTI_ADMIN_TOKEN` | Gestión de plataformas |
+| GET | `/api/v1/openapi.json` | — | **Contrato OpenAPI 3.1** de `/api/v1`, recortado a las APIs activas (404 si no hay ninguna) |
+| GET | `/api/v1/docs` | — | Lector del contrato con probador para la API de informes |
 | GET | `/api/v1/platforms` | `CONTENT_API_TOKEN` | Plataformas disponibles para una migración |
 | POST/GET/PUT/DELETE | `/api/v1/uploads…` | token + plataforma + propietario | Mismo protocolo troceado de la UI para scripts/Postman |
 | POST | `/api/v1/imports/plan` | token + plataforma + propietario | Mismo plan de importación de árboles que la biblioteca |
 | GET | `/api/v1/materials/:kind/:id` | token + plataforma + propietario | Estado de material, última revisión y trabajo |
 | GET | `/admin/platforms/:id/contenido` | consola admin | **Inventario del aula**: todo el material de todos sus profesores |
+| GET | `/admin/platforms/:id/seguimiento` | consola admin | Aulas conocidas de la instancia |
+| GET | `/admin/platforms/:id/seguimiento/curso` | consola admin | Informe de un aula (`?contextId=`) y detalle de un alumno (`&alumno=`) |
+| GET | `/admin/platforms/:id/seguimiento/alumno` | consola admin | Avance de un alumno por `?identity=` (username de Moodle), atravesando aulas |
 | GET | `/admin/platforms/:id/importar` | consola admin | Importador de la **biblioteca del centro** |
 | POST | `/admin/platforms/:id/import/imports/plan` | cookie admin + CSRF por cabecera | Plan de importación institucional |
 | — | `/admin/platforms/:id/import/uploads…` | cookie admin + CSRF por cabecera | El mismo protocolo troceado, con el propietario institucional |
@@ -517,6 +522,40 @@ cero: el informe expone `telemetry.{opensSince, videoStatsSince, pdfStatsSince}`
 justo para que la interfaz pueda distinguir «no lo vio» de «no lo medíamos».
 Ni `ip` ni `user_agent` salen de este camino: son del trazado, no del
 seguimiento, y ninguna consulta de `services/course-report.js` los selecciona.
+
+### El mismo informe con la forma de la biblioteca
+
+`activities` y `materials` responden «¿qué ha visto?»; el campo **`tree`**
+responde «¿por dónde va?», que es lo que se leía de un vistazo cuando cada
+recurso era una actividad Moodle distinta. Es la biblioteca del profesor:
+carpeta > carpeta > … > colección > materiales, con el avance del alumno en cada
+hoja y la suma en cada nodo (`summary`) cuando se pide el informe de uno solo.
+Lo monta `services/report-tree.js`, que es **puro** —recibe lo ya consultado— a
+partir de las rutas en segmentos de `services/folder-paths.js`.
+
+`tree` **se añade**; no sustituye a nada. `activities` y `materials` son contrato
+ya emitido a la herramienta externa y a la interfaz del profesor (Regla 0-bis).
+
+La ruta de carpetas tiene una frontera propia: el árbol es **organización
+privada del profesor** (ADR-016) y el informe lo ve cualquier profesor del aula
+(ADR-023). A un compañero se le enseña el material —es del curso— pero no cómo
+lo tiene ordenado su dueño: si la carpeta no está compartida, el material cuelga
+de un nodo `restricted: true` llamado «Biblioteca de …». Quien pregunta sin
+sesión LTI —la consola de administración y la API de informes, ambos secretos de
+operador— ve la ruta entera. Lo decide el parámetro `viewerSub`, que en el camino
+del profesor sale de la sesión.
+
+| Quién pregunta | Cómo | Ve la ruta de carpetas ajenas |
+|---|---|---|
+| Profesor del aula | `GET /reports/course` | Sólo las suyas y las compartidas |
+| Operador | consola `/admin/platforms/:id/seguimiento` | Sí |
+| Herramienta externa | `GET /api/v1/reports/students` | Sí |
+
+El contrato completo de esa API está en `src/api/openapi.json` y se sirve en
+`GET /api/v1/openapi.json`; `GET /api/v1/docs` lo enseña con un probador para
+las operaciones de sólo lectura. El spec no se genera —se escribe a mano— y lo
+que impide que envejezca es `test/openapi.test.js`, que compara sus rutas con
+las que los routers registran de verdad.
 
 ## Qué ve el alumno de su propia sesión
 

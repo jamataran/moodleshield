@@ -28,7 +28,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | Documento | Qué resuelve |
 |---|---|
 | [`arquitectura.md`](arquitectura.md) | Vista general, árbol de medios, el camino de un visionado y el de una subida, modelo de datos, tabla de endpoints, modelo de seguridad capa por capa |
-| [`decisiones.md`](decisiones.md) | ADR-001…030. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
+| [`decisiones.md`](decisiones.md) | ADR-001…031. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
 | [`seguridad.md`](seguridad.md) | **Estado de seguridad vigente**: qué protege cada capa, dónde está cada hallazgo, los límites que hay que aceptar por escrito y qué secretos son permanentes |
 
 ### Para trabajar en él
@@ -38,7 +38,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | [`desarrollo.md`](desarrollo.md) | **Guía del desarrollador**: entorno, tests, convenciones, depuración, flujo de Git |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Cómo abrir un PR y qué se espera de él |
 | [`../.github/README.md`](../.github/README.md) | **Manual del pipeline**: el día a día en cinco pasos, qué hace cada workflow y cómo se promociona a producción |
-| [`api-migracion-contenido.md`](api-migracion-contenido.md) | API resumible para migrar vídeos y PDF desde Postman o shell, con sus estados y garantías |
+| [`api-migracion-contenido.md`](api-migracion-contenido.md) | Las dos APIs de `/api/v1`: migración resumible de vídeos y PDF, e informes de seguimiento de sólo lectura. El contrato OpenAPI lo sirve la propia herramienta en `/api/v1/openapi.json` |
 
 ### Para desplegarlo
 
@@ -83,8 +83,8 @@ El manual completo, con los errores que verás y qué significan, está en
 ## Estado del proyecto
 
 **Producción: `v1.0.8`** (20 de agosto de 2026) · 21 migraciones en `test` ·
-**428 pruebas unitarias** (419 pasan, 9 se saltan sin las herramientas de la imagen del
-worker) y **172 de integración** contra PostgreSQL real · `npm audit` en 0.
+**448 pruebas unitarias** (439 pasan, 9 se saltan sin las herramientas de la imagen del
+worker) y **176 de integración** contra PostgreSQL real · `npm audit` en 0.
 
 El sistema está **en uso, sirviendo material real**. Lo que sigue no es una lista de
 funcionalidad por construir, sino el mapa de lo que hay:
@@ -121,6 +121,15 @@ donde está desplegado el material ([ADR-023](decisiones.md)), y el mismo inform
 pedir por API para cruzarlo con una herramienta externa. El tiempo visto y las páginas
 leídas los manda el visor y son **orientativos**: son telemetría docente fail-open, no el
 registro forense, que sigue intacto ([ADR-030](decisiones.md)).
+
+El mismo informe se lee además **con la forma de la biblioteca** —carpeta > carpeta > …
+> colección > materiales, con el avance en cada hoja y la suma en cada carpeta—, tanto por
+API como en la consola de administración, que puede buscar a un alumno por su nombre de
+usuario de Moodle y ver su avance en todas las aulas. La ruta de carpetas es organización
+privada de su profesor: a un compañero de aula se le enseña el material, no cómo lo tiene
+ordenado su dueño ([ADR-031](decisiones.md)). El contrato de integración es un OpenAPI 3.1
+servido por la propia herramienta en `/api/v1/openapi.json`, con lector y probador en
+`/api/v1/docs`.
 
 **Operación**: la IP real del alumno se recupera tras un CDN ([ADR-019](decisiones.md)) —
 sin eso, todos los visionados quedaban registrados con la IP del borde de Cloudflare, que
