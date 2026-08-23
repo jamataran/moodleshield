@@ -1,0 +1,734 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MoodleShield · API de integración",
+    "version": "1.0.0",
+    "summary": "Seguimiento de alumnos (sólo lectura) y migración de contenido.",
+    "description": "Dos APIs distintas bajo el mismo prefijo `/api/v1`, con **tokens distintos y no intercambiables**.\n\n- **Informes** (`/api/v1/reports`): sólo lectura. Token `REPORTS_API_TOKEN`. Es la que se integra con una herramienta externa de seguimiento de alumnos.\n- **Contenido** (el resto): escritura. Token `CONTENT_API_TOKEN`, que permite subir material **suplantando a cualquier profesor** de las plataformas autorizadas. Quien sólo consulta avances no debe sostener ese secreto; la aplicación rechaza el arranque si los dos tokens coinciden.\n\nCon un token sin configurar, su superficie responde **404**, no 401: una API deshabilitada no se anuncia. Un 404 en estas rutas puede significar «no existe» o «no está activada».\n\nNi `ip` ni `user_agent` salen jamás por la API de informes: son del registro forense, no del seguimiento docente (ADR-030).",
+    "contact": { "name": "MoodleShield", "url": "https://github.com/jamataran/moodleshield" },
+    "license": { "name": "Consultar el repositorio", "identifier": "MIT" }
+  },
+  "servers": [{ "url": "/", "description": "Esta instancia" }],
+  "tags": [
+    { "name": "Informes", "description": "Seguimiento de alumnos. Sólo lectura, token propio." },
+    { "name": "Contenido", "description": "Migración de vídeo y PDF. Escritura." }
+  ],
+  "components": {
+    "securitySchemes": {
+      "reportsApiToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "`REPORTS_API_TOKEN`. Sólo lectura. NO es intercambiable con `contentApiToken`."
+      },
+      "contentApiToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "`CONTENT_API_TOKEN`. Credencial administrativa: escribe eligiendo `owner_sub`. NO es intercambiable con `reportsApiToken`."
+      },
+      "platformIdHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-MoodleShield-Platform-Id",
+        "description": "UUID de la instancia Moodle (`lti_platform.id`)."
+      },
+      "ownerSubHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-MoodleShield-Owner-Sub",
+        "description": "`sub` LTI del profesor propietario. El mismo con el que abre su biblioteca."
+      }
+    },
+    "parameters": {
+      "platformId": {
+        "name": "platformId",
+        "in": "query",
+        "required": true,
+        "description": "UUID de la instancia Moodle. Sin sesión LTI no hay otra forma de acotarla.",
+        "schema": { "type": "string", "format": "uuid" }
+      },
+      "ownerName": {
+        "name": "X-MoodleShield-Owner-Name",
+        "in": "header",
+        "required": false,
+        "description": "Nombre visible del profesor. No autoriza nada; sólo se guarda para mostrarlo.",
+        "schema": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "El bearer falta o no es el de esta API.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "El token es válido pero no está autorizado para esa plataforma.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": { "error": "El token de informes no está autorizado para esta plataforma", "code": "reports_api_platform_not_allowed" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No existe — **o la API está deshabilitada** porque su token no está configurado.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "BadRequest": {
+        "description": "Parámetro ausente, mal formado o demasiado largo.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "description": "Mensaje en español, para una persona." },
+          "code": { "type": "string", "description": "Código estable, cuando lo hay. Es lo que conviene mirar desde un programa." }
+        },
+        "required": ["error"]
+      },
+      "Course": {
+        "type": "object",
+        "description": "Un aula de Moodle. `contextId` es el identificador del curso en el `id_token`.",
+        "properties": {
+          "contextId": { "type": "string" },
+          "title": { "type": ["string", "null"], "description": "Null mientras ningún launch haya traído el título." },
+          "label": { "type": ["string", "null"] },
+          "firstSeenAt": { "type": ["string", "null"], "format": "date-time" },
+          "lastSeenAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "required": ["contextId"]
+      },
+      "CourseListItem": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Course" },
+          {
+            "type": "object",
+            "properties": {
+              "activities": { "type": "integer", "description": "Actividades desplegadas y no revocadas." },
+              "lastActivityAt": { "type": ["string", "null"], "format": "date-time" }
+            }
+          }
+        ]
+      },
+      "Telemetry": {
+        "type": "object",
+        "description": "Desde cuándo hay telemetría de cada tipo. Null = nunca la ha habido.\n\nEs lo que permite pintar «sin datos» en vez de «0 min» sobre un material que un alumno vio antes de este despliegue: enseñar un cero sería una acusación falsa.",
+        "properties": {
+          "opensSince": { "type": ["string", "null"], "format": "date-time" },
+          "videoStatsSince": { "type": ["string", "null"], "format": "date-time" },
+          "pdfStatsSince": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "Owner": {
+        "type": "object",
+        "description": "Profesor propietario del material.",
+        "properties": {
+          "sub": { "type": ["string", "null"] },
+          "name": { "type": ["string", "null"] }
+        }
+      },
+      "Material": {
+        "type": "object",
+        "description": "Un material medible. Un vídeo trae `durationSeconds`; un PDF, `pageCount`.",
+        "properties": {
+          "kind": { "type": "string", "enum": ["video", "pdf"] },
+          "id": { "type": "string", "format": "uuid", "description": "UUID lógico: el que Moodle lleva incrustado. No cambia jamás." },
+          "title": { "type": ["string", "null"] },
+          "durationSeconds": { "type": ["number", "null"] },
+          "pageCount": { "type": ["integer", "null"] },
+          "activityKey": { "type": "string", "description": "Actividad de la que cuelga: `<kind>:<uuid>`." },
+          "activityTitle": { "type": ["string", "null"] },
+          "folderId": { "type": ["string", "null"], "format": "uuid" },
+          "owner": { "$ref": "#/components/schemas/Owner" }
+        }
+      },
+      "Activity": {
+        "type": "object",
+        "description": "Una actividad Moodle. Una colección es UNA actividad con N materiales dentro (ADR-013).",
+        "properties": {
+          "key": { "type": "string", "description": "`<kind>:<uuid>`" },
+          "kind": { "type": "string", "enum": ["video", "pdf", "collection"] },
+          "id": { "type": "string", "format": "uuid" },
+          "title": { "type": ["string", "null"] },
+          "placementId": { "type": ["string", "null"], "format": "uuid" },
+          "resourceLinkId": { "type": ["string", "null"] },
+          "placedAt": { "type": ["string", "null"], "format": "date-time" },
+          "historical": {
+            "type": "boolean",
+            "description": "True = tiene accesos registrados pero ningún despliegue vivo lo explica: actividades anteriores a la migración 014, o material retirado del aula. Cuenta igual; nadie va a reinsertar lo que ya funciona."
+          },
+          "durationSeconds": { "type": ["number", "null"] },
+          "pageCount": { "type": ["integer", "null"] },
+          "folderId": { "type": ["string", "null"], "format": "uuid" },
+          "owner": { "$ref": "#/components/schemas/Owner" },
+          "items": {
+            "type": "array",
+            "description": "Elementos de la colección, en el orden que compuso el profesor. Vacío si no es colección.",
+            "items": { "$ref": "#/components/schemas/Material" }
+          }
+        }
+      },
+      "MaterialProgress": {
+        "type": "object",
+        "description": "Lo que un alumno ha hecho con un material.\n\nConviven columnas de vídeo y de PDF en un mismo objeto: las que no apliquen llegan a `null`. **Nunca se devuelve `oneOf`**: el objeto viene siempre completo.\n\n`sessions`, `events`, `downloads` y las fechas salen del registro forense y son dato duro. `watchedSeconds`, `uniqueSeconds`, `uniquePages` y `percent` los manda el visor del alumno: son orientativos y falseables dentro de los topes por beat (ADR-030).",
+        "properties": {
+          "materialId": { "type": "string", "format": "uuid" },
+          "kind": { "type": "string", "enum": ["video", "pdf"] },
+          "sessions": { "type": "integer", "description": "Sesiones LTI distintas en las que tocó el material." },
+          "events": { "type": "integer", "description": "Peticiones registradas. Mayor que `sessions` cuando repite." },
+          "downloads": { "type": "integer", "description": "Descargas de la copia sellada. Sólo PDF." },
+          "firstAt": { "type": ["string", "null"], "format": "date-time" },
+          "lastAt": { "type": ["string", "null"], "format": "date-time" },
+          "watchedSeconds": { "type": ["number", "null"], "description": "Suma de deltas: cuenta las repeticiones." },
+          "uniqueSeconds": { "type": ["number", "null"], "description": "Segundos DISTINTOS del vídeo. Es el numerador de `percent`." },
+          "maxPositionSeconds": { "type": ["number", "null"] },
+          "completedAt": { "type": ["string", "null"], "format": "date-time", "description": "Primera vez que alcanzó el 90 %. No se mueve después." },
+          "uniquePages": { "type": ["integer", "null"] },
+          "maxPage": { "type": ["integer", "null"] },
+          "readSeconds": { "type": ["number", "null"], "description": "Sólo cuenta con la pestaña visible." },
+          "percent": { "type": ["integer", "null"], "description": "0-100. **Null = no medido**, que no es lo mismo que cero." },
+          "durationSeconds": { "type": ["number", "null"] },
+          "pageCount": { "type": ["integer", "null"] }
+        }
+      },
+      "ActivityProgress": {
+        "type": "object",
+        "description": "Aperturas de la actividad: entrar sin reproducir también es seguimiento.",
+        "properties": {
+          "key": { "type": "string" },
+          "opens": { "type": "integer" },
+          "firstAt": { "type": ["string", "null"], "format": "date-time" },
+          "lastAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "Student": {
+        "type": "object",
+        "properties": {
+          "sub": { "type": "string", "description": "`sub` LTI. Opaco y estable." },
+          "name": { "type": ["string", "null"], "description": "Null si Moodle no comparte el nombre por su configuración de privacidad." },
+          "identity": { "type": ["string", "null"], "description": "Username de Moodle. Es la clave del cruce con una herramienta externa." },
+          "opens": { "type": "integer" },
+          "firstAt": { "type": ["string", "null"], "format": "date-time" },
+          "lastAt": { "type": ["string", "null"], "format": "date-time" },
+          "activities": { "type": "array", "items": { "$ref": "#/components/schemas/ActivityProgress" } },
+          "materials": { "type": "array", "items": { "$ref": "#/components/schemas/MaterialProgress" } }
+        }
+      },
+      "TreeSummary": {
+        "type": "object",
+        "description": "Suma de todo lo que cuelga del nodo. `percent` es la media de los materiales CON dato: uno sin telemetría no cuenta como 0.",
+        "properties": {
+          "materials": { "type": "integer" },
+          "accessed": { "type": "integer" },
+          "sessions": { "type": "integer" },
+          "downloads": { "type": "integer" },
+          "lastAt": { "type": ["string", "null"], "format": "date-time" },
+          "percent": { "type": ["integer", "null"] }
+        }
+      },
+      "TreeNode": {
+        "description": "El informe con la forma de la biblioteca: carpeta > carpeta > … > colección > materiales.\n\nSe **añade** a `activities` y `materials`, que siguen saliendo tal cual.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/TreeFolder" },
+          { "$ref": "#/components/schemas/TreeCollection" },
+          { "$ref": "#/components/schemas/TreeMaterial" }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "folder": "#/components/schemas/TreeFolder",
+            "collection": "#/components/schemas/TreeCollection",
+            "material": "#/components/schemas/TreeMaterial"
+          }
+        }
+      },
+      "TreeFolder": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "const": "folder" },
+          "key": { "type": "string" },
+          "id": { "type": ["string", "null"], "format": "uuid", "description": "Null en los nodos sintéticos «Sin carpeta» y «Biblioteca de …»." },
+          "name": { "type": "string" },
+          "owner": { "$ref": "#/components/schemas/Owner" },
+          "restricted": {
+            "type": "boolean",
+            "description": "True = la ruta real se ha ocultado porque la carpeta es organización privada de otro profesor y no está compartida (ADR-016). El material sí sale: lo que no sale es cómo lo tiene ordenado su dueño.\n\nPor esta API **siempre es false**: el token de informes es un secreto de operador, con el mismo alcance que la consola de administración."
+          },
+          "children": { "type": "array", "items": { "$ref": "#/components/schemas/TreeNode" } },
+          "summary": { "$ref": "#/components/schemas/TreeSummary" }
+        },
+        "required": ["type", "key", "name", "children"]
+      },
+      "TreeCollection": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "const": "collection" },
+          "key": { "type": "string" },
+          "id": { "type": "string", "format": "uuid" },
+          "title": { "type": ["string", "null"] },
+          "owner": { "$ref": "#/components/schemas/Owner" },
+          "historical": { "type": "boolean" },
+          "items": {
+            "type": "array",
+            "description": "En el orden que compuso el profesor, no alfabético.",
+            "items": { "$ref": "#/components/schemas/TreeMaterial" }
+          },
+          "summary": { "$ref": "#/components/schemas/TreeSummary" }
+        },
+        "required": ["type", "key", "id", "items"]
+      },
+      "TreeMaterial": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "const": "material" },
+          "key": { "type": "string" },
+          "kind": { "type": "string", "enum": ["video", "pdf"] },
+          "id": { "type": "string", "format": "uuid" },
+          "title": { "type": ["string", "null"] },
+          "durationSeconds": { "type": ["number", "null"] },
+          "pageCount": { "type": ["integer", "null"] },
+          "historical": { "type": "boolean" },
+          "progress": {
+            "description": "Sólo en el árbol de UN alumno. Null = no lo ha tocado. Ausente en el árbol del aula, que es sólo estructura.",
+            "oneOf": [
+              { "$ref": "#/components/schemas/MaterialProgress" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": ["type", "key", "kind", "id"]
+      },
+      "TimelineEvent": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string", "enum": ["video", "pdf"] },
+          "materialId": { "type": "string", "format": "uuid" },
+          "collectionId": { "type": ["string", "null"], "format": "uuid" },
+          "action": { "type": "string", "enum": ["view", "read", "download", "open"] },
+          "at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CourseReport": {
+        "type": "object",
+        "description": "El informe de un aula. Topes: 500 alumnos y 200 materiales.",
+        "properties": {
+          "course": { "$ref": "#/components/schemas/Course" },
+          "telemetry": { "$ref": "#/components/schemas/Telemetry" },
+          "activities": { "type": "array", "items": { "$ref": "#/components/schemas/Activity" } },
+          "materials": { "type": "array", "items": { "$ref": "#/components/schemas/Material" } },
+          "tree": { "type": "array", "items": { "$ref": "#/components/schemas/TreeNode" } },
+          "students": { "type": "array", "items": { "$ref": "#/components/schemas/Student" } },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "students": { "type": "integer" },
+              "activities": { "type": "integer" },
+              "materials": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "StudentCourseReport": {
+        "type": "object",
+        "description": "El avance de UN alumno en UN aula, agregado y jerárquico.",
+        "properties": {
+          "sub": { "type": "string" },
+          "userName": { "type": ["string", "null"] },
+          "userIdentity": { "type": ["string", "null"], "description": "Username de Moodle." },
+          "course": { "$ref": "#/components/schemas/Course" },
+          "telemetry": { "$ref": "#/components/schemas/Telemetry" },
+          "materials": { "type": "array", "items": { "$ref": "#/components/schemas/Material" } },
+          "activities": { "type": "array", "items": { "$ref": "#/components/schemas/Activity" } },
+          "tree": {
+            "type": "array",
+            "description": "Carpeta > … > colección > materiales, con el avance de ESTE alumno en cada hoja y la suma en cada nodo. Es lo que evita cruzar `materials` por id a mano.",
+            "items": { "$ref": "#/components/schemas/TreeNode" }
+          },
+          "progress": { "$ref": "#/components/schemas/Student" },
+          "timeline": {
+            "type": "array",
+            "description": "Accesos con fecha, de más reciente a más antiguo. Tope 500.",
+            "items": { "$ref": "#/components/schemas/TimelineEvent" }
+          }
+        }
+      },
+      "Platform": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "issuer": { "type": "string" },
+          "clientId": { "type": "string" },
+          "enabled": { "type": "boolean" }
+        }
+      },
+      "UploadReservation": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string", "enum": ["video", "pdf"] },
+          "filename": { "type": "string" },
+          "size": { "type": "integer", "description": "Tamaño total en bytes." },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "folderId": { "type": ["string", "null"], "format": "uuid" },
+          "materialId": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Para sustituir el fichero de un material existente **sin cambiar su UUID**: es una revisión, y las actividades Moodle ya insertadas siguen funcionando (ADR-025)."
+          }
+        },
+        "required": ["kind", "filename", "size"]
+      },
+      "UploadSession": {
+        "type": "object",
+        "properties": {
+          "uploadId": { "type": "string", "format": "uuid" },
+          "materialId": { "type": "string", "format": "uuid" },
+          "chunkBytes": { "type": "integer", "description": "Tamaño exacto de cada fragmento salvo el último." },
+          "chunkCount": { "type": "integer" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "received": { "type": "array", "items": { "type": "integer" }, "description": "Índices ya recibidos: lo que permite reanudar." }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/reports/courses": {
+      "get": {
+        "tags": ["Informes"],
+        "operationId": "listCourses",
+        "summary": "Aulas que esta herramienta conoce",
+        "description": "Las que dejaron título en un launch más las que tienen material desplegado. Tope fijo de 200; no admite paginación.",
+        "security": [{ "reportsApiToken": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/platformId" }],
+        "responses": {
+          "200": {
+            "description": "Listado de aulas.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "courses": { "type": "array", "items": { "$ref": "#/components/schemas/CourseListItem" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/reports/courses/{contextId}": {
+      "get": {
+        "tags": ["Informes"],
+        "operationId": "getCourseReport",
+        "summary": "Informe completo de un aula",
+        "description": "Exactamente el mismo JSON que ve el profesor dentro de la herramienta.\n\nUn `contextId` desconocido responde **200 con un informe vacío**, no 404: para un integrador «esa aula todavía no tiene nada» es una respuesta legítima. El 404 sólo aparece si el identificador pasa de 512 caracteres.",
+        "security": [{ "reportsApiToken": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/platformId" },
+          {
+            "name": "contextId",
+            "in": "path",
+            "required": true,
+            "description": "Identificador del curso en Moodle. Texto libre, máximo 512 caracteres.",
+            "schema": { "type": "string", "maxLength": 512 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Informe del aula.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CourseReport" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/reports/students": {
+      "get": {
+        "tags": ["Informes"],
+        "operationId": "findStudent",
+        "summary": "Avance de un alumno por su nombre de usuario de Moodle",
+        "description": "Devuelve una entrada por cada aula en la que ese alumno tiene rastro, con el informe agregado y jerárquico (`tree`) de cada una.\n\nSin coincidencia devuelve `{\"students\": []}`, **nunca 404**: para la herramienta externa «ese alumno todavía no ha abierto nada» es una respuesta legítima, no un error.\n\nTope: 20 pares (alumno, aula).",
+        "security": [{ "reportsApiToken": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/platformId" },
+          {
+            "name": "identity",
+            "in": "query",
+            "required": false,
+            "description": "Username de Moodle. Se compara sin distinguir mayúsculas. Obligatorio si no se manda `sub`.",
+            "schema": { "type": "string", "maxLength": 255 },
+            "example": "vsolano"
+          },
+          {
+            "name": "sub",
+            "in": "query",
+            "required": false,
+            "description": "`sub` LTI del alumno. Obligatorio si no se manda `identity`.",
+            "schema": { "type": "string", "maxLength": 255 }
+          },
+          {
+            "name": "contextId",
+            "in": "query",
+            "required": false,
+            "description": "Acota la búsqueda a un aula.",
+            "schema": { "type": "string", "maxLength": 512 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Una entrada por aula. Lista vacía si no hay coincidencia.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "students": { "type": "array", "items": { "$ref": "#/components/schemas/StudentCourseReport" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platforms": {
+      "get": {
+        "tags": ["Contenido"],
+        "operationId": "listPlatforms",
+        "summary": "Instancias Moodle registradas",
+        "description": "Para averiguar el UUID que hay que poner en `X-MoodleShield-Platform-Id`. Es la única operación de contenido que no exige las cabeceras de identidad.",
+        "security": [{ "contentApiToken": [] }],
+        "responses": {
+          "200": {
+            "description": "Instancias visibles para este token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "platforms": { "type": "array", "items": { "$ref": "#/components/schemas/Platform" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/imports/plan": {
+      "post": {
+        "tags": ["Contenido"],
+        "operationId": "planImport",
+        "summary": "Repartir un árbol de directorios en carpetas y decidir alta o revisión",
+        "description": "Se le manda sólo la lista de rutas relativas y responde con el reparto resuelto. Repetir un título ya presente en la misma carpeta es una **revisión**: el UUID no se mueve y las actividades Moodle siguen abriendo (ADR-025).\n\nSe omiten ocultos (`.` inicial, `__MACOSX`, `Thumbs.db`) y lo que no sea vídeo ni PDF. Tope `MAX_IMPORT_ENTRIES` (500 por defecto); pasado, `413 too_many_entries` y no crea nada.",
+        "security": [{ "contentApiToken": [], "platformIdHeader": [], "ownerSubHeader": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/ownerName" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "parentId": { "type": ["string", "null"], "format": "uuid", "description": "Carpeta de la que cuelga el árbol. Null = raíz de la biblioteca." },
+                  "dryRun": { "type": "boolean", "description": "True resuelve el mismo reparto SIN crear ninguna carpeta." },
+                  "entries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": { "type": "string", "description": "Ruta relativa con separador `/`." },
+                        "size": { "type": "integer" }
+                      },
+                      "required": ["path"]
+                    }
+                  }
+                },
+                "required": ["entries"]
+              },
+              "example": {
+                "parentId": null,
+                "dryRun": true,
+                "entries": [
+                  { "path": "Álgebra/Tema 1/clase.mp4", "size": 734003200 },
+                  { "path": "Álgebra/Tema 1/.DS_Store", "size": 6148 }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Reparto resuelto: qué se sube, dónde cae y con qué título." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "413": { "description": "Más entradas que `MAX_IMPORT_ENTRIES`. No se ha creado nada." }
+        }
+      }
+    },
+    "/api/v1/uploads": {
+      "post": {
+        "tags": ["Contenido"],
+        "operationId": "createUpload",
+        "summary": "Reservar una sesión de subida",
+        "security": [{ "contentApiToken": [], "platformIdHeader": [], "ownerSubHeader": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/ownerName" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadReservation" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "Sesión reservada.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadSession" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "description": "Cuota por propietario agotada. Trátalo como espera, no como error." },
+          "507": { "description": "Sin espacio: cuota de almacenamiento o disco. También es espera." }
+        }
+      }
+    },
+    "/api/v1/uploads/{uploadId}": {
+      "get": {
+        "tags": ["Contenido"],
+        "operationId": "getUpload",
+        "summary": "Estado de una sesión y fragmentos ya recibidos",
+        "description": "Permite reanudar una transferencia interrumpida durante 24 horas por defecto.",
+        "security": [{ "contentApiToken": [], "platformIdHeader": [], "ownerSubHeader": [] }],
+        "parameters": [
+          { "name": "uploadId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado de la sesión.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadSession" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Contenido"],
+        "operationId": "cancelUpload",
+        "summary": "Cancelar una sesión y liberar su reserva",
+        "description": "**Si un `complete` falla, cancela la sesión.** Un `complete` fallido no libera la reserva, y unas pocas sesiones abandonadas agotan `MAX_ACTIVE_UPLOADS_PER_OWNER` hasta que caducan.",
+        "security": [{ "contentApiToken": [], "platformIdHeader": [], "ownerSubHeader": [] }],
+        "parameters": [
+          { "name": "uploadId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "204": { "description": "Cancelada." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/uploads/{uploadId}/chunks/{index}": {
+      "put": {
+        "tags": ["Contenido"],
+        "operationId": "putChunk",
+        "summary": "Enviar un fragmento",
+        "description": "Cuerpo binario crudo. El tamaño exacto lo dice `chunkBytes` de la reserva; el cuerpo queda limitado a `UPLOAD_CHUNK_BYTES` (16 MiB por defecto), de modo que la RAM no crece con el tamaño total.",
+        "security": [{ "contentApiToken": [], "platformIdHeader": [], "ownerSubHeader": [] }],
+        "parameters": [
+          { "name": "uploadId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "index", "in": "path", "required": true, "description": "Base 0.", "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } }
+        },
+        "responses": {
+          "200": { "description": "Fragmento recibido." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "413": { "description": "Fragmento mayor que `UPLOAD_CHUNK_BYTES`." }
+        }
+      }
+    },
+    "/api/v1/uploads/{uploadId}/complete": {
+      "post": {
+        "tags": ["Contenido"],
+        "operationId": "completeUpload",
+        "summary": "Reintegrar el fichero y encolar su procesado",
+        "description": "Crea, en una sola transacción, el material, su revisión y el trabajo pendiente.",
+        "security": [{ "contentApiToken": [], "platformIdHeader": [], "ownerSubHeader": [] }],
+        "parameters": [
+          { "name": "uploadId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "202": { "description": "Encolado: `status: \"queued\"`." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "description": "`revision_in_progress`: ese material ya tiene una candidata en cola. Un material sólo admite una a la vez." }
+        }
+      }
+    },
+    "/api/v1/materials/{kind}/{id}": {
+      "get": {
+        "tags": ["Contenido"],
+        "operationId": "getMaterialStatus",
+        "summary": "Estado de un material, su última revisión y su trabajo",
+        "description": "Para observar una importación. En una sustitución, espera además `latestRevisionPublished: true`: el material puede seguir `published: true` mientras la revisión anterior protege a las actividades existentes. Los estados terminales esperables son `ready`, `failed` o `cancelled`.",
+        "security": [{ "contentApiToken": [], "platformIdHeader": [], "ownerSubHeader": [] }],
+        "parameters": [
+          { "name": "kind", "in": "path", "required": true, "schema": { "type": "string", "enum": ["video", "pdf"] } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estado del material.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "material": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string", "format": "uuid" },
+                        "kind": { "type": "string", "enum": ["video", "pdf"] },
+                        "title": { "type": "string" },
+                        "status": { "type": "string" },
+                        "error": { "type": ["string", "null"] },
+                        "published": { "type": "boolean" },
+                        "latestRevisionPublished": { "type": "boolean" },
+                        "activeRevisionId": { "type": ["string", "null"], "format": "uuid" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "updatedAt": { "type": "string", "format": "date-time" }
+                      }
+                    },
+                    "revision": { "type": ["object", "null"] },
+                    "job": { "type": ["object", "null"] }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    }
+  }
+}
