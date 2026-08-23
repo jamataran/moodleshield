@@ -127,6 +127,10 @@ reportsApiRouter.get('/students', async (req, res, next) => {
         telemetry: report.telemetry,
         materials: report.materials,
         activities: report.activities,
+        // El informe agregado con la forma de la biblioteca —carpeta > … >
+        // colección > materiales—, con el avance de ESTE alumno en cada hoja y
+        // la suma en cada carpeta. Es lo que cruza la herramienta externa.
+        tree: report.tree,
         progress: report.student,
         timeline: report.timeline
       })

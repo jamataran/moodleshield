@@ -1,4 +1,6 @@
 import { many, one } from '../db/index.js'
+import { listFolderPaths } from './folder-paths.js'
+import { buildReportTree } from './report-tree.js'
 
 /**
  * Informe de seguimiento por curso: el sustituto del «informe completo» de
@@ -56,7 +58,10 @@ function listPlacements ({ platformId, contextId }) {
     `SELECT p.id AS placement_id, p.resource_kind AS kind, p.resource_id AS id,
             p.resource_link_id, p.created_at AS placed_at,
             COALESCE(v.title, d.title, c.title) AS title,
-            v.duration_seconds, d.page_count
+            v.duration_seconds, d.page_count,
+            COALESCE(v.folder_id, d.folder_id, c.folder_id) AS folder_id,
+            COALESCE(v.owner_sub, d.owner_sub, c.owner_sub) AS owner_sub,
+            COALESCE(v.owner_name, d.owner_name, c.owner_name) AS owner_name
        FROM resource_placement p
        LEFT JOIN video v ON p.resource_kind = 'video' AND v.id = p.resource_id
        LEFT JOIN pdf_document d ON p.resource_kind = 'pdf' AND d.id = p.resource_id
@@ -79,7 +84,10 @@ function listPlacementItems (placementIds) {
             CASE WHEN pi.video_id IS NOT NULL THEN 'video' ELSE 'pdf' END AS kind,
             COALESCE(pi.video_id, pi.document_id) AS id,
             COALESCE(v.title, d.title) AS title,
-            v.duration_seconds, d.page_count
+            v.duration_seconds, d.page_count,
+            COALESCE(v.folder_id, d.folder_id) AS folder_id,
+            COALESCE(v.owner_sub, d.owner_sub) AS owner_sub,
+            COALESCE(v.owner_name, d.owner_name) AS owner_name
        FROM resource_placement p
        JOIN resource_placement_item pi ON pi.placement_id = p.id
        JOIN content_collection_item ci
@@ -96,16 +104,21 @@ function listPlacementItems (placementIds) {
 /** Material con accesos en este curso que ningún placement vivo explica. */
 function listHistoricalMaterials ({ platformId, contextId }) {
   return many(
-    `SELECT 'video' AS kind, e.video_id AS id, max(v.title) AS title,
-            max(v.duration_seconds) AS duration_seconds, NULL::int AS page_count
+    // Agrupar por la clave primaria del material deja seleccionar sus columnas
+    // sin envolverlas en `max()`: dependencia funcional, y así no hace falta un
+    // agregado de uuid para la carpeta.
+    `SELECT 'video' AS kind, v.id AS id, v.title AS title,
+            v.duration_seconds AS duration_seconds, NULL::int AS page_count,
+            v.folder_id, v.owner_sub, v.owner_name
        FROM view_event e JOIN video v ON v.id = e.video_id
       WHERE e.platform_id = $1 AND e.context_id = $2
-      GROUP BY e.video_id
+      GROUP BY v.id
       UNION ALL
-     SELECT 'pdf', e.document_id, max(d.title), NULL::int, max(d.page_count)
+     SELECT 'pdf', d.id, d.title, NULL::numeric, d.page_count,
+            d.folder_id, d.owner_sub, d.owner_name
        FROM document_view_event e JOIN pdf_document d ON d.id = e.document_id
       WHERE e.platform_id = $1 AND e.context_id = $2
-      GROUP BY e.document_id`,
+      GROUP BY d.id`,
     [platformId, contextId]
   )
 }
@@ -113,12 +126,18 @@ function listHistoricalMaterials ({ platformId, contextId }) {
 /**
  * Alumnos del curso: quien tenga cualquier rastro en él. El profesor no genera
  * ni accesos ni aperturas (mismo criterio que el forense), así que no aparece.
+ *
+ * `NULLIF(..., '')` es la reparación en lado lectura de las filas que se
+ * escribieron con nombre vacío antes de arreglar `toLaunchContext`: `max('')`
+ * devuelve '' —Postgres ignora los NULL, no las cadenas vacías— y ese '' se
+ * colaba hasta la interfaz como si fuera un nombre. No se toca ni una fila
+ * (Regla 0): se lee bien lo que ya está escrito.
  */
 function listStudents ({ platformId, contextId, sub = null }) {
   return many(
     `SELECT t.user_sub AS sub,
-            max(t.user_name) AS name,
-            max(t.user_identity) AS identity,
+            NULLIF(max(t.user_name), '') AS name,
+            NULLIF(max(t.user_identity), '') AS identity,
             min(t.created_at) AS first_at,
             max(t.created_at) AS last_at,
             count(*) FILTER (WHERE t.origen = 'open')::int AS opens
@@ -134,7 +153,9 @@ function listStudents ({ platformId, contextId, sub = null }) {
        ) t
       WHERE $3::text IS NULL OR t.user_sub = $3
       GROUP BY t.user_sub
-      ORDER BY lower(coalesce(max(t.user_name), max(t.user_identity), t.user_sub))
+      ORDER BY lower(coalesce(NULLIF(max(t.user_name), ''),
+                              NULLIF(max(t.user_identity), ''),
+                              t.user_sub))
       LIMIT ${MAX_STUDENTS}`,
     [platformId, contextId, sub]
   )
@@ -237,8 +258,16 @@ function materialDto (row, { kind, activityKey, activityTitle }) {
       : Number(row.duration_seconds),
     pageCount: row.page_count ?? null,
     activityKey,
-    activityTitle
+    activityTitle,
+    folderId: row.folder_id ?? null,
+    owner: propietario(row)
   }
+}
+
+/** El profesor dueño del material: quien decide dónde vive en su biblioteca. */
+function propietario (row) {
+  if (!row.owner_sub && !row.owner_name) return null
+  return { sub: row.owner_sub ?? null, name: row.owner_name ?? null }
 }
 
 /**
@@ -277,6 +306,8 @@ export async function listCourseActivities ({ platformId, contextId }) {
       historical: false,
       durationSeconds: placement.duration_seconds === null ? null : Number(placement.duration_seconds),
       pageCount: placement.page_count ?? null,
+      folderId: placement.folder_id ?? null,
+      owner: propietario(placement),
       items: []
     }
     if (placement.kind === 'collection') {
@@ -327,6 +358,8 @@ export async function listCourseActivities ({ platformId, contextId }) {
       historical: true,
       durationSeconds: material.durationSeconds,
       pageCount: material.pageCount,
+      folderId: material.folderId,
+      owner: material.owner,
       items: []
     })
   }
@@ -382,10 +415,22 @@ function aplicaLecturaStats (entrada, stats, material) {
 }
 
 /**
+ * El mismo material, colgado de la biblioteca: carpeta > … > colección > vídeo.
+ *
+ * `viewerSub` es quien mira: un profesor del aula (ADR-023) no ve el nombre de
+ * las carpetas privadas de un compañero, un operador sí. Se recalcula aparte
+ * porque el árbol del alumno lleva su avance en cada hoja y el del curso no.
+ */
+function arbolDelCurso ({ platformId, activities, viewerSub, progress = null }) {
+  return listFolderPaths({ platformId, folderIds: activities.map((a) => a.folderId) })
+    .then((folderPaths) => buildReportTree({ activities, folderPaths, viewerSub, progress }))
+}
+
+/**
  * Informe completo de un curso. Un único objeto: la interfaz pinta la matriz y
  * la API externa (#79) devuelve exactamente esto.
  */
-export async function buildCourseReport ({ platformId, contextId, sub = null }) {
+export async function buildCourseReport ({ platformId, contextId, sub = null, viewerSub = null }) {
   if (!platformId || !contextId) return null
 
   const { activities, materials } = await listCourseActivities({ platformId, contextId })
@@ -474,6 +519,9 @@ export async function buildCourseReport ({ platformId, contextId, sub = null }) 
     },
     activities,
     materials,
+    // La misma información que `activities`, con la forma de la biblioteca.
+    // Se AÑADE: `activities` y `materials` son contrato ya emitido (Regla 0-bis).
+    tree: await arbolDelCurso({ platformId, activities, viewerSub }),
     students: [...filas.values()].map((fila) => ({
       sub: fila.sub,
       name: fila.name,
@@ -492,8 +540,8 @@ export async function buildCourseReport ({ platformId, contextId, sub = null }) 
   }
 }
 
-export function getCourseReport ({ platformId, contextId }) {
-  return buildCourseReport({ platformId, contextId })
+export function getCourseReport ({ platformId, contextId, viewerSub = null }) {
+  return buildCourseReport({ platformId, contextId, viewerSub })
 }
 
 /**
@@ -503,9 +551,9 @@ export function getCourseReport ({ platformId, contextId }) {
  * Devuelve `null` si ese `sub` no aparece en ESTE curso: nadie pesca alumnos de
  * otros cursos escribiendo un identificador.
  */
-export async function getStudentCourseReport ({ platformId, contextId, sub }) {
+export async function getStudentCourseReport ({ platformId, contextId, sub, viewerSub = null }) {
   if (!platformId || !contextId || !sub) return null
-  const report = await buildCourseReport({ platformId, contextId, sub })
+  const report = await buildCourseReport({ platformId, contextId, sub, viewerSub })
   const student = report?.students?.[0]
   if (!student) return null
 
@@ -535,6 +583,15 @@ export async function getStudentCourseReport ({ platformId, contextId, sub }) {
     telemetry: report.telemetry,
     activities: report.activities,
     materials: report.materials,
+    // Aquí el árbol SÍ lleva el avance en cada hoja y la suma en cada carpeta:
+    // es el informe agregado por alumno, con la forma en que el profesor
+    // organizó su material.
+    tree: await arbolDelCurso({
+      platformId,
+      activities: report.activities,
+      viewerSub,
+      progress: new Map(student.materials.map((entrada) => [entrada.materialId, entrada]))
+    }),
     student,
     timeline: timeline.map((row) => ({
       kind: row.kind,
@@ -597,7 +654,8 @@ export function findStudentCourses ({ platformId, identity = null, sub = null, c
   if (!platformId || (!identity && !sub)) return Promise.resolve([])
   return many(
     `SELECT t.user_sub AS sub, t.context_id,
-            max(t.user_name) AS name, max(t.user_identity) AS identity,
+            NULLIF(max(t.user_name), '') AS name,
+            NULLIF(max(t.user_identity), '') AS identity,
             min(t.created_at) AS first_at, max(t.created_at) AS last_at,
             count(*)::int AS events
        FROM (

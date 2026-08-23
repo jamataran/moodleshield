@@ -18,7 +18,7 @@
  */
 
 import { createChunkedUploader } from './chunked-upload.js?v=import-1'
-import { createCourseReport } from './course-report.js?v=seguimiento-1'
+import { createCourseReport } from './course-report.js?v=seguimiento-2'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 
