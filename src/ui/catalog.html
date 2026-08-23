@@ -57,6 +57,15 @@
           <span>Material de este curso</span>
         </button>
 
+        <!--
+          El seguimiento cuelga del curso, no de la biblioteca: sin curso en el
+          launch no hay alumnos de los que hablar y el botón no aparece.
+        -->
+        <button id="report-open" type="button" class="library-view" hidden>
+          <span aria-hidden="true">📈</span>
+          <span>Informe de seguimiento</span>
+        </button>
+
         <button id="archived-toggle" type="button" class="library-view archived-view">
           <span aria-hidden="true">♲</span>
           <span>Archivados</span>
@@ -380,6 +389,37 @@
       </form>
       <ul id="revision-list"></ul>
       <p class="dialog-actions"><button type="button" id="revisions-close">Cerrar</button></p>
+    </div>
+  </dialog>
+
+  <!--
+    Informe de seguimiento: el sustituto del «informe completo» de Moodle para
+    el material que sirve esta herramienta. Dos vistas dentro del mismo diálogo
+    —alumnos del curso y detalle de uno—, con la tabla en su propio contenedor
+    con scroll: dentro del iframe de Moodle el alto llega recortado.
+  -->
+  <dialog id="report-dialog" aria-labelledby="report-heading">
+    <div class="report">
+      <p class="eyebrow">Seguimiento</p>
+      <h2 id="report-heading">Avance de los alumnos</h2>
+      <p class="muted" id="report-course"></p>
+      <p class="muted" id="report-telemetry" hidden></p>
+      <p class="dialog-actions report-tools">
+        <input type="search" id="report-search" placeholder="Buscar alumno…"
+               aria-label="Buscar un alumno por nombre o usuario">
+        <button type="button" id="report-back" hidden>← Todos los alumnos</button>
+        <button type="button" id="report-refresh">↻ Actualizar</button>
+        <span class="muted" id="report-status" role="status" aria-live="polite" hidden></span>
+      </p>
+      <div class="report-scroll">
+        <table class="report-table">
+          <thead id="report-head"></thead>
+          <tbody id="report-body"></tbody>
+        </table>
+      </div>
+      <form method="dialog">
+        <p class="dialog-actions"><button value="cancel" formnovalidate>Cerrar</button></p>
+      </form>
     </div>
   </dialog>
 

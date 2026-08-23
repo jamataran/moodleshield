@@ -18,6 +18,7 @@
  */
 
 import { createChunkedUploader } from './chunked-upload.js?v=import-1'
+import { createCourseReport } from './course-report.js?v=seguimiento-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 
@@ -2429,6 +2430,8 @@ function render () {
     courseToggle.hidden = !boot.hasCourse
     courseToggle.classList.toggle('current', state.view === 'course')
   }
+  const reportOpen = el('report-open')
+  if (reportOpen) reportOpen.hidden = !boot.hasCourse
 
   // Las subcarpetas del nivel abierto son parte del contenido de ese nivel, como
   // en cualquier explorador. El lateral las repite como atajo, pero quien navega
@@ -2687,6 +2690,11 @@ el('course-toggle')?.addEventListener('click', () => {
   if (state.view === 'course') return goBack()
   navigate({ view: 'course' })
 })
+
+// El informe vive en su propio módulo: es una vista de datos de alumnos, no de
+// la biblioteca, y arrastrarlo aquí sólo engordaría este fichero.
+const courseReport = createCourseReport({ sessionToken: boot.sessionToken })
+el('report-open')?.addEventListener('click', () => { void courseReport.open() })
 
 el('all-content').addEventListener('click', openAll)
 el('root-content').addEventListener('click', () => openFolder(null))

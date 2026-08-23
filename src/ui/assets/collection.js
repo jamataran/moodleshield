@@ -3,6 +3,7 @@ import { createPdfView } from './pdf-component.js?v=resume-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
 import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
+import { createPdfTelemetry, createVideoTelemetry } from './telemetry-client.js?v=seguimiento-1'
 
 /**
  * Visor de una colección: varios materiales dentro de UNA actividad Moodle.
@@ -31,6 +32,9 @@ let items = boot.items ?? []
 let index = 0
 let view = null
 let viewGeneration = 0
+// La telemetría es POR MATERIAL, no por actividad: cambiar de elemento cierra
+// la del anterior —enviando lo que quede— y abre la del nuevo.
+let telemetry = null
 
 // Marcador de reanudación: sólo restaura la primera vista. Navegar a mano
 // después empieza cada material desde el principio, como siempre.
@@ -98,6 +102,10 @@ function renderIndex () {
 
 /** Destruir antes de crear: nunca deben coexistir dos visores. */
 function destroyView () {
+  try {
+    telemetry?.destroy()
+  } catch { /* la telemetría es fail-open también al cerrarse */ }
+  telemetry = null
   try {
     view?.destroy()
   } catch { /* el visor ya se había desmontado */ }
@@ -208,6 +216,12 @@ async function show (nextIndex, { focus = true } = {}) {
       return
     }
     view = candidate
+    // Misma puerta que el marcador: sólo alumnos generan telemetría.
+    if ('progress' in boot && view) {
+      telemetry = item.kind === 'video'
+        ? createVideoTelemetry({ sessionToken: boot.sessionToken, videoId: item.id, view })
+        : createPdfTelemetry({ sessionToken: boot.sessionToken, documentId: item.id, view })
+    }
     if (focus) view?.focus?.()
   } catch (err) {
     if (generation === viewGeneration) {

@@ -40,6 +40,7 @@ const APP_TABLES = [
   'pdf_revision',
   'playback_grant',
   'playback_grant_ip',
+  'reading_stats',
   'resource_placement',
   'resource_placement_item',
   'tool_key',
@@ -47,7 +48,8 @@ const APP_TABLES = [
   'upload_reservation',
   'video',
   'video_revision',
-  'view_event'
+  'view_event',
+  'viewing_stats'
 ]
 
 /**

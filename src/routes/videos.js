@@ -287,7 +287,13 @@ videosRouter.post('/:id/cancel', requireCatalogInstructor, async (req, res, next
   }
 })
 
-/** Lista de alumnos que han abierto el vídeo. Insumo del trazado forense. */
+/**
+ * Lista de alumnos que han abierto el vídeo. Insumo del trazado forense.
+ *
+ * La condición es **verlo**, no ser su autor: el coprofesor del curso donde
+ * está desplegado recibía un 404 aunque tuviera ese material delante en su
+ * biblioteca (ADR-023).
+ */
 videosRouter.get('/:id/viewers', requireCatalogInstructor, async (req, res, next) => {
   try {
     // La lista de espectadores lleva nombres e identificadores de alumnos:
@@ -298,7 +304,13 @@ videosRouter.get('/:id/viewers', requireCatalogInstructor, async (req, res, next
     if (revisionId != null && revisionId !== '' && !isUuid(revisionId)) {
       return res.status(400).json({ error: 'revisionId no es un identificador válido' })
     }
-    const video = await getVideoForOwner(id, req.session.platformId, req.session.sub)
+    const video = await getVisibleMaterial({
+      kind: 'video',
+      id,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      contextId: req.session.contextId
+    })
     if (!video) return res.status(404).json({ error: 'Vídeo no encontrado' })
     res.json({ viewers: await listViewers(id, { revisionId: revisionId || null }) })
   } catch (err) {

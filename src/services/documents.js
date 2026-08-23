@@ -263,13 +263,21 @@ export function listCollectionsUsingDocument (documentId) {
   return listCollectionsUsing({ kind: 'pdf', id: documentId })
 }
 
-/** Igual que en vídeo: se registra la primera petición real de bytes, no el launch. */
+/**
+ * Igual que en vídeo: se registra la primera petición real de bytes, no el
+ * launch.
+ *
+ * `kind` separa leer de descargar (migración 021). Hasta entonces las dos rutas
+ * escribían la misma fila desduplicada por sesión y eran indistinguibles; el
+ * histórico queda como `'read'`, con esa ambigüedad ya documentada.
+ */
 export function recordDocumentView ({
   documentId,
   revisionId,
   platformId,
   collectionId = null,
   sessionJti = null,
+  kind = 'read',
   context,
   identity,
   ip,
@@ -277,9 +285,9 @@ export function recordDocumentView ({
 }) {
   return query(
     `INSERT INTO document_view_event
-       (document_id, revision_id, platform_id, collection_id, session_jti, user_sub,
+       (document_id, revision_id, platform_id, collection_id, session_jti, kind, user_sub,
         user_name, user_identity, context_id, resource_link_id, ip, user_agent)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      ON CONFLICT DO NOTHING`,
     [
       documentId,
@@ -287,6 +295,7 @@ export function recordDocumentView ({
       platformId ?? null,
       collectionId,
       sessionJti,
+      kind === 'download' ? 'download' : 'read',
       context.sub,
       context.name ?? null,
       identity ?? null,
@@ -298,10 +307,18 @@ export function recordDocumentView ({
   )
 }
 
+/**
+ * Candidatos del trazado. `views` cuenta SESIONES, no filas: desde que leer y
+ * descargar son dos filas, contar filas habría inflado un número que ya se
+ * enseñaba. Las filas anteriores a la migración 006 no tienen `session_jti` y
+ * cuentan cada una como su sesión, que es lo que eran.
+ */
 export function listDocumentViewers (documentId) {
   return many(
     `SELECT user_sub, max(user_name) AS user_name, max(user_identity) AS user_identity,
-            count(*) AS views, max(created_at) AS last_seen
+            count(DISTINCT COALESCE(session_jti, id::text)) AS views,
+            count(*) FILTER (WHERE kind = 'download') AS downloads,
+            max(created_at) AS last_seen
        FROM document_view_event
       WHERE document_id = $1
       GROUP BY user_sub
