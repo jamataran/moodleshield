@@ -49,6 +49,17 @@ export function hasInstructorRole (roles) {
 }
 
 /**
+ * Un dato que Moodle no manda tiene que llegar como `null`, no como ''.
+ *
+ * La diferencia importa: `''` es un valor y se cuela por cualquier `?? null`
+ * y por cualquier `a ?? b`; `null` deja que el respaldo funcione.
+ */
+export function sinVacio (valor) {
+  const texto = String(valor ?? '').trim()
+  return texto || null
+}
+
+/**
  * Aplana el id_token a la forma que usa el resto de la aplicación.
  * A partir de aquí nadie más necesita conocer las URIs de IMS.
  */
@@ -62,7 +73,12 @@ export function toLaunchContext (claims, platform) {
     deploymentId: claims[CLAIM.deploymentId],
     messageType: claims[CLAIM.messageType],
     sub: claims.sub,
-    name: claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' ') ?? '',
+    // Ausencia = `null`, jamás cadena vacía. Moodle omite los claims de nombre
+    // según su configuración de privacidad, y un '' atraviesa todos los
+    // `?? null` de la cadena hasta quedar guardado en los eventos: el informe
+    // de seguimiento enseñaba entonces la celda «Alumno» en blanco. Misma
+    // lección que `displayOwnerName` en services/sharing.js.
+    name: sinVacio(claims.name ?? [claims.given_name, claims.family_name].filter(Boolean).join(' ')),
     email: claims.email ?? '',
     roles,
     isInstructor: hasInstructorRole(roles),
