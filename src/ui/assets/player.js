@@ -1,6 +1,7 @@
 import { createVideoView } from './video-component.js?v=resume-1'
 import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
+import { createVideoTelemetry } from './telemetry-client.js?v=seguimiento-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({
@@ -40,7 +41,14 @@ const saver = 'progress' in boot
   })
   : null
 
+// Misma puerta que el marcador: la telemetría docente es de alumnos, y el
+// profesor abre materiales constantemente al editar.
+const telemetry = 'progress' in boot
+  ? createVideoTelemetry({ sessionToken: boot.sessionToken, videoId: boot.video.id, view })
+  : null
+
 window.addEventListener('pagehide', () => {
   saver?.destroy()
+  telemetry?.destroy()
   view.destroy()
 })

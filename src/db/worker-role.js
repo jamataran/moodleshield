@@ -21,6 +21,7 @@ const WRITE_TABLES = [
   'pdf_job'
 ]
 const APP_TABLES = [
+  'activity_open_event',
   'admin_audit_event',
   'admin_login_attempt',
   'admin_session',
@@ -31,6 +32,7 @@ const APP_TABLES = [
   'deep_link_response_use',
   'document_view_event',
   'learner_progress',
+  'lti_context',
   'lti_oidc_state',
   'lti_platform',
   'pdf_document',
@@ -38,6 +40,7 @@ const APP_TABLES = [
   'pdf_revision',
   'playback_grant',
   'playback_grant_ip',
+  'reading_stats',
   'resource_placement',
   'resource_placement_item',
   'tool_key',
@@ -45,7 +48,8 @@ const APP_TABLES = [
   'upload_reservation',
   'video',
   'video_revision',
-  'view_event'
+  'view_event',
+  'viewing_stats'
 ]
 
 /**

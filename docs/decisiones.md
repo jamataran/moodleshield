@@ -1180,3 +1180,89 @@ reinsertar nada en Moodle y sin que nadie tenga que enterarse de nada.
 `owner_sub = $3`, y quitar «Versiones…» del menú de las tarjetas compartidas en
 `catalog.js`. La columna `created_by_name` puede quedarse: es auditoría y no
 estorba a nadie.
+
+---
+
+## ADR-030 · El seguimiento docente es telemetría fail-open y agregada; el registro forense sigue siendo `view_event`
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Convive con ADR-013, ADR-021 y ADR-023
+
+**Contexto.** Los profesores seguían a sus alumnos con el «informe completo» de
+Moodle (`report/outline/user.php?mode=complete`), que se alimenta de los logs de
+la plataforma. Una actividad LTI es opaca para esos logs —Moodle sólo ve el
+launch— y con colecciones (ADR-013: N materiales en UNA actividad) la pérdida es
+total: el informe no puede decir qué material abrió cada alumno. La herramienta
+se había vuelto una caja negra justo en lo que el profesor necesita mirar.
+
+El 80 % del dato ya existía: `view_event` y `document_view_event` registran por
+alumno y por material —también dentro de colecciones— quién, qué, en qué curso y
+cuándo, desduplicado por sesión LTI y sin purga. Faltaban cuatro cosas: la
+apertura sin reproducción, el tiempo visto, las páginas leídas y el nombre del
+curso.
+
+**Decisión.** Se añade una capa de **telemetría docente** separada del registro
+forense, con contrato opuesto en lo único que importa: qué pasa cuando falla.
+
+| | Registro forense | Telemetría docente |
+|---|---|---|
+| Tablas | `view_event`, `document_view_event` | `activity_open_event`, `viewing_stats`, `reading_stats` |
+| Quién escribe | El servidor, al servir los bytes | El visor del alumno, por heartbeat |
+| Si falla | **503**, no se entrega (`requirePlaybackAudit`) | `warn` + 204: el visor ni se entera |
+| Granularidad | Evento por sesión y material | Agregado por alumno y material |
+| Falseable por el alumno | No | Sí, la suya, con topes por beat |
+
+Tres decisiones dentro de la decisión:
+
+- **Agregado, no serie de eventos.** Una fila por (alumno, material) con los
+  tramos vistos fusionados. Una serie de heartbeats crecería sin cota (~240
+  filas/alumno/hora) para responder preguntas que sólo necesitan agregados. La
+  cardinalidad y el ritmo de escritura son los de `learner_progress`, que
+  ADR-021 ya justificó, y como allí **no hay claves foráneas**: el dato es
+  consultivo y una fila huérfana es inofensiva.
+- **El beat es idempotente.** Manda la lista completa de tramos, no un
+  incremento: un reintento, o el envío de `pagehide` pisándose con el periódico,
+  no puede inflar el avance de nadie. `unique_seconds` —el que decide el %— se
+  deriva de los tramos; `watched_seconds` suma deltas y cuenta el revisionado.
+- **El informe es del curso, no del propietario.** `GET /reports/course` parte de
+  los placements vivos del contexto de la sesión (ADR-023): lo ve cualquier
+  profesor de esa aula aunque el material sea de otro, y revocar el placement lo
+  saca del informe. El `context_id` sale del `id_token`, nunca de la query.
+
+`learner_progress` **no se toca**: sigue siendo el marcador de reanudación, y su
+truco de `position=0` al terminar lo hace inservible como medida de completitud
+—quien terminó es indistinguible de quien no empezó—. Eso vive ahora en
+`viewing_stats.completed_at`.
+
+**Consecuencias.**
+
+- **El tiempo visto es orientativo y hay que decirlo así.** Los segmentos los
+  sirve nginx y el PDF viaja entero al navegador: el dato sólo existe en el
+  cliente. Un alumno puede falsear el suyo dentro de los topes por beat (≤ 45 s
+  de delta, ≤ 200 tramos, nada más allá de la duración real). Nada de esto toca
+  el trazado forense, que no depende del cliente.
+- **Lo anterior al despliegue se pinta «sin datos», nunca cero.** El informe
+  expone `telemetry.{opensSince, videoStatsSince, pdfStatsSince}` justo para
+  distinguir «no lo vio» de «no lo medíamos». Enseñar «0 min» sobre un material
+  que un alumno vio el curso pasado sería una acusación falsa.
+- **El histórico cuenta sin reinsertar nada** (Regla 0-bis): a los placements se
+  suma lo que aparezca en eventos del curso sin placement, que es lo que dejaron
+  las actividades anteriores a la migración 014.
+- **`viewing_stats` y `reading_stats` no llevan curso en la clave.** Si el mismo
+  alumno ve el mismo vídeo en dos cursos, el tiempo es el acumulado de los dos.
+  Es la misma propiedad que `learner_progress` y el caso es raro; separarlo
+  multiplicaría filas para un dato orientativo.
+- **Datos personales, y por tanto tratamiento nuevo.** El informe y su API son
+  destinatarios nuevos de los mismos datos: base jurídica, retención y acceso
+  siguen pendientes en [#65](https://github.com/jamataran/moodleshield/issues/65).
+  `ip` y `user_agent` no salen de este camino: ninguna consulta del servicio de
+  informes los selecciona.
+- **La API externa lleva su propio token.** `REPORTS_API_TOKEN` sólo lee;
+  `CONTENT_API_TOKEN` escribe suplantando al propietario del material. Quien
+  cruza avances con otra herramienta no debe sostener ese segundo secreto, y la
+  configuración rechaza que sean el mismo.
+
+**Cómo revertirlo.** Desmontar `/telemetry`, `/reports` y `/api/v1/reports` en
+`app.js` y quitar el botón del catálogo: el visor deja de mandar beats y todo lo
+demás sigue igual, porque nada del camino de reproducción depende de esta capa.
+Las tablas pueden quedarse vacías sin estorbar; borrarlas es opcional y, por
+Regla 0, se documenta antes de hacerse.

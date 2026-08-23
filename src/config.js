@@ -90,6 +90,7 @@ const adminSessionSecret = optional('ADMIN_SESSION_SECRET')
 const anyAdminCredential = Boolean(adminUsername || adminPasswordHash || adminSessionSecret)
 const adminEnabled = Boolean(adminUsername && adminPasswordHash && adminSessionSecret)
 const contentApiToken = optional('CONTENT_API_TOKEN')
+const reportsApiToken = optional('REPORTS_API_TOKEN')
 const dbSslMode = optional('DB_SSL_MODE', bool('DB_SSL', false) ? 'require' : 'disable')
 const ownerDbUser = optional('DB_USER', 'moodleshield')
 const appDbUser = optional('DB_APP_USER', isProduction ? 'moodleshield_app' : ownerDbUser)
@@ -413,6 +414,18 @@ export const config = {
       .split(',').map((id) => id.trim()).filter(Boolean)
   },
 
+  reportsApi: {
+    /**
+     * API de informes para la herramienta externa de seguimiento. Sólo lectura
+     * y con token PROPIO: `CONTENT_API_TOKEN` da escritura suplantando al
+     * propietario, y quien sólo consulta avances no debe sostener ese secreto.
+     * Un token no abre la otra API. Vacío = rutas deshabilitadas (404).
+     */
+    token: reportsApiToken,
+    allowedPlatformIds: optional('REPORTS_API_ALLOWED_PLATFORM_IDS', '')
+      .split(',').map((id) => id.trim()).filter(Boolean)
+  },
+
   admin: {
     enabled: adminEnabled,
     username: adminUsername,
@@ -538,6 +551,23 @@ export function assertConfigValid () {
   if (config.contentApi.allowedPlatformIds.some((id) =>
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
     errors.push('CONTENT_API_ALLOWED_PLATFORM_IDS sólo admite UUID separados por coma')
+  }
+  // Mismas exigencias que la API de contenido: el token de informes lee datos
+  // personales de alumnos de todos los cursos de una instancia.
+  if (isApp && config.isProduction && config.reportsApi.token && config.reportsApi.token.length < 32) {
+    errors.push('REPORTS_API_TOKEN debe tener al menos 32 caracteres en producción')
+  }
+  if (isApp && config.isProduction && config.reportsApi.token &&
+      config.reportsApi.allowedPlatformIds.length === 0) {
+    errors.push('REPORTS_API_TOKEN en producción exige REPORTS_API_ALLOWED_PLATFORM_IDS')
+  }
+  if (config.reportsApi.allowedPlatformIds.some((id) =>
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+    errors.push('REPORTS_API_ALLOWED_PLATFORM_IDS sólo admite UUID separados por coma')
+  }
+  if (isApp && config.reportsApi.token && config.contentApi.token &&
+      config.reportsApi.token === config.contentApi.token) {
+    errors.push('REPORTS_API_TOKEN y CONTENT_API_TOKEN deben ser distintos: uno sólo lee, el otro escribe')
   }
   if (!['auto', 'always', 'never'].includes(config.network.trustCloudflareClientIp)) {
     errors.push("TRUST_CLOUDFLARE_CLIENT_IP debe ser 'auto', 'always' o 'never'")

@@ -58,6 +58,10 @@ x-app-env: &app-env
   # no arranca con ellos, también en desarrollo.
   LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-local-inseguro-ltiadmin-00000000000000000000}
   CONTENT_API_TOKEN: ${CONTENT_API_TOKEN:-local-content-api-token-0000000000000000}
+  # API de informes (sólo lectura, ADR-030): token DISTINTO del de contenido, que
+  # escribe suplantando al propietario. La configuración rechaza que coincidan.
+  REPORTS_API_TOKEN: ${REPORTS_API_TOKEN:-local-reports-api-token-0000000000000000}
+  REPORTS_API_ALLOWED_PLATFORM_IDS: ${REPORTS_API_ALLOWED_PLATFORM_IDS:-}
   ADMIN_USERNAME: ${ADMIN_USERNAME:-}
   ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
   ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:-}

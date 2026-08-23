@@ -89,7 +89,7 @@ sueltos. Antes de tocar nada:
 |---|---|
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…029: por qué cada decisión y cómo revertirla |
+| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…030: por qué cada decisión y cómo revertirla |
 | [`docs/seguridad.md`](docs/seguridad.md) | Estado de seguridad vigente: qué protege cada capa, dónde está cada hallazgo, límites aceptados y secretos permanentes |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
 | [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle (6 pasos) |
@@ -208,11 +208,15 @@ src/lti/        handshake OIDC, validación de id_token, Deep Linking, JWKS
 src/routes/     HTTP: videos, documents, collections, materials, folders, hls,
                 auth, uploads, progress, health y content-api (migración masiva)
                 imports.js reparte un árbol de carpetas y decide alta o revisión
+                telemetry.js y reports.js son la capa docente: beats del visor e
+                informe del curso; reports-api.js la expone en sólo lectura
 src/services/   SQL y transacciones; nada de HTTP aquí
                 sharing.js concentra el filtro «propio o compartido»
                 import-plan.js es puro: qué se importa, dónde cae y con qué título
                 playback-grants.js y resource-placements.js son las dos puertas
                 que hacen revocable un visionado y verificable una colocación
+                course-report.js arma el informe del curso; viewing-stats.js y
+                reading-stats.js acumulan la telemetría (fail-open, ADR-030)
 src/security/   frame-ancestors, la IP real del cliente tras un CDN y el
                 origen público cuando la herramienta responde por varios nombres
 src/admin/      consola: alta de instancias e inventario de contenido por aula

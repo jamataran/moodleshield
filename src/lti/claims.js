@@ -68,6 +68,7 @@ export function toLaunchContext (claims, platform) {
     isInstructor: hasInstructorRole(roles),
     contextId: claims[CLAIM.context]?.id ?? null,
     contextTitle: claims[CLAIM.context]?.title ?? null,
+    contextLabel: claims[CLAIM.context]?.label ?? null,
     resourceLinkId: claims[CLAIM.resourceLink]?.id ?? null,
     custom,
     lisPersonSourcedId: claims[CLAIM.lis]?.person_sourcedid ?? null,

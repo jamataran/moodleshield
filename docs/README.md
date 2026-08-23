@@ -28,7 +28,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | Documento | Qué resuelve |
 |---|---|
 | [`arquitectura.md`](arquitectura.md) | Vista general, árbol de medios, el camino de un visionado y el de una subida, modelo de datos, tabla de endpoints, modelo de seguridad capa por capa |
-| [`decisiones.md`](decisiones.md) | ADR-001…029. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
+| [`decisiones.md`](decisiones.md) | ADR-001…030. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
 | [`seguridad.md`](seguridad.md) | **Estado de seguridad vigente**: qué protege cada capa, dónde está cada hallazgo, los límites que hay que aceptar por escrito y qué secretos son permanentes |
 
 ### Para trabajar en él
@@ -82,9 +82,9 @@ El manual completo, con los errores que verás y qué significan, está en
 
 ## Estado del proyecto
 
-**Producción: `v1.0.8`** (20 de agosto de 2026) · 17 migraciones aplicadas ·
-**388 pruebas unitarias** (379 pasan, 9 se saltan sin las herramientas de la imagen del
-worker) y **154 de integración** contra PostgreSQL real · `npm audit` en 0.
+**Producción: `v1.0.8`** (20 de agosto de 2026) · 21 migraciones en `test` ·
+**428 pruebas unitarias** (419 pasan, 9 se saltan sin las herramientas de la imagen del
+worker) y **172 de integración** contra PostgreSQL real · `npm audit` en 0.
 
 El sistema está **en uso, sirviendo material real**. Lo que sigue no es una lista de
 funcionalidad por construir, sino el mapa de lo que hay:
@@ -113,6 +113,14 @@ la estructura interna, omitiendo ocultos y tratando cada fichero repetido como *
 nueva** en vez de duplicado ([ADR-025](decisiones.md)). El administrador puede hacer lo
 mismo sobre una biblioteca del centro compartida con todos los profesores del aula
 ([ADR-026](decisiones.md)).
+
+**Seguimiento**: el profesor ve el avance de sus alumnos dentro de la herramienta —qué
+material abrió cada uno **también dentro de una colección**, cuántas sesiones, cuánto vio
+y cuándo fue la última vez—, con detalle por alumno. Lo ve cualquier profesor del curso
+donde está desplegado el material ([ADR-023](decisiones.md)), y el mismo informe se puede
+pedir por API para cruzarlo con una herramienta externa. El tiempo visto y las páginas
+leídas los manda el visor y son **orientativos**: son telemetría docente fail-open, no el
+registro forense, que sigue intacto ([ADR-030](decisiones.md)).
 
 **Operación**: la IP real del alumno se recupera tras un CDN ([ADR-019](decisiones.md)) —
 sin eso, todos los visionados quedaban registrados con la IP del borde de Cloudflare, que

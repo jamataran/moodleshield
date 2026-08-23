@@ -23,6 +23,8 @@ import { getProgress } from '../services/progress.js'
 import { assertUuid, isUuid } from '../media/storage.js'
 import { AmbiguousPlatformError, createPlatform } from '../services/platforms.js'
 import { registerPlaybackGrant } from '../services/playback-grants.js'
+import { recordActivityOpen } from '../services/activity-opens.js'
+import { rememberContext } from '../services/lti-contexts.js'
 import {
   authorizeResourcePlacement,
   createResourcePlacements,
@@ -36,6 +38,10 @@ async function issueTrackedSession (context) {
   const token = issueSession(context)
   const session = verifySession(token)
   await registerPlaybackGrant(session)
+  // Telemetría, no forense: nunca lanza, y el propio servicio filtra profesor
+  // y modos de gestión. El registro forense sigue en la primera petición de
+  // bytes; esto cuenta la visita, que Moodle contaba y aquí se perdía.
+  await recordActivityOpen(session)
   return token
 }
 
@@ -187,6 +193,20 @@ ltiRouter.post('/launch', async (req, res, next) => {
     // guardarlo en cachés compartidas, evitamos que «Atrás» enseñe una sesión
     // anterior en un ordenador compartido.
     res.set('Cache-Control', 'private, no-store')
+
+    // El nombre del curso no viaja en la sesión ni en ninguna tabla de
+    // contenido: sin recordarlo aquí, un informe por curso sólo puede
+    // titularse con el context_id opaco. Fail-open: un launch no se cae por
+    // no poder apuntar un título.
+    await rememberContext({
+      platformId: platform.id,
+      contextId: context.contextId,
+      title: context.contextTitle,
+      label: context.contextLabel
+    }).catch((err) => logger.warn(
+      { err, contextId: context.contextId },
+      'No se pudo recordar el título del curso (telemetría fail-open)'
+    ))
 
     // Identificador visible del alumno: el parámetro personalizado configurado
     // en Moodle (por defecto el username) y, si no llega, lis_person_sourcedid.

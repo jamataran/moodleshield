@@ -274,10 +274,21 @@ documentsRouter.post('/:id/cancel', requireCatalogInstructor, async (req, res, n
   }
 })
 
+/**
+ * Alumnos que han abierto el documento. La condición es **verla**, no ser el
+ * autor: el coprofesor del curso donde está desplegado recibía un 404 aunque
+ * ese material lo tuviera delante en su biblioteca (ADR-023).
+ */
 documentsRouter.get('/:id/viewers', requireCatalogInstructor, async (req, res, next) => {
   try {
     const id = assertDocumentId(req.params.id)
-    const document = await getDocumentForOwner(id, req.session.platformId, req.session.sub)
+    const document = await getVisibleMaterial({
+      kind: 'pdf',
+      id,
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub,
+      contextId: req.session.contextId
+    })
     if (!document) return res.status(404).json({ error: 'Documento no encontrado' })
     res.json({ viewers: await listDocumentViewers(id) })
   } catch (err) {
@@ -435,8 +446,9 @@ documentsRouter.get('/:id/download', requireSession, async (req, res, next) => {
       })
     }
 
-    // Mismo registro que la lectura: desduplicado por el jti de la sesión, así
-    // que ver y descargar en la misma sesión cuentan como un único acceso.
+    // Mismo registro que la lectura, con `kind='download'`: desde la migración
+    // 021 leer y descargar en la misma sesión son dos filas distinguibles, y
+    // `views` sigue contando sesiones, no filas.
     if (!scope.viaOwner) {
       await requirePlaybackAudit(() => recordDocumentView({
         documentId: id,
@@ -444,6 +456,7 @@ documentsRouter.get('/:id/download', requireSession, async (req, res, next) => {
         platformId: req.session.platformId,
         collectionId: scope.collectionId,
         sessionJti: req.session.jti,
+        kind: 'download',
         context: {
           sub: req.session.sub,
           name: req.session.name,
