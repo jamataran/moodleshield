@@ -2,7 +2,7 @@
 
 Este documento es el mapa: qué se construye, en qué orden y cuándo se sabe que
 cada pieza funciona. El detalle de ejecución de cada tarea está en
-[`docs/tasks/`](tasks/README.md), un fichero por tarea.
+[`docs/tasks/`](https://github.com/jamataran/moodleshield/issues), un fichero por tarea.
 
 ---
 
@@ -43,7 +43,7 @@ Delimitar esto por escrito evita discusiones a mitad del desarrollo.
 ## 3. Decisiones de arquitectura
 
 Las relevantes, con su razón. El detalle largo está en
-[`decisiones.md`](decisiones.md).
+[`decisiones.md`](../decisiones.md).
 
 | Decisión | Alternativa descartada | Motivo |
 |---|---|---|
@@ -96,18 +96,18 @@ distintas, no hay marca forense.
 
 | Fase | Tareas | Entregable | Prueba de éxito |
 |---|---|---|---|
-| **0 · Base** | [T01](tasks/done/T01-bootstrap-proyecto.md), [T02](tasks/done/T02-esquema-base-datos.md) | Proyecto arrancando contra Postgres | `npm run dev` responde `{"status":"ready"}` en `/readyz` |
-| **1 · HTTPS** | [T03](tasks/done/T03-https-y-tunel.md) | Edge público funcionando | La URL pública sirve `/lti/keys` con certificado válido |
-| **2 · LTI** ⭐ | [T04](tasks/done/T04-lti-handshake.md), [T05](tasks/done/T05-alta-en-moodle.md) | Launch validado | Abrir la actividad en Moodle muestra el nombre del alumno |
-| **3 · Vídeo** | [T06](tasks/done/T06-subida-videos.md), [T07](tasks/done/T07-pipeline-transcodificacion.md), [T08](tasks/done/T08-worker-cola.md) | Pipeline A/B + AES | Dos carpetas con segmentos alineados; VLC no reproduce un `.ts` suelto |
-| **4 · Marca** ⭐ | [T09](tasks/done/T09-playlist-por-alumno.md), [T10](tasks/done/T10-entrega-segmentos-firmada.md) | Playlist personalizada | Dos alumnos reciben `index.m3u8` con mezclas A/B distintas |
-| **5 · Player** | [T11](tasks/backlog/T11-player-overlay.md) | Reproductor con overlay | El vídeo se reproduce en el iframe de Moodle con el DNI flotando |
-| **6 · Profesor** | [T12](tasks/done/T12-deep-linking-catalogo.md) | Deep Linking | El profesor inserta un vídeo sin salir del editor del curso |
-| **7 · Forense** | [T13](tasks/done/T13-trazado-forense.md) | `tools/trace.mjs` | Grabas la pantalla como alumno X y el script señala a X |
-| **8 · Producción** | [T14](tasks/done/T14-despliegue-portainer.md), [T15](tasks/done/T15-cicd-gitops.md), [T16](tasks/backlog/T16-observabilidad-hardening.md) | Stack desplegado con GitOps | Un push a `main` actualiza el entorno de test solo |
-| **9 · Base productiva** | [T22](tasks/backlog/T22-fiabilidad-pipeline-aislamiento.md), [T19](tasks/done/T19-consola-admin-instancias-moodle.md) | Pipeline resiliente y alta multiinstancia por UI | Crash del worker se recupera y dos Moodle se administran sin terminal |
-| **10 · Biblioteca** | [T17](tasks/done/T17-carpetas-biblioteca-profesor.md), [T20](tasks/done/T20-materiales-pdf.md) | Biblioteca personal con vídeos y PDF | Un profesor organiza e inserta ambos tipos sin ver material ajeno |
-| **11 · Composición** | [T18](tasks/done/T18-colecciones-una-actividad.md), [T21](tasks/done/T21-versionado-sustitucion-materiales.md) | Colecciones y actualización sin romper enlaces | Una actividad contiene varios materiales y conserva UUID al sustituirlos |
+| **0 · Base** | [T01](https://github.com/jamataran/moodleshield/issues/40), [T02](https://github.com/jamataran/moodleshield/issues/41) | Proyecto arrancando contra Postgres | `npm run dev` responde `{"status":"ready"}` en `/readyz` |
+| **1 · HTTPS** | [T03](https://github.com/jamataran/moodleshield/issues/42) | Edge público funcionando | La URL pública sirve `/lti/keys` con certificado válido |
+| **2 · LTI** ⭐ | [T04](https://github.com/jamataran/moodleshield/issues/43), [T05](https://github.com/jamataran/moodleshield/issues/44) | Launch validado | Abrir la actividad en Moodle muestra el nombre del alumno |
+| **3 · Vídeo** | [T06](https://github.com/jamataran/moodleshield/issues/45), [T07](https://github.com/jamataran/moodleshield/issues/46), [T08](https://github.com/jamataran/moodleshield/issues/47) | Pipeline A/B + AES | Dos carpetas con segmentos alineados; VLC no reproduce un `.ts` suelto |
+| **4 · Marca** ⭐ | [T09](https://github.com/jamataran/moodleshield/issues/48), [T10](https://github.com/jamataran/moodleshield/issues/49) | Playlist personalizada | Dos alumnos reciben `index.m3u8` con mezclas A/B distintas |
+| **5 · Player** | [T11](https://github.com/jamataran/moodleshield/issues/61) | Reproductor con overlay | El vídeo se reproduce en el iframe de Moodle con el DNI flotando |
+| **6 · Profesor** | [T12](https://github.com/jamataran/moodleshield/issues/50) | Deep Linking | El profesor inserta un vídeo sin salir del editor del curso |
+| **7 · Forense** | [T13](https://github.com/jamataran/moodleshield/issues/51) | `tools/trace.mjs` | Grabas la pantalla como alumno X y el script señala a X |
+| **8 · Producción** | [T14](https://github.com/jamataran/moodleshield/issues/52), [T15](https://github.com/jamataran/moodleshield/issues/53), [T16](https://github.com/jamataran/moodleshield/issues/60) | Stack desplegado con GitOps | Un push a `main` actualiza el entorno de test solo |
+| **9 · Base productiva** | [T22](https://github.com/jamataran/moodleshield/issues/62), [T19](https://github.com/jamataran/moodleshield/issues/56) | Pipeline resiliente y alta multiinstancia por UI | Crash del worker se recupera y dos Moodle se administran sin terminal |
+| **10 · Biblioteca** | [T17](https://github.com/jamataran/moodleshield/issues/54), [T20](https://github.com/jamataran/moodleshield/issues/57) | Biblioteca personal con vídeos y PDF | Un profesor organiza e inserta ambos tipos sin ver material ajeno |
+| **11 · Composición** | [T18](https://github.com/jamataran/moodleshield/issues/55), [T21](https://github.com/jamataran/moodleshield/issues/58) | Colecciones y actualización sin romper enlaces | Una actividad contiene varios materiales y conserva UUID al sustituirlos |
 
 ⭐ = fase que valida la viabilidad. Si falla, conviene parar y replantear antes
 de seguir invirtiendo.

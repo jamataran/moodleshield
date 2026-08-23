@@ -5,10 +5,10 @@
 > contiene estados que ya no son actuales (por ejemplo T13). No lo uses para decidir si
 > producción es segura. La referencia vigente es
 > [`revision-seguridad-2026-08-10.md`](revision-seguridad-2026-08-10.md); el índice actual
-> está en [`README.md`](README.md).
+> está en [`README.md`](../README.md).
 
 **Última actualización histórica**: 6 de agosto de 2026
-**Alcance de esta auditoría**: T17, T18, T20, T21 recientemente cerradas. Consulta [`docs/tasks/README.md`](tasks/README.md) para el estado completo.
+**Alcance de esta auditoría**: T17, T18, T20, T21 recientemente cerradas. Consulta [`docs/tasks/README.md`](https://github.com/jamataran/moodleshield/issues) para el estado completo.
 
 ---
 
@@ -260,7 +260,7 @@ sección **Desviaciones respecto a la ficha**; aquí va el resumen:
 | T18 | La bandeja de composición es un panel sobre el listado, no lateral. |
 | T18 | No se avisa en la bandeja de un elemento que deje de estar listo: sólo al guardar, con el 409 `items_unavailable`. |
 | T20 | El fichero de origen de una subida fallida sobrevive hasta que `reconcileStorage()` lo recoge (ventana mínima de una hora). Es deliberado: esa ventana existe para no borrar el fichero de un trabajo que aún no confirmó su fila. |
-| T21 | Las columnas físicas **no** se retiraron de `video`/`pdf_document`; se conservan como proyección de la revisión activa. Motivo en [ADR-011](decisiones.md). |
+| T21 | Las columnas físicas **no** se retiraron de `video`/`pdf_document`; se conservan como proyección de la revisión activa. Motivo en [ADR-011](../decisiones.md). |
 
 **Sin verificar en ninguna de las cuatro**: el recorrido dentro de una instancia
 Moodle real. No había ninguna disponible durante la auditoría. Sí se reprodujo

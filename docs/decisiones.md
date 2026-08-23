@@ -54,7 +54,7 @@ dinámico resueltos.
 
 **Consecuencias.** Somos responsables de la corrección frente al spec. Se
 mitiga concentrando toda la validación en `src/lti/validate.js`, con la lista de
-comprobaciones documentada en [`tasks/T04`](tasks/done/T04-lti-handshake.md), y con
+comprobaciones documentada en [`tasks/T04`](https://github.com/jamataran/moodleshield/issues/43), y con
 tests sobre el aplanado de claims. Si algún día hace falta registro dinámico o
 AGS, hay que implementarlos.
 
@@ -983,7 +983,7 @@ propietario que ya no se consulta. Se decide antes de importar nada.
 ## ADR-027 · Ligar un placement a su actividad es anotar un hecho, no autorizar: lo hace el primer launch, sea quien sea
 
 **Estado**: aceptada · **Fecha**: 2026-08 · **Sustituye a** la condición de bind
-descrita en `auditoria-seguridad-contenido-y-plan.md` (F-05)
+descrita en `historia/auditoria-seguridad-contenido-y-plan.md` (F-05)
 
 **Contexto.** Un `resource_placement` nace en el Deep Linking, cuando la
 actividad de Moodle **todavía no existe**: no hay `resource_link_id` que
@@ -1047,7 +1047,7 @@ dos secretos que aún no existían en su `.env`, `DB_APP_PASSWORD` y
 `DB_WORKER_PASSWORD`. Falló al interpolar, antes de tocar ningún contenedor, así
 que el servicio siguió en pie; pero el margen entre eso y una caída real lo
 puso el azar, no el diseño. La «Transición obligatoria desde `v1.0.5`» de
-[`revision-seguridad-2026-08-10.md`](revision-seguridad-2026-08-10.md) son nueve
+[`historia/revision-seguridad-2026-08-10.md`](historia/revision-seguridad-2026-08-10.md) son nueve
 pasos con copia de seguridad y reinserción por Deep Linking: exactamente el tipo
 de cosa que no puede dispararla un merge.
 

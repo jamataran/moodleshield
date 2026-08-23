@@ -1,0 +1,61 @@
+name: 🛠️ Trabajo
+description: Algo que hay que hacer — funcionalidad, cierre operacional, endurecimiento o deuda.
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Hay una instalación en producción con material real dentro.** Este formulario
+        pregunta por la compatibilidad a propósito: es la comprobación que más veces se ha
+        saltado, y la que más caro ha salido.
+
+  - type: textarea
+    id: problema
+    attributes:
+      label: El problema
+      description: Cuenta el problema antes que la solución. Qué pasa hoy, y a quién le duele.
+      placeholder: |
+        Hoy, cuando un profesor…
+    validations:
+      required: true
+
+  - type: textarea
+    id: propuesta
+    attributes:
+      label: Qué habría que hacer
+      description: La solución que propones, si ya tienes una. Si no la tienes, dilo y deja esto en blanco.
+    validations:
+      required: false
+
+  - type: textarea
+    id: compatibilidad
+    attributes:
+      label: ¿Qué le pasa a lo que ya está puesto y en uso?
+      description: >
+        Obligatorio (Regla 0-bis). Actividades Moodle ya insertadas, enlaces emitidos,
+        material subido, sesiones abiertas, plataformas dadas de alta. Si la respuesta es
+        «hay que reinsertarlo, regenerarlo o reconfigurarlo», eso es una rotura: dilo aquí
+        y propón el camino compatible.
+      placeholder: |
+        Nada: el cambio es aditivo y las actividades existentes siguen abriéndose porque…
+    validations:
+      required: true
+
+  - type: textarea
+    id: aceptacion
+    attributes:
+      label: Criterio de aceptación
+      description: Cómo se sabrá que está hecho. Qué se prueba, con qué salida y en qué entorno.
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: trampas
+    attributes:
+      label: Trampas conocidas
+      description: Lo que sabes que va a morder. Ahorra tardes.
+    validations:
+      required: false

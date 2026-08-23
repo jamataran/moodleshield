@@ -23,8 +23,10 @@ Nunca, sin que el usuario lo pida de forma explícita y para esa ejecución conc
   reorganizar. Es la identidad que Moodle lleva incrustada en cada actividad.
 - Reescribir historia de Git publicada (`push --force`, `rebase` de `main`) ni
   tocar los commits automáticos `deploy(test): …` / `deploy(prod): …`.
-- Sobrescribir un `.env`, `.env.local` o cualquier fichero de secretos: se
-  añaden claves, no se regenera el bloque.
+- Escribir sobre un `.env`, `.env.local` o cualquier fichero de secretos — ni
+  regenerándolo ni añadiendo líneas: en dotenv una clave repetida gana, así que
+  un `>>` también rota un secreto. Se dice qué clave hace falta y con qué valor,
+  y la pone quien opera el entorno.
 
 Cuando una tarea parezca exigir algo de lo anterior: **para y pregunta**,
 proponiendo la alternativa no destructiva (archivar en vez de borrar, columna
@@ -41,6 +43,11 @@ fragmento del comando concreto antes de abrir la sesión. Un valor genérico no
 abre nada, y una asignación en la propia línea tampoco: el hook hereda el entorno
 de quien abrió la sesión. Si salta, no busques rodeo: explícalo y que lo ejecute
 quien opera el entorno.
+
+Lo que corta y —más importante— lo que **no** puede cortar está fijado en
+[`test/guardia-datos.test.js`](test/guardia-datos.test.js). Un guardia que se
+rompe en silencio es peor que no tenerlo, y uno que bloquea el trabajo normal
+acaba desactivado: si tocas el hook, esa prueba va contigo.
 
 ## Regla 0-bis — hay una operación en marcha, y lo ya emitido no se toca
 
@@ -81,21 +88,49 @@ sueltos. Antes de tocar nada:
 | Documento | Qué resuelve |
 |---|---|
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
-| [`docs/revision-seguridad-2026-08-10.md`](docs/revision-seguridad-2026-08-10.md) | Estado de seguridad vigente: rama frente a producción, riesgos y gates de despliegue |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
 | [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…029: por qué cada decisión y cómo revertirla |
+| [`docs/seguridad.md`](docs/seguridad.md) | Estado de seguridad vigente: qué protege cada capa, dónde está cada hallazgo, límites aceptados y secretos permanentes |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
-| [`docs/estado-del-proyecto.md`](docs/estado-del-proyecto.md) | Auditoría histórica de la entrega del 6 de agosto; no usar como estado vigente |
-| [`docs/plan-implementacion.md`](docs/plan-implementacion.md) | Mapa de fases y dependencias |
-| [`docs/tasks/README.md`](docs/tasks/README.md) | Estado real de cada tarea; `done/` sólo con evidencia |
 | [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle (6 pasos) |
 | [`infra/README.md`](infra/README.md) | Entornos local/test/prod |
 | [`.github/README.md`](.github/README.md) | Pipeline: cómo se prueba un cambio y cómo se promociona a producción |
+| [`docs/historia/`](docs/historia/README.md) | Auditorías fechadas y plan original. **No describen el estado actual**; ante contradicción, manda lo de arriba |
+
+**El trabajo pendiente no está en `docs/`: está en los
+[issues](https://github.com/jamataran/moodleshield/issues).** En `docs/` sólo vive
+documentación —lo que el sistema es—, nunca tareas. Las fichas de tarea que había
+en `docs/tasks/` se trasladaron íntegras a issues el 21 de agosto de 2026; las
+cerradas llevan la etiqueta `historia`.
 
 El repositorio es **público**: `README.md` (ES) y `README.en.md` (EN) son la cara
 externa y no llevan estado de tareas — eso vive en `docs/README.md`.
 
 Sólo después de eso, leer código — y sólo el módulo que toques.
+
+## Cómo se trabaja aquí
+
+```
+1. Se abre un issue        ── qué hay que hacer, y por qué
+2. Se implementa           ── rama desde `test`, nunca desde `main`
+3. PR a `test`             ── CI valida; al mergear se despliega TEST solo
+4. El dueño prueba en test ── con Moodle delante
+5. Botón de promoción      ── «[MANUAL] Promocionar a producción» → PROD
+```
+
+Tres cosas que no se negocian, y que ya costaron un incidente cada una:
+
+- **`main` es producción** ([ADR-028](docs/decisiones.md)). A `main` no se mergea
+  a mano **nunca**: sólo la mueve la promoción, que re-etiqueta el digest ya
+  ensayado en test en vez de reconstruir. Un PR de trabajo va **siempre** contra
+  `test`, y el job «Frontera entre entornos» rechaza el que toque `infra/prod/`.
+- **Lo que se implemente tiene que seguir funcionando en test y en producción.**
+  Nadie puede acabar viendo «este material ya no está disponible» por un cambio
+  nuestro. Si la tarea parece exigirlo, se dice **antes** (Regla 0-bis) y se
+  propone el camino compatible.
+- **Un issue se cierra con evidencia**, no con «ya está implementado». Qué se
+  probó, con qué salida y en qué entorno. Si una comprobación queda pendiente, se
+  abre un issue de seguimiento en vez de cerrar a medias.
 
 ## Qué es
 
@@ -170,12 +205,16 @@ la biblioteca por carpetas, con buscador global.
 
 ```
 src/lti/        handshake OIDC, validación de id_token, Deep Linking, JWKS
-src/routes/     HTTP: videos, documents, collections, materials, folders, hls, auth
+src/routes/     HTTP: videos, documents, collections, materials, folders, hls,
+                auth, uploads, progress, health y content-api (migración masiva)
                 imports.js reparte un árbol de carpetas y decide alta o revisión
 src/services/   SQL y transacciones; nada de HTTP aquí
                 sharing.js concentra el filtro «propio o compartido»
                 import-plan.js es puro: qué se importa, dónde cae y con qué título
-src/security/   frame-ancestors y la IP real del cliente tras un CDN
+                playback-grants.js y resource-placements.js son las dos puertas
+                que hacen revocable un visionado y verificable una colocación
+src/security/   frame-ancestors, la IP real del cliente tras un CDN y el
+                origen público cuando la herramienta responde por varios nombres
 src/admin/      consola: alta de instancias e inventario de contenido por aula
 src/media/      storage (rutas), upload (streaming), transcode, pdf, playlist,
                 watermark, signing (secure_link), reconcile
@@ -234,5 +273,7 @@ npm run test:integration:local
   botón que dependa de ellos no hace nada. Usa `<dialog>` y ábrelo siempre por
   el helper que limpia `returnValue`, porque ese valor sobrevive entre aperturas
   y cerrar con Escape no lo toca. Lo vigila `test/ui-iframe.test.js`.
-- Las 8 pruebas de PDF se saltan sin `qpdf`/`pdfinfo`/`gs`: viven en la imagen
-  del worker. Cómo ejecutarlas, en `docs/estado-del-proyecto.md`.
+- Las 8 pruebas de PDF —y una del lector forense— se saltan sin
+  `qpdf`/`pdfinfo`/`gs`/`ffmpeg`: viven en la imagen del worker. El comando de
+  Docker para ejecutarlas de verdad está en
+  [`docs/desarrollo.md`](docs/desarrollo.md#las-9-pruebas-que-se-saltan-solas).
