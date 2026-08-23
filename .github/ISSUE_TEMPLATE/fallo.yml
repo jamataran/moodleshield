@@ -1,0 +1,68 @@
+name: 🐛 Fallo
+description: Algo no funciona como debería.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > ⚠️ **Si es un fallo de seguridad, no lo abras aquí.** Usa un aviso privado o
+        > escribe a jose@mataran.dev — el procedimiento está en
+        > [`SECURITY.md`](https://github.com/jamataran/moodleshield/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Qué esperabas que pasara
+    validations:
+      required: true
+
+  - type: textarea
+    id: ocurrido
+    attributes:
+      label: Qué pasó
+      description: Si un profesor o un alumno vio un mensaje, cópialo literal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducir
+    attributes:
+      label: Cómo reproducirlo
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: entorno
+    attributes:
+      label: Dónde ocurre
+      options:
+        - Producción
+        - Test
+        - Local — modo 1 (Node + Postgres)
+        - Local — modo 2 (stack completo, infra/local)
+        - Local — modo 3 (con un Moodle real)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Versión o commit
+      placeholder: "v1.0.8, o el sha-<commit> que aparece en la barra de la consola"
+    validations:
+      required: false
+
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Navegador, Moodle y logs
+      description: >
+        Navegador y versión si es de interfaz; versión de Moodle si es del launch.
+        **Revisa los logs antes de pegarlos**: contienen IP, identidad de alumno y datos
+        operativos aunque los tokens estén redactados.
+    validations:
+      required: false

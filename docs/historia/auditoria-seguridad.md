@@ -11,7 +11,7 @@
 fuera de Moodle.
 **Alcance**: todo `src/`, la configuración de `infra/`, los workflows de CI/CD,
 las dependencias y el modelo de seguridad documentado en
-[`arquitectura.md`](arquitectura.md) y [`decisiones.md`](decisiones.md).
+[`arquitectura.md`](../arquitectura.md) y [`decisiones.md`](../decisiones.md).
 
 **Método**: lectura completa del código más comprobaciones ejecutadas. Se levantó
 el nginx real contra un árbol de medios simulado y se lanzaron unas 35 peticiones
@@ -79,7 +79,7 @@ La auditoría ha encontrado además **dos problemas de igual o mayor gravedad**:
 
 El sistema no promete impedir la copia; promete hacerla **atribuible**. Esa
 promesa se apoya en dos piezas: el patrón A/B por alumno y la herramienta que lo
-lee. La segunda está marcada como rota en [`tasks/README.md`](tasks/README.md)
+lee. La segunda está marcada como rota en [`tasks/README.md`](https://github.com/jamataran/moodleshield/issues)
 (T13, 🔴 «el algoritmo de lectura actual es incorrecto»). Mientras T13 siga así,
 **la compensación que justifica no tener DRM no está demostrada**. Por eso T13 se
 reabre dentro de este plan.
@@ -146,7 +146,7 @@ publicado en producción. El volumen de medios está montado `:ro` en el proxy.
 
 ## 2. Qué protege hoy el sistema, de verdad
 
-La tabla de [`arquitectura.md`](arquitectura.md), corregida con lo que hace el
+La tabla de [`arquitectura.md`](../arquitectura.md), corregida con lo que hace el
 código:
 
 | Capa | Lo que dice la documentación | Lo que hace hoy |
@@ -1084,7 +1084,7 @@ hoy se pierde.
 ### 4.6 Decisiones que hay que registrar
 
 Estos cambios tocan decisiones ya tomadas, y eso se escribe en
-[`decisiones.md`](decisiones.md), no se entierra en un commit:
+[`decisiones.md`](../decisiones.md), no se entierra en un commit:
 
 - **ADR-016 · El token de sesión no viaja en la URL.** Revisa ADR-003, cuya premisa
   técnica («`hls.js` no puede añadir cabeceras») dejó de ser cierta. Mantiene «nada
@@ -1104,7 +1104,7 @@ Estos cambios tocan decisiones ya tomadas, y eso se escribe en
 
 ## 5. Tareas
 
-Formato y convenciones de [`tasks/README.md`](tasks/README.md). Numeración a partir
+Formato y convenciones de [`tasks/README.md`](https://github.com/jamataran/moodleshield/issues). Numeración a partir
 de T23. Cada una lleva criterios de aceptación porque, según la convención del
 proyecto, **estar implementada en el recorrido feliz no basta para cerrarla**.
 
@@ -1566,7 +1566,7 @@ procesos.
 **Por qué entra en este plan.** El sistema no impide la copia; la hace atribuible. Si
 el trazado no funciona, no hay compensación y todo lo demás protege un contenido que,
 una vez filtrado, sigue sin señalar a nadie. La ficha existe en
-[`tasks/done/T13-trazado-forense.md`](tasks/done/T13-trazado-forense.md),
+[`tasks/done/T13-trazado-forense.md`](https://github.com/jamataran/moodleshield/issues/51),
 marcada 🔴.
 
 **Criterios de aceptación** (además de los que ya tenga la ficha)

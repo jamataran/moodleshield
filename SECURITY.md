@@ -16,31 +16,37 @@ sobre todo con `MEDIA_DELIVERY=app` frente a `signed`).
 proyecto mantenido en tiempo libre; si el plazo se estira, se dirá por qué. Se agradece
 divulgación coordinada, y se te acreditará en el aviso salvo que prefieras lo contrario.
 
-> ⚠️ Antes de adjuntar logs: revísalos y elimina datos personales. La rama de seguridad
-> redacta las queries sensibles, pero `v1.0.5` es anterior a ese arreglo.
+> ⚠️ Antes de adjuntar logs: revísalos y elimina datos personales. Desde `v1.0.6` los
+> logs redactan tokens y queries sensibles, pero siguen conteniendo IP, identidad de
+> alumno y datos operativos.
 
-## Antes de reportar: mira la auditoría
+## Antes de reportar: mira el estado de seguridad
 
-Hay una [auditoría de seguridad del contenido](docs/auditoria-seguridad-contenido-y-plan.md)
-de agosto de 2026 con **16 hallazgos priorizados (F-01…F-16)**, publicada a propósito junto
-al código. Cubre el token de sesión en la URL, los tokens en los logs, el aislamiento del
-worker, la fiabilidad del trazador y el aislamiento entre colocaciones LTI.
+**[`docs/seguridad.md`](docs/seguridad.md) es el documento vigente**: qué protege cada
+capa, dónde está hoy cada uno de los 16 hallazgos de la auditoría interna (F-01…F-16), y
+qué límites hay que aceptar por escrito. Empieza ahí.
+
+Detrás hay dos auditorías internas completas, publicadas a propósito junto al código y
+archivadas en [`docs/historia/`](docs/historia/README.md): la
+[auditoría del contenido](docs/historia/auditoria-seguridad-contenido-y-plan.md)
+(F-01…F-16) y una [segunda más granular](docs/historia/auditoria-seguridad.md)
+(V-01…V-37). Cubren el token de sesión en la URL, los tokens en los logs, el aislamiento
+del worker, la fiabilidad del trazador y el aislamiento entre colocaciones LTI. **No
+describen el estado actual**; para eso está `docs/seguridad.md`.
 
 Si lo que encontraste ya está ahí, **sigue siendo útil reportarlo** —sobre todo con un PoC
 o una consecuencia peor que la documentada—, pero dilo en el reporte para que podamos
 priorizarlo bien en vez de triarlo dos veces.
 
-La [revisión del 10 de agosto de 2026](docs/revision-seguridad-2026-08-10.md) distingue el
-estado de la rama del estado realmente declarado en producción y recoge los hallazgos
-posteriores.
-
 ## Versiones soportadas
 
-El proyecto está en `0.x`. **Ahora mismo no hay una versión publicada que se considere una
-base segura para una producción expuesta a Internet**: `v1.0.5` es anterior a todo el
-endurecimiento. `feature/seguridad-auditoria` es la candidata revisada y autorizada para
-pruebas controladas, no una versión que conste desplegada. Se aceptan reportes sobre ambas;
-la candidata sólo pasa a soportada en producción después de superar los gates de liberación.
+Se da soporte a la **última versión publicada**, hoy `v1.0.8`. Todo el endurecimiento
+descrito en las auditorías está desplegado desde `v1.0.6`; **`v1.0.5` y anteriores no
+tienen soporte de seguridad** y no deberían estar expuestas a Internet.
+
+Sigue sin haber una certificación de «toda la seguridad», y no puede haberla. La
+afirmación acotada que sí se sostiene está en la primera sección de
+[`docs/seguridad.md`](docs/seguridad.md).
 
 > **F-01, en concreto.** El perfil `infra/local` usa secretos de desarrollo deterministas
 > que ahora son públicos. Es deliberado para desarrollo en `localhost`, y **no** es una
@@ -95,8 +101,8 @@ Si crees que alguna de estas fronteras está mal trazada, esa conversación sí 
   Guárdalo como lo que es: la clave que sostiene la atribución.
 - **Los secretos nunca van en Git.** Los `.env` versionados sólo contienen ajustes no
   secretos, y el CI comprueba en cada PR que sigue siendo así.
-- **En producción, `MEDIA_DELIVERY=signed`.** La rama endurecida falla al arrancar con
-  `app`; no expongas Node ni dependas de esa protección en `v1.0.5`.
+- **En producción, `MEDIA_DELIVERY=signed`.** La app falla al arrancar con `app` y ni
+  siquiera monta la ruta de medios; nginx firma y valida cada segmento.
 - **Separa los tres roles PostgreSQL.** `DB_USER` es sólo migrador/propietario;
   `DB_APP_USER` sirve peticiones sin DDL y `DB_WORKER_USER` sólo alcanza cola/material.
   No reutilices contraseñas entre ellos. La app aborta si el bootstrap no eliminó del

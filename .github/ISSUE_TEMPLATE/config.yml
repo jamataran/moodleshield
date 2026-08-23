@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 🔒 Vulnerabilidad de seguridad
+    url: https://github.com/jamataran/moodleshield/security/advisories/new
+    about: NO abras un issue público. Usa un aviso privado, o escribe a jose@mataran.dev. El procedimiento está en SECURITY.md.
+  - name: 📚 Documentación
+    url: https://github.com/jamataran/moodleshield/blob/main/docs/README.md
+    about: Índice, arquitectura, decisiones (ADR) y estado de seguridad. Léelo antes de abrir un issue; suele responder la pregunta.

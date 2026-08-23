@@ -12,7 +12,7 @@ Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de t
 [![Licencia: AGPL v3](https://img.shields.io/badge/licencia-AGPL--3.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A5%2022.11-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![LTI 1.3](https://img.shields.io/badge/LTI-1.3%20%2B%20Deep%20Linking-orange)](docs/moodle-setup.md)
-[![Tests](https://img.shields.io/badge/tests-426-success)](docs/desarrollo.md#tests)
+[![Tests](https://img.shields.io/badge/tests-542-success)](docs/desarrollo.md#tests)
 [![Sin dependencias de frontend](https://img.shields.io/badge/frontend-0%20frameworks-lightgrey)](src/ui)
 [![Autohospedado](https://img.shields.io/badge/self--hosted-Docker%20Compose-2496ED?logo=docker&logoColor=white)](infra/README.md)
 
@@ -21,29 +21,26 @@ Sin DRM propietario, sin licencias por reproducción, sin sacar tus vídeos de t
 </div>
 
 > [!WARNING]
-> **Versión 0.x — léelo antes de desplegarlo con alumnos reales.** El pipeline de vídeo, la
-> integración LTI y la biblioteca funcionan y están probados. Una
-> [auditoría de seguridad interna](docs/auditoria-seguridad-contenido-y-plan.md) de agosto
-> de 2026 encontró 16 hallazgos, y dos iteraciones de endurecimiento cerraron la mayoría
-> ([detalle hallazgo a hallazgo](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026)).
-> Lo que **sigue afectando a lo que promete este README**:
+> **Léelo antes de desplegarlo con alumnos reales.** El pipeline de vídeo, la integración
+> LTI y la biblioteca funcionan, están probados y hay una instalación **en producción**
+> sirviendo material real. Dos auditorías de seguridad internas encontraron 16 hallazgos
+> priorizados, y el endurecimiento que los cierra está desplegado desde `v1.0.6`
+> ([estado hallazgo a hallazgo](docs/seguridad.md)). Lo que **sigue afectando a lo que
+> promete este README**:
 >
-> - **`feature/seguridad-auditoria` es la candidata de seguridad para test.** Sus pruebas
->   unitarias, de integración, herramientas nativas, stack real, lint, auditoría de
->   dependencias y configuración pasan. Debe construirse desde el commit exacto y superar
->   el CI de imágenes y el recorrido Moodle/navegadores antes de promoverse. Véase la
->   [revisión de estado actual](docs/revision-seguridad-2026-08-10.md).
 > - **La atribución todavía no se puede prometer.** El lector del patrón A/B estaba roto y
 >   ya está corregido y probado, pero la marca vive sólo en dos esquinas del fotograma:
 >   **recortar los bordes la elimina**, y dos alumnos que comparen copias pueden fabricar
 >   una tercera que no señala a nadie (F-07). Sirve para disuadir e investigar; **no para
 >   sostener un expediente disciplinario**.
-> - **El perfil de desarrollo (`infra/local`) lleva secretos conocidos** y ahora son
->   públicos (F-01). Vale para desarrollo en `localhost`; **nunca** lo expongas a Internet.
+> - **El PDF no lleva marca forense.** El sello de la descarga y el fondo del visor son
+>   disuasión visible; una filtración de PDF **no es atribuible** (F-08).
+> - **El perfil de desarrollo (`infra/local`) lleva secretos conocidos** y son públicos
+>   (F-01). Vale para desarrollo en `localhost`; **nunca** lo expongas a Internet.
 >
-> El estado real, hallazgo a hallazgo, está en [`docs/README.md`](docs/README.md#estado-del-proyecto).
-> Se documenta aquí a propósito: un proyecto de seguridad que esconde su propia auditoría
-> no merece confianza.
+> El estado completo está en [`docs/seguridad.md`](docs/seguridad.md), y las auditorías
+> íntegras en [`docs/historia/`](docs/historia/README.md). Se publican a propósito: un
+> proyecto de seguridad que esconde su propia auditoría no merece confianza.
 
 ---
 
@@ -96,7 +93,7 @@ Origen más probable: Ana García Pérez (12345678Z) — 100.0% de coincidencia.
 > las playlists divergentes está construido y probado, y el **lector** que interpreta el
 > patrón de vuelta —que hasta agosto de 2026 clasificaba mal y podía señalar a un
 > inocente— está corregido y cubierto por pruebas, incluida una de extremo a extremo con
-> ffmpeg real ([T13](docs/tasks/done/T13-trazado-forense.md)).
+> ffmpeg real ([T13](https://github.com/jamataran/moodleshield/issues/51)).
 >
 > Lo que **no** ha cambiado es dónde vive la marca: dos recuadros en las esquinas
 > inferiores. Recortar los bordes sigue eliminándola, la colusión sigue funcionando y un
@@ -130,7 +127,7 @@ Origen más probable: Ana García Pérez (12345678Z) — 100.0% de coincidencia.
 | ♻️ **Revisiones** | Sustituye un fichero sin cambiar el UUID que Moodle lleva incrustado; rollback incluido |
 | 🏢 **Multiinstancia** | Varios Moodle y varios profesores aislados por `platform_id` + `owner_sub` |
 | 🪶 **Ligero** | El servicio web consume ~45 MB de RSS. Cabe en un NAS |
-| 🔍 **Trazado forense** | CLI que compara el patrón contra quien vio el vídeo y **se niega a concluir** si la muestra no da. El lector está corregido y probado; la marca sigue viviendo en las esquinas ([T13](docs/tasks/done/T13-trazado-forense.md)) |
+| 🔍 **Trazado forense** | CLI que compara el patrón contra quien vio el vídeo y **se niega a concluir** si la muestra no da. El lector está corregido y probado; la marca sigue viviendo en las esquinas ([T13](https://github.com/jamataran/moodleshield/issues/51)) |
 
 ## Qué protege y qué no
 
@@ -311,11 +308,13 @@ capa por capa— en [`docs/arquitectura.md`](docs/arquitectura.md).
 |---|---|
 | 🧭 [`docs/README.md`](docs/README.md) | **Índice de la documentación, estado del proyecto y hoja de ruta** |
 | 🏗️ [`docs/arquitectura.md`](docs/arquitectura.md) | Flujos, modelo de datos, endpoints, modelo de seguridad |
-| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…024: por qué cada decisión y cómo revertirla |
+| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…029: por qué cada decisión y cómo revertirla |
+| 🔒 [`docs/seguridad.md`](docs/seguridad.md) | **Estado de seguridad vigente**: capas, hallazgos, límites aceptados y secretos permanentes |
 | 💻 [`docs/desarrollo.md`](docs/desarrollo.md) | **Guía para desarrolladores**: entorno, tests, convenciones, depuración |
 | 🎓 [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle, en seis pasos, con diagnóstico |
 | 🔐 [`docs/https-tunel.md`](docs/https-tunel.md) | HTTPS público y túneles para desarrollo local |
 | 🚀 [`infra/README.md`](infra/README.md) | Los tres entornos (local, test, prod) y el flujo de promoción |
+| 📜 [`docs/historia/`](docs/historia/README.md) | Auditorías fechadas y plan original. **No describen el estado actual** |
 
 ---
 
@@ -389,34 +388,28 @@ atribuible**, y este proyecto no va a decir lo contrario.
 <details>
 <summary><b>¿Está listo para producción?</b></summary>
 
-**La rama `feature/seguridad-auditoria` sí está autorizada como candidata para test.** El
-núcleo —LTI, pipeline A/B, playlists, entrega firmada, biblioteca, PDF y revisiones— y los
-controles técnicos de las auditorías están implementados y verificados.
+**Sí, y hay una instalación en producción sirviendo material real.** El núcleo —LTI,
+pipeline A/B, playlists, entrega firmada, biblioteca, PDF y revisiones— y los controles
+técnicos de las dos auditorías están implementados, verificados y desplegados.
 
-En esa rama, el endurecimiento que señalaba la auditoría está aplicado: el token de sesión
-ya no viaja en la URL (F-02), los logs no llevan tokens (F-03), la entrega firmada es obligatoria en
-producción (F-04), `pdfjs` está al día (F-09), la CSP ya no necesita `unsafe-inline`
+El endurecimiento que señalaban las auditorías está aplicado desde `v1.0.6`: el token de
+sesión ya no viaja en la URL (F-02), los logs no llevan tokens (F-03), la entrega firmada
+es obligatoria en producción (F-04), cada colocación LTI se liga server-side a su
+actividad (F-05), `pdfjs` está al día (F-09), la CSP ya no necesita `unsafe-inline`
 (F-13), purgar una revisión ya no destruye la evidencia forense (F-14), las sesiones se
-pueden revocar, hay cuotas y rate limits, y el worker —que es quien abre los ficheros que
-suben los profesores— corre aislado, sin salida a Internet y con un rol de BD mínimo.
+revocan y se detecta la compartición, hay cuotas y rate limits, y el worker —que es quien
+abre los ficheros que suben los profesores— corre aislado, sin salida a Internet, con
+rootfs de sólo lectura y un rol de base de datos mínimo.
 
-Debe construirse en imágenes inmutables, superar el CI y validarse con Moodle/navegadores
-antes de promoverse. No está
-cerrada la **promesa forense**
-—el lector funciona, pero recortar los bordes elimina la marca (F-07)— y el último paso
-del sistema: el lector funciona, pero las limitaciones de recorte y colusión permanecen.
-El **aislamiento entre profesores** (F-05) sí se exige por defecto en producción; al
-migrar hay que reinsertar todas las actividades anteriores a la migración `014` para que
-reciban un placement server-side; una firma antigua por sí sola ya no basta. El estado
-hallazgo a hallazgo está en
-[`docs/README.md`](docs/README.md#auditoría-de-seguridad--7-de-agosto-de-2026).
-
-La separación exacta entre producción, rama y pendientes está en la
-[`revisión de seguridad del 10 de agosto`](docs/revision-seguridad-2026-08-10.md).
+Lo que **no** está cerrado es la **promesa forense**: el lector funciona, pero recortar
+los bordes elimina la marca y la colusión sigue funcionando (F-07). Y el PDF no ofrece
+atribución (F-08).
 
 Traducción práctica: úsalo para poner orden y disuadir, no para sostener un expediente
 disciplinario contra un alumno. Y despliégalo detrás del reverse proxy con
-`MEDIA_DELIVERY=signed`, nunca con el perfil de `infra/local`.
+`MEDIA_DELIVERY=signed`, nunca con el perfil de `infra/local`. El estado hallazgo a
+hallazgo, y los límites que hay que aceptar por escrito, están en
+[`docs/seguridad.md`](docs/seguridad.md).
 </details>
 
 <details>
@@ -433,16 +426,20 @@ que publicar tus cambios.
 
 Se agradece cualquier ayuda, y hay trabajo claramente delimitado esperando.
 
-1. **Qué falta y qué está roto**: [`docs/README.md`](docs/README.md#hoja-de-ruta) — cada
-   tarea tiene su ficha con alcance, criterios de aceptación y trampas conocidas.
+1. **Qué falta y qué está roto**: los
+   [issues abiertos](https://github.com/jamataran/moodleshield/issues) — cada uno lleva
+   contexto, criterio de aceptación y trampas conocidas. El mapa por prioridad está en la
+   [hoja de ruta](docs/README.md#hoja-de-ruta).
 2. **Cómo montar el entorno y qué convenciones seguir**: [`docs/desarrollo.md`](docs/desarrollo.md).
 3. **Cómo abrir un PR**: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Buenos primeros temas: la matriz de navegadores del player, probar el conjunto contra un
-Moodle real, y —el de más valor— hacer la marca resistente al recorte y a la colusión
+Buenos primeros temas: la
+[matriz de navegadores del player](https://github.com/jamataran/moodleshield/issues/61),
+probar el conjunto contra un Moodle real, y —el de más valor— hacer la marca
+[resistente al recorte y a la colusión](https://github.com/jamataran/moodleshield/issues/70)
 (marcas repartidas por el fotograma, códigos de Tardos).
 
-¿Encontraste un fallo de seguridad? No abras una issue pública: [`SECURITY.md`](SECURITY.md).
+¿Encontraste un fallo de seguridad? No abras un issue público: [`SECURITY.md`](SECURITY.md).
 
 ## Autor y contacto
 
