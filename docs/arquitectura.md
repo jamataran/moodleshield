@@ -269,6 +269,9 @@ lti_context              nombre legible de cada curso (claim context.title),
                          aprendido en cada launch sin machacar con NULL
 activity_open_event      apertura de actividad por alumno y sesión (telemetría
                          docente fail-open, #75; el forense sigue en view_event)
+viewing_stats            cuánto vídeo vio cada alumno: tramos fusionados,
+                         segundos distintos, % y completado (sin FK, ADR-030)
+reading_stats            qué páginas distintas leyó cada alumno de un PDF
 schema_migration         control de migraciones
 ```
 
@@ -346,6 +349,13 @@ Detalle y motivos en las fichas de cierre archivadas como issues:
 | DELETE | `/collections/:id` | catálogo | Archivar (no borra) |
 | GET | `/collections/:id/manifest` | sesión con alcance | Índice para el visor del alumno |
 | PUT | `/progress/:kind/:id` | sesión con alcance | Marcador de reanudación del alumno (la lectura viaja en el bootstrap del launch, ADR-021) |
+| POST | `/telemetry/video/:id` | sesión con alcance | Beat de visionado: tramos vistos y tiempo (**fail-open**: cualquier fallo responde 204, ADR-030) |
+| POST | `/telemetry/pdf/:id` | sesión con alcance | Beat de lectura: páginas distintas y tiempo, con el mismo contrato |
+| GET | `/reports/course` | catálogo + curso | **Informe de seguimiento** del curso de la sesión: actividades, alumnos y avance |
+| GET | `/reports/course/students/:sub` | catálogo + curso | Detalle de un alumno de ESE curso (404 si no aparece en él) |
+| GET | `/api/v1/reports/courses` | `REPORTS_API_TOKEN` | Cursos conocidos de una plataforma |
+| GET | `/api/v1/reports/courses/:contextId` | `REPORTS_API_TOKEN` | El mismo informe que `/reports/course`, para la herramienta externa |
+| GET | `/api/v1/reports/students` | `REPORTS_API_TOKEN` | Informe transversal de un alumno por `identity` (username de Moodle) o `sub` |
 | GET | `/hls/:id/index.m3u8` | sesión con alcance | **Playlist personalizada** |
 | GET | `/hls/:id/key` | token de clave | Clave AES-128 de esa revisión |
 | GET | `/media/videos/:id/:rev/:variant/:seg` | URL firmada | Segmento (en producción, nginx) |
@@ -470,6 +480,44 @@ El `jti` del token de sesión desduplica (índice único parcial por recurso +
 guarda además la **revisión exacta** que se sirvió, que es contra la que el
 trazado tiene que comparar.
 
+En PDF ese índice incluye desde la migración 021 el **tipo de acceso**: leer y
+descargar en la misma sesión son dos filas distinguibles. El recuento que se
+enseña sigue siendo de **sesiones** (`count(DISTINCT session_jti)`), no de
+filas, para que separarlos no inflara un número que ya existía.
+
+## Qué ve el profesor del avance (y qué no)
+
+Moodle sólo ve el launch de una actividad LTI, y con colecciones —N materiales
+en UNA actividad— su «informe completo» dejó de poder decir qué abrió cada
+alumno. `GET /reports/course` lo responde, y lo hace **desde el curso**: parte
+de los placements vivos del contexto de la sesión (ADR-023), así que lo ve
+cualquier profesor de esa aula aunque el material sea de otro, y revocar un
+placement lo saca del informe. El `context_id` sale del `id_token` firmado por
+Moodle; no se acepta por query ni por body.
+
+Dos registros distintos alimentan ese informe, y conviene no confundirlos:
+
+| | Registro forense | Telemetría docente |
+|---|---|---|
+| Tablas | `view_event`, `document_view_event` | `activity_open_event`, `viewing_stats`, `reading_stats` |
+| Quién lo escribe | El servidor, al servir los bytes | El visor del alumno, por heartbeat |
+| Si falla | **503**: no se entrega (`requirePlaybackAudit`) | Un `warn` y 204: el visor ni se entera |
+| Para qué sirve | Atribuir una filtración | Orientar al profesor |
+| ¿Falseable por el alumno? | No | Sí, la suya, dentro de los topes por beat |
+
+Los segmentos los sirve nginx y el PDF viaja entero al navegador: el tiempo
+visto y las páginas leídas **sólo existen en el cliente**, y por eso son
+orientativos. Cada beat manda la lista completa de tramos ya fusionados, no un
+incremento, de modo que repetirlo no infla el avance de nadie; `unique_seconds`
+—el que decide el %— se deriva de esos tramos, mientras `watched_seconds` suma
+los deltas y cuenta el revisionado.
+
+Lo anterior al despliegue de esta telemetría se pinta **«sin datos»**, nunca
+cero: el informe expone `telemetry.{opensSince, videoStatsSince, pdfStatsSince}`
+justo para que la interfaz pueda distinguir «no lo vio» de «no lo medíamos».
+Ni `ip` ni `user_agent` salen de este camino: son del trazado, no del
+seguimiento, y ninguna consulta de `services/course-report.js` los selecciona.
+
 ## Qué ve el alumno de su propia sesión
 
 El visor gasta **una sola fila** en cromo (ADR-022): «Atrás», un chip ámbar
@@ -487,9 +535,11 @@ se puede cotejar con lo registrado. Sale del bootstrap del launch
 
 Sólo se enseña lo que existe. `identity` puede llegar vacío —LTI 1.3 no tiene
 claim de documento de identidad, sólo el parámetro personalizado de
-[`moodle-setup.md`](moodle-setup.md)— y entonces se dice; el correo, el título
-del curso y el historial de accesos previos no están ni en la sesión ni en
-ningún endpoint, y por eso no aparecen.
+[`moodle-setup.md`](moodle-setup.md)— y entonces se dice; el correo y el
+historial de accesos previos no están ni en la sesión del alumno ni en ningún
+endpoint que él pueda pedir, y por eso no aparecen. El título del curso sí se
+guarda desde la migración 018, pero para el informe del profesor: no viaja al
+visor.
 
 ## Modelo de seguridad
 

@@ -116,6 +116,16 @@ aceptarlos explícitamente.
 - **Los datos de acceso, IP e identidad son datos personales.** El operador debe definir
   base jurídica, retención, acceso y procedimiento de investigación
   ([#65](https://github.com/jamataran/moodleshield/issues/65)).
+- **El seguimiento docente amplía ese tratamiento, y hay que contarlo en el mismo sitio**
+  (ADR-030). `activity_open_event`, `viewing_stats` y `reading_stats` añaden un dato que
+  antes no se guardaba —el **comportamiento** de visionado y lectura de cada alumno— y el
+  informe del curso lo pone delante de cualquier profesor de esa aula, no sólo del autor
+  del material. `REPORTS_API_TOKEN` añade además un **destinatario nuevo**: la herramienta
+  externa de seguimiento del centro. Las tres tablas siguen sin política de retención
+  definida, como el resto de #65. Lo que sí está cerrado por código: `ip` y `user_agent` no
+  salen por ese camino —ninguna consulta de `services/course-report.js` los selecciona, y
+  una prueba lo vigila—, y el token de informes **sólo lee** y no vale para la API de
+  contenido.
 - **Una imagen endurecida reduce el riesgo; no vuelve infalibles** a ffmpeg, Ghostscript,
   Node, nginx, PostgreSQL ni Moodle. Hay que mantener parches y repetir el gate en cada
   release ([#64](https://github.com/jamataran/moodleshield/issues/64)).

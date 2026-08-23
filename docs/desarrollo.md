@@ -352,6 +352,7 @@ Las que más se tocan durante el desarrollo:
 | `SEGMENT_SECONDS` | `4` | Duración de segmento; también la resolución del patrón |
 | `TRANSCODE_CONCURRENCY` | `1` | Debe permanecer en `1`: el arranque rechaza otro valor |
 | `CONTENT_API_TOKEN` | — | Activa la API de migración; vacío la mantiene en 404 |
+| `REPORTS_API_TOKEN` | — | Activa la API de informes (sólo lectura, [ADR-030](decisiones.md)); debe ser distinto del anterior |
 | `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
 | `LOG_LEVEL` | `info` | `debug` añade detalle operativo; las rutas sensibles se redactan en la rama endurecida |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas |
