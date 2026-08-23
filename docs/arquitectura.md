@@ -265,6 +265,10 @@ view_event               quién cargó qué vídeo, de qué revisión
 document_view_event      lo mismo para documentos
 learner_progress         marcador «reanudar donde lo dejó» por alumno y recurso
                          (sin FK a propósito: dato consultivo, ADR-021)
+lti_context              nombre legible de cada curso (claim context.title),
+                         aprendido en cada launch sin machacar con NULL
+activity_open_event      apertura de actividad por alumno y sesión (telemetría
+                         docente fail-open, #75; el forense sigue en view_event)
 schema_migration         control de migraciones
 ```
 

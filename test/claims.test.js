@@ -49,7 +49,7 @@ test('toLaunchContext aplana el id_token a la forma que usa la app', () => {
     [CLAIM.deploymentId]: 'dep-1',
     [CLAIM.messageType]: 'LtiResourceLinkRequest',
     [CLAIM.roles]: [LEARNER],
-    [CLAIM.context]: { id: 'curso-9', title: 'Cálculo I' },
+    [CLAIM.context]: { id: 'curso-9', title: 'Cálculo I', label: 'CAL1' },
     [CLAIM.resourceLink]: { id: 'rl-3' },
     [CLAIM.custom]: { videoId: 'abc', username: 'jgarcia' },
     [CLAIM.lis]: { person_sourcedid: '99999999R' },
@@ -64,6 +64,7 @@ test('toLaunchContext aplana el id_token a la forma que usa la app', () => {
   assert.equal(ctx.isInstructor, false)
   assert.equal(ctx.contextId, 'curso-9')
   assert.equal(ctx.contextTitle, 'Cálculo I')
+  assert.equal(ctx.contextLabel, 'CAL1')
   assert.equal(ctx.resourceLinkId, 'rl-3')
   assert.equal(ctx.custom.videoId, 'abc')
   assert.equal(ctx.custom.username, 'jgarcia')

@@ -21,6 +21,7 @@ const WRITE_TABLES = [
   'pdf_job'
 ]
 const APP_TABLES = [
+  'activity_open_event',
   'admin_audit_event',
   'admin_login_attempt',
   'admin_session',
@@ -31,6 +32,7 @@ const APP_TABLES = [
   'deep_link_response_use',
   'document_view_event',
   'learner_progress',
+  'lti_context',
   'lti_oidc_state',
   'lti_platform',
   'pdf_document',
