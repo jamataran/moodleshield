@@ -16,6 +16,10 @@ validaciones, las mismas tablas de trabajo y el mismo worker que la interfaz.
 > herramienta lo sirve en `GET /api/v1/openapi.json`, recortado a las APIs que ese
 > despliegue tiene activas, y lo enseña con un probador en `GET /api/v1/docs`.
 > Vive en `src/` y no aquí porque `.dockerignore` excluye `docs/` de la imagen.
+>
+> Para probar a mano hay una colección Bruno en
+> [`scripts/bruno/`](../scripts/bruno/README.md), con aserciones en cada petición
+> y los tokens como variables secretas —fuera del repositorio—.
 
 > [!WARNING]
 > `CONTENT_API_TOKEN` es una **credencial administrativa potente**: quien la tenga puede

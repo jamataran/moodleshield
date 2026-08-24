@@ -1,0 +1,46 @@
+meta {
+  name: Estado del material
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/v1/materials/{{materialKind}}/{{materialId}}
+  body: none
+  auth: bearer
+}
+
+params:path {
+  materialKind: {{materialKind}}
+  materialId: {{materialId}}
+}
+
+auth:bearer {
+  token: {{contentToken}}
+}
+
+headers {
+  X-MoodleShield-Platform-Id: {{platformId}}
+  X-MoodleShield-Owner-Sub: {{ownerSub}}
+}
+
+tests {
+  test("responde 200", function () {
+    expect(res.getStatus()).to.equal(200)
+  })
+}
+
+docs {
+  Estado del material, su última revisión y el trabajo que la procesa. Es lo que
+  se consulta en bucle para observar una importación.
+
+  `materialKind` es `video` o `pdf`.
+
+  **En una sustitución hay que mirar `latestRevisionPublished`, no
+  `published`.** El material puede seguir `published: true` mientras la revisión
+  **anterior** protege a las actividades existentes: hasta que la nueva no se
+  activa, el alumno sigue viendo la vieja, que es justo lo que se quiere.
+
+  Estados terminales esperables de la última revisión: `ready`, `failed` o
+  `cancelled`.
+}

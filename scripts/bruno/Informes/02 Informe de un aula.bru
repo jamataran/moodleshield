@@ -1,0 +1,76 @@
+meta {
+  name: Informe de un aula
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/courses/{{contextId}}?platformId={{platformId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  platformId: {{platformId}}
+}
+
+params:path {
+  contextId: {{contextId}}
+}
+
+auth:bearer {
+  token: {{reportsToken}}
+}
+
+tests {
+  test("responde 200", function () {
+    expect(res.getStatus()).to.equal(200)
+  })
+
+  test("trae la matriz y el árbol", function () {
+    const body = res.getBody()
+    expect(body.activities).to.be.an("array")
+    expect(body.materials).to.be.an("array")
+    expect(body.students).to.be.an("array")
+    expect(body.tree).to.be.an("array")
+  })
+
+  test("el árbol del aula es estructura, sin avance en las hojas", function () {
+    // El avance por alumno vive en students[].materials, indexado por materialId.
+    const hojas = []
+    const recorre = (nodos) => nodos.forEach((n) => {
+      if (n.type === "material") hojas.push(n)
+      recorre(n.children ?? n.items ?? [])
+    })
+    recorre(res.getBody().tree)
+    hojas.forEach((hoja) => expect(hoja).to.not.have.property("progress"))
+  })
+
+  test("ni ip ni user_agent salen por aquí", function () {
+    // Son del registro forense, no del seguimiento docente (ADR-030).
+    expect(JSON.stringify(res.getBody())).to.not.match(/user_?[Aa]gent|"ip"/)
+  })
+}
+
+docs {
+  El informe completo de un aula: **exactamente el mismo JSON** que ve el
+  profesor dentro de la herramienta.
+
+  Topes: 500 alumnos y 200 materiales.
+
+  Un `contextId` desconocido responde **200 con un informe vacío**, no 404: para
+  un integrador «esa aula todavía no tiene nada» es una respuesta legítima. El
+  404 sólo aparece si el identificador pasa de 512 caracteres.
+
+  Tres campos que conviene mirar antes de escribir código contra esto:
+
+  - `telemetry.{opensSince, videoStatsSince, pdfStatsSince}` — desde cuándo hay
+    dato de cada tipo. `null` en un avance significa **no medido**, que no es lo
+    mismo que cero: pintar «0 %» sobre un material que un alumno vio antes de
+    este despliegue sería una acusación falsa.
+  - `activities[].historical` — tiene accesos pero ningún despliegue vivo lo
+    explica: actividades anteriores a la migración 014, o material retirado del
+    aula. Cuenta igual, sin reinsertar nada.
+  - `tree` — el mismo material con la forma de la biblioteca del profesor. Aquí
+    es **sólo estructura**; el avance está en `students[]`.
+}

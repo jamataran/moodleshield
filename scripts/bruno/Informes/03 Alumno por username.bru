@@ -1,0 +1,84 @@
+meta {
+  name: Alumno por username
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/students?platformId={{platformId}}&identity={{identity}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  platformId: {{platformId}}
+  identity: {{identity}}
+  ~sub:
+  ~contextId: {{contextId}}
+}
+
+auth:bearer {
+  token: {{reportsToken}}
+}
+
+tests {
+  test("responde 200", function () {
+    expect(res.getStatus()).to.equal(200)
+  })
+
+  test("sin coincidencia devuelve lista vacía, nunca 404", function () {
+    expect(res.getBody().students).to.be.an("array")
+  })
+
+  test("si hay alumno, su árbol lleva el avance en cada hoja", function () {
+    const alumno = res.getBody().students[0]
+    if (!alumno) return
+    expect(alumno.tree).to.be.an("array")
+    const hojas = []
+    const recorre = (nodos) => nodos.forEach((n) => {
+      if (n.type === "material") hojas.push(n)
+      recorre(n.children ?? n.items ?? [])
+    })
+    recorre(alumno.tree)
+    hojas.forEach((hoja) => expect(hoja).to.have.property("progress"))
+  })
+
+  test("ni ip ni user_agent salen por aquí", function () {
+    expect(JSON.stringify(res.getBody())).to.not.match(/user_?[Aa]gent|"ip"/)
+  })
+}
+
+docs {
+  **Ésta es la pregunta que responde el informe agregado**: «¿por dónde va este
+  alumno?», buscándolo por su **nombre de usuario de Moodle**.
+
+  Devuelve una entrada por cada aula donde tenga rastro (tope 20). Cada una trae
+  la matriz plana (`materials`, `activities`, `progress`, `timeline`) y, además,
+  un **`tree`** con la forma de la biblioteca del profesor —carpeta > carpeta >
+  … > colección > materiales—, con el avance de ese alumno en cada hoja y la
+  suma en cada nodo:
+
+  ```
+  folder  Álgebra                    2/2 abiertos · 3 sesiones · 42 %
+  └ folder  Tema 2                   2/2 abiertos · 3 sesiones · 42 %
+    └ collection  Prácticas del Tema 2
+      ├ video  Derivadas: introducción   6:12 de 10:00 · 62 % · 2 sesiones
+      └ pdf    Boletín de ejercicios     5/24 pág. · 1 descarga
+  ```
+
+  Se puede buscar por `identity` (username, sin distinguir mayúsculas) **o** por
+  `sub` (el identificador LTI). Uno de los dos es obligatorio; si no mandas
+  ninguno son **400**. `contextId` es opcional y acota a un aula: los dos vienen
+  desactivados con `~` — actívalos en la pestaña Query si los necesitas.
+
+  Sin coincidencia responde `{"students": []}`, **nunca 404**: para la
+  herramienta externa «todavía no ha abierto nada» es una respuesta legítima.
+
+  Al consumirlo, tres cosas:
+
+  - **`percent: null` significa «no medido», no cero.**
+  - **El orden de `items` de una colección es el que compuso el profesor**, no
+    alfabético.
+  - `summary.percent` de una carpeta es la media de los materiales **con** dato:
+    uno sin telemetría no arrastra la media a cero.
+}

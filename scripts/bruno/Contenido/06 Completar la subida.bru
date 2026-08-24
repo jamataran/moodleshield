@@ -1,0 +1,43 @@
+meta {
+  name: Completar la subida
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/uploads/{{uploadId}}/complete
+  body: none
+  auth: bearer
+}
+
+params:path {
+  uploadId: {{uploadId}}
+}
+
+auth:bearer {
+  token: {{contentToken}}
+}
+
+headers {
+  X-MoodleShield-Platform-Id: {{platformId}}
+  X-MoodleShield-Owner-Sub: {{ownerSub}}
+}
+
+tests {
+  test("responde 202 · encolado", function () {
+    expect(res.getStatus()).to.equal(202)
+  })
+}
+
+docs {
+  Reintegra el fichero y crea, **en una sola transacción**, el material, su
+  revisión y el trabajo pendiente. Responde `202` con `status: "queued"`.
+
+  **409 `revision_in_progress`** significa que ese material ya tiene una
+  candidata en cola: sólo se admite una a la vez. Espera a que termine o
+  descarta la candidata.
+
+  > **Si esto falla, cancela la sesión** (petición 07). Un `complete` fallido
+  > **no** libera la reserva, y unas pocas sesiones abandonadas agotan
+  > `MAX_ACTIVE_UPLOADS_PER_OWNER` hasta que caducan solas.
+}

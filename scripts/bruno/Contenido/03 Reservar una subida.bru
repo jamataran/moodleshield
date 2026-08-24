@@ -1,0 +1,73 @@
+meta {
+  name: Reservar una subida
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/uploads
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{contentToken}}
+}
+
+headers {
+  X-MoodleShield-Platform-Id: {{platformId}}
+  X-MoodleShield-Owner-Sub: {{ownerSub}}
+  ~X-MoodleShield-Owner-Name: Ada Lovelace
+}
+
+body:json {
+  {
+    "kind": "video",
+    "filename": "tema-01.mp4",
+    "size": 1048576,
+    "title": "Tema 1",
+    "description": "Introducción",
+    "folderId": null,
+    "materialId": null
+  }
+}
+
+script:post-response {
+  // Encadena con las peticiones 04-07 sin copiar identificadores a mano.
+  // `setVar` y NO `setEnvVar`: el segundo reescribe el fichero del entorno.
+  if (res.getStatus() === 201) {
+    bru.setVar("uploadId", res.getBody().uploadId)
+    bru.setVar("materialId", res.getBody().materialId)
+  }
+}
+
+tests {
+  test("responde 201", function () {
+    expect(res.getStatus()).to.equal(201)
+  })
+
+  test("dice el tamaño exacto de fragmento", function () {
+    expect(res.getBody().chunkBytes).to.be.a("number")
+  })
+}
+
+docs {
+  Reserva una sesión de subida y devuelve `uploadId`, `materialId`, `chunkBytes`,
+  `chunkCount`, `expiresAt` y la lista `received`.
+
+  El `size` de ejemplo es de 1 MiB —un solo fragmento— para que se pueda recorrer
+  el protocolo entero sin reservar cuota de verdad. Un vídeo real son cientos de
+  megas y varias decenas de fragmentos.
+
+  Para **sustituir el fichero de un material existente sin romper las
+  actividades Moodle**, pon su UUID en `materialId`. El propietario y la
+  plataforma deben coincidir.
+
+  Dos respuestas que **no son errores, son espera**:
+
+  - **429** — cuota por propietario agotada (subidas activas, bytes reservados…).
+  - **507** — sin espacio: cuota de almacenamiento o disco del servidor.
+
+  En los dos casos: para, resuelve lo que dice el aviso y vuelve a pedir el plan.
+  Las carpetas se reutilizan y sólo subirás lo que falte.
+}

@@ -1,0 +1,42 @@
+meta {
+  name: Plataformas
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/platforms
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{contentToken}}
+}
+
+script:post-response {
+  // De aquí sale el UUID que hay que poner en platformId y en la cabecera
+  // X-MoodleShield-Platform-Id del resto de peticiones.
+  //
+  // `setVar` y NO `setEnvVar`: el segundo reescribe el fichero del entorno.
+  const plataformas = res.getBody()?.platforms
+  if (res.getStatus() === 200 && plataformas?.length && !bru.getEnvVar("platformId")) {
+    bru.setVar("platformId", plataformas[0].id)
+  }
+}
+
+tests {
+  test("responde 200", function () {
+    expect(res.getStatus()).to.equal(200)
+  })
+}
+
+docs {
+  Para averiguar el UUID de cada instancia Moodle registrada.
+
+  Es la **única** operación de contenido que no exige las cabeceras de identidad:
+  con el bearer basta.
+
+  Si responde **404**, `CONTENT_API_TOKEN` está vacío y toda la API de contenido
+  está deshabilitada.
+}

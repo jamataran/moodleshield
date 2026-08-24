@@ -1,0 +1,62 @@
+meta {
+  name: Plan de importacion
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/imports/plan
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{contentToken}}
+}
+
+headers {
+  X-MoodleShield-Platform-Id: {{platformId}}
+  X-MoodleShield-Owner-Sub: {{ownerSub}}
+  ~X-MoodleShield-Owner-Name: Ada Lovelace
+}
+
+body:json {
+  {
+    "parentId": null,
+    "dryRun": true,
+    "entries": [
+      { "path": "Álgebra/Tema 1/clase.mp4", "size": 734003200 },
+      { "path": "Álgebra/Tema 1/apuntes.pdf", "size": 1048576 },
+      { "path": "Álgebra/Tema 1/.DS_Store", "size": 6148 }
+    ]
+  }
+}
+
+tests {
+  test("responde 200", function () {
+    expect(res.getStatus()).to.equal(200)
+  })
+
+  test("los ocultos se omiten", function () {
+    const entradas = res.getBody().entries
+    expect(entradas.find((e) => e.index === 2).status).to.equal("skipped")
+  })
+}
+
+docs {
+  Reparte un árbol de directorios en carpetas y decide, fichero a fichero, qué es
+  **alta** y qué es **revisión**. Se le manda sólo la lista de rutas relativas.
+
+  **`dryRun: true` viene puesto a propósito**: resuelve el mismo reparto sin
+  crear ninguna carpeta, que es lo que quieres para mirar antes de tocar nada.
+  Ponlo a `false` cuando vayas en serio.
+
+  Lo importante del resultado: si la ruta repite un título ya presente en esa
+  carpeta, `materialId` viene con el UUID del material existente. Eso es una
+  **revisión, y el UUID no cambia** — por eso reimportar una carpeta corregida
+  actualiza las actividades Moodle ya creadas (ADR-025).
+
+  Se omiten ocultos (`.` inicial, `__MACOSX`, `Thumbs.db`) y todo lo que no sea
+  vídeo o PDF. Tope `MAX_IMPORT_ENTRIES` (500 por defecto): pasado, responde
+  **413 `too_many_entries`** y no crea nada.
+}
