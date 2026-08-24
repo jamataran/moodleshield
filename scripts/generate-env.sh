@@ -161,6 +161,8 @@ MEDIA_KEY_SECRET=$(gen)
 MEDIA_LINK_SECRET=$(gen)
 CONTENT_API_TOKEN=
 CONTENT_API_ALLOWED_PLATFORM_IDS=
+REPORTS_API_TOKEN=
+REPORTS_API_ALLOWED_PLATFORM_IDS=
 ADMIN_USERNAME=$ADMIN_USER
 ADMIN_PASSWORD_HASH=$ADMIN_PASSWORD_HASH
 ADMIN_SESSION_SECRET=$(gen)
@@ -213,8 +215,20 @@ adivinarlos:
                        instancia ya tenía alguno, VUELVE A PONERLO: sin él la
                        consola responde 403 al iniciar sesión, porque el Origin
                        del formulario no está en la lista blanca.
-  CONTENT_API_TOKEN    API de migración; se deja apagada. Actívala sólo durante
-                       una migración y acota con CONTENT_API_ALLOWED_PLATFORM_IDS.
+  CONTENT_API_TOKEN    API de migración (escribe). Se deja apagada: quien tenga
+                       ese token sube material eligiendo owner_sub, o sea,
+                       suplantando a cualquier profesor. Actívala sólo durante
+                       una migración, acótala con
+                       CONTENT_API_ALLOWED_PLATFORM_IDS y rótala al terminar.
+  REPORTS_API_TOKEN    API de informes (sólo lectura), para cruzar el avance de
+                       los alumnos con una herramienta externa. También se deja
+                       apagada. Tiene que ser DISTINTA del token de migración: si
+                       coinciden, la aplicación no arranca.
+
+Las dos listas de plataformas son UUID separados por coma, y aquí NO son
+opcionales: con NODE_ENV=production —que es lo que usan test y producción—
+poner un token sin su lista aborta el arranque. Van las dos, o ninguna. El UUID
+de cada instancia está en la consola, en la URL de su botón «Editar».
 
 Y uno que conviene revisar:
 

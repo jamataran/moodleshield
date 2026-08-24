@@ -138,8 +138,8 @@ Salida esperada: dos patrones distintos, del estilo `AABBBAAAAA` y `BBABABBAAB`.
 
 ```bash
 npm run lint              # ESLint
-npm test                  # 388 unitarias, sin base de datos (9 se saltan, ver abajo)
-npm run test:integration  # 154 contra Postgres real
+npm test                  # 453 unitarias, sin base de datos (9 se saltan, ver abajo)
+npm run test:integration  # 176 contra Postgres real
 npm run test:coverage     # cobertura nativa de node:test
 ```
 
@@ -353,6 +353,7 @@ Las que más se tocan durante el desarrollo:
 | `TRANSCODE_CONCURRENCY` | `1` | Debe permanecer en `1`: el arranque rechaza otro valor |
 | `CONTENT_API_TOKEN` | — | Activa la API de migración; vacío la mantiene en 404 |
 | `REPORTS_API_TOKEN` | — | Activa la API de informes (sólo lectura, [ADR-030](decisiones.md)); debe ser distinto del anterior |
+| `*_ALLOWED_PLATFORM_IDS` | — | UUID separados por coma. ⚠️ Con `NODE_ENV=production` —lo que usan **test y producción**— poner un token sin su lista **aborta el arranque**: van las dos, o ninguna |
 | `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
 | `LOG_LEVEL` | `info` | `debug` añade detalle operativo; las rutas sensibles se redactan en la rama endurecida |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas |
