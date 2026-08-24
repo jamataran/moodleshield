@@ -45,14 +45,14 @@
     "trace": "node tools/trace.mjs"
   },
   "dependencies": {
-    "@cantoo/pdf-lib": "^2.8.1",
+    "@cantoo/pdf-lib": "^2.9.1",
     "busboy": "^1.6.0",
     "express": "^5.1.0",
     "express-rate-limit": "^8.6.2",
-    "hls.js": "^1.6.15",
-    "jose": "^6.2.8",
+    "hls.js": "^1.7.1",
+    "jose": "^6.2.9",
     "pdfjs-dist": "^6.2.108",
-    "pg": "^8.16.3",
+    "pg": "^8.23.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0"
   },
