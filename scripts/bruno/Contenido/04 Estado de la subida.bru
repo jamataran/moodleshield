@@ -1,0 +1,37 @@
+meta {
+  name: Estado de la subida
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/uploads/{{uploadId}}
+  body: none
+  auth: bearer
+}
+
+params:path {
+  uploadId: {{uploadId}}
+}
+
+auth:bearer {
+  token: {{contentToken}}
+}
+
+headers {
+  X-MoodleShield-Platform-Id: {{platformId}}
+  X-MoodleShield-Owner-Sub: {{ownerSub}}
+}
+
+tests {
+  test("responde 200", function () {
+    expect(res.getStatus()).to.equal(200)
+  })
+}
+
+docs {
+  Qué fragmentos han llegado ya. Es lo que permite **reanudar** una transferencia
+  interrumpida, durante 24 horas por defecto.
+
+  `received` son los índices recibidos: manda sólo los que falten.
+}

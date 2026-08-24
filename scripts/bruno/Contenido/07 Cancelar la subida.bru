@@ -1,0 +1,39 @@
+meta {
+  name: Cancelar la subida
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/uploads/{{uploadId}}
+  body: none
+  auth: bearer
+}
+
+params:path {
+  uploadId: {{uploadId}}
+}
+
+auth:bearer {
+  token: {{contentToken}}
+}
+
+headers {
+  X-MoodleShield-Platform-Id: {{platformId}}
+  X-MoodleShield-Owner-Sub: {{ownerSub}}
+}
+
+tests {
+  test("responde 204", function () {
+    expect(res.getStatus()).to.equal(204)
+  })
+}
+
+docs {
+  Cancela la sesión y libera su reserva de cuota.
+
+  Cancela **una subida a medias**, no un material publicado: aquí no se borra
+  nada de lo que ya está sirviendo a un alumno.
+
+  Es la limpieza obligatoria después de un `complete` fallido.
+}

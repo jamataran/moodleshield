@@ -1,0 +1,22 @@
+docs {
+  # MoodleShield · `/api/v1`
+
+  Dos APIs bajo el mismo prefijo, con **tokens distintos y no intercambiables**:
+
+  - **Informes** — sólo lectura, `REPORTS_API_TOKEN`. La que se integra con una
+    herramienta externa de seguimiento de alumnos.
+  - **Contenido** — escritura, `CONTENT_API_TOKEN`. Sube material **eligiendo
+    `owner_sub`**, es decir, suplantando a cualquier profesor. La aplicación
+    rechaza el arranque si los dos tokens coinciden.
+
+  Con su token sin configurar, cada superficie responde **404**, no 401: una API
+  deshabilitada no se anuncia. Un 404 aquí puede significar «no existe» o «no
+  está activada».
+
+  Los tokens son variables **secretas** del entorno: Bruno las guarda fuera de
+  estos ficheros, así que nunca acaban en el repositorio. Rellénalas en
+  Colección → Environments antes de lanzar nada.
+
+  El contrato completo lo sirve la propia herramienta en `/api/v1/openapi.json`,
+  y hay un lector con probador en `/api/v1/docs`.
+}
