@@ -1102,13 +1102,18 @@ explicara.
 
 La regla pasa a comprobar **lo que la promoción escribe de verdad**: las tres
 etiquetas `image:` y el ancla `WORKER_ENV_ACTIVATION` de
-`infra/prod/compose.yml`. Mover esas líneas desde una PR de trabajo es desplegar
-producción por la puerta de atrás —sin tag, sin firma verificada y sin haber
-ensayado el digest en test— y se sigue rechazando. El resto del árbol de
-producción —variables, límites, plantilla, README— viaja por el carril normal:
-PR a `test`, CI, y llega a producción con la siguiente promoción y su número de
-versión. Es más trazable que antes, no menos: el cambio se revisa y se ensaya
-en vez de aplicarse a mano sobre `main`.
+`infra/prod/compose.yml`. Y la condición no es «no las toques» sino **que digan
+lo que corre de verdad en producción**: se comparan con las de `main`, y la PR
+pasa si coinciden. Prohibir el cambio a secas —que fue el primer intento— deja
+sin arreglo un fichero que se haya quedado atrás, y quedarse atrás es
+precisamente lo que hace que alguien lea una versión equivocada. Comparar contra
+`main` cierra las dos puertas de una vez: no se puede inventar una versión desde
+una PR, y no se puede dejar el fichero mintiendo.
+
+El resto del árbol de producción —variables, límites, plantilla, README— viaja
+por el carril normal: PR a `test`, CI, y llega a producción con la siguiente
+promoción y su número de versión. Es más trazable que antes, no menos: el cambio
+se revisa y se ensaya en vez de aplicarse a mano sobre `main`.
 
 El punto ciego que lo permitió también se cierra: `test/env-example.test.js`
 estaba exento de mirar `infra/prod/` precisamente porque no se podía tocar, y
@@ -1116,10 +1121,13 @@ ahora exige a su plantilla lo mismo que a las otras dos —documentar cada
 variable configurable, y ninguna de más—, con una prueba extra que comprueba que
 las dos APIs se pueden configurar en **los tres** entornos.
 
-Las etiquetas de imagen quedan, eso sí, una versión por detrás en `test` entre
-promoción y promoción: nadie despliega producción desde ahí, y el merge de la
-promoción conserva las de `main` porque `test` no las toca. Está escrito en la
-cabecera del propio Compose para que el fichero no vuelva a mentir en silencio.
+Las etiquetas de imagen quedan, eso sí, una versión por detrás en `test` desde
+cada promoción hasta la siguiente PR que toque ese Compose: nadie despliega
+producción desde ahí, y el merge de la promoción conserva las de `main` porque
+`test` no las toca. La comprobación sólo se exige a la PR que edita el fichero
+—que es justo cuando sincronizarlo cuesta un `git checkout`—, no a las demás.
+Está escrito además en la cabecera del propio Compose, para que el fichero no
+vuelva a mentir en silencio.
 
 **Cómo revertirlo.** Devolver los dos stacks de Portainer a `refs/heads/main`,
 volver a disparar `cd-test.yml` con `branches: [main]` y quitar el job

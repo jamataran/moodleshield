@@ -47,7 +47,7 @@ jobs:
           BASE: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "$BASE"
+          git fetch --no-tags origin "$BASE" main
 
           tocados=$(git diff --name-only "origin/${BASE}...HEAD" -- infra/prod/)
           if [ -z "$tocados" ]; then
@@ -56,20 +56,36 @@ jobs:
           fi
           echo "Esta PR toca infra/prod/:"; echo "$tocados"
 
+          if ! echo "$tocados" | grep -qx 'infra/prod/compose.yml'; then
+            echo "No toca el Compose de producción: adelante."
+            exit 0
+          fi
+
           # Las tres etiquetas de imagen y el ancla de entorno del worker son lo
-          # que `cd-promote.yml` reescribe con sed al desplegar. Cambiarlas desde
-          # aquí es desplegar producción por la puerta de atrás, sin tag, sin
-          # firma verificada y sin haber ensayado el digest en test.
-          prohibido=$(git diff "origin/${BASE}...HEAD" -- infra/prod/compose.yml \
-            | grep -E '^[+-] *(image: ghcr\.io/|environment: \*[a-z-]+ # WORKER_ENV_ACTIVATION)' || true)
-          if [ -n "$prohibido" ]; then
-            echo "::error::Esta PR mueve la versión desplegada en producción:"
-            echo "$prohibido"
-            echo "Esas líneas sólo las escribe «[MANUAL] Promocionar a producción»,"
-            echo "que re-etiqueta el digest ya ensayado en test (ADR-028)."
+          # que `cd-promote.yml` reescribe al desplegar, y por tanto lo único de
+          # este árbol que una PR no puede decidir.
+          #
+          # La condición NO es «no las toques» sino «que digan lo que corre de
+          # verdad en producción», es decir, lo mismo que `main`. Prohibir el
+          # cambio a secas dejaba sin arreglo un fichero que se hubiera quedado
+          # atrás —y se quedó: estuvo en v1.0.5 con producción en v1.0.8—, que es
+          # justo el estado que hace que alguien lea una versión equivocada.
+          # Comparar contra `main` cierra las dos puertas a la vez: no se puede
+          # inventar una versión, y no se puede dejar el fichero mintiendo.
+          patron='^ *(image: ghcr\.io/|environment: \*[a-z-]+ # WORKER_ENV_ACTIVATION)'
+          git show "origin/main:infra/prod/compose.yml" | grep -E "$patron" > /tmp/prod-main.txt
+          git show 'HEAD:infra/prod/compose.yml'        | grep -E "$patron" > /tmp/prod-pr.txt
+
+          if ! diff -u --label 'lo que corre en producción (main)' /tmp/prod-main.txt \
+                        --label 'lo que declara esta PR'          /tmp/prod-pr.txt; then
+            echo "::error::El Compose de producción de esta PR no declara la versión desplegada."
+            echo "Esas líneas sólo las escribe «[MANUAL] Promocionar a producción», que"
+            echo "re-etiqueta el digest ya ensayado en test (ADR-028). Copia las de main:"
+            echo "  git checkout origin/main -- infra/prod/compose.yml   # y repite tus cambios"
+            echo "o, si sólo se han quedado atrás tras una promoción, sincronízalas y ya está."
             exit 1
           fi
-          echo "Cambios de configuración, sin mover la versión desplegada: adelante."
+          echo "Declara la versión que corre en producción: adelante."
 
   verify:
     name: Lint, tests e infraestructura
