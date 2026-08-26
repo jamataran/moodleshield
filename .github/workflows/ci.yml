@@ -31,21 +31,61 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: infra/prod sólo cambia al promocionar
+      # Lo que hay que proteger es que NADIE MUEVA LA VERSIÓN DESPLEGADA salvo la
+      # promoción (ADR-028), no que `infra/prod/` sea intocable. La regla ancha
+      # —«ninguna PR hacia test toca infra/prod/»— dejaba ese árbol sin ningún
+      # camino de mantenimiento: el Compose de producción se quedó sin
+      # REPORTS_API_TOKEN y su plantilla envejeció, porque la única vía que el
+      # mensaje de error proponía —«va en la PR de promoción»— no existe desde
+      # que `cd-promote.yml` mergea solo, sin PR.
+      #
+      # Así que se protege exactamente la línea que la promoción escribe, y el
+      # resto del árbol de producción viaja por el carril normal: PR a `test`,
+      # CI, y a producción con la siguiente promoción y su número de versión.
+      - name: infra/prod no mueve la versión desplegada
         env:
           BASE: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "$BASE"
+          git fetch --no-tags origin "$BASE" main
+
           tocados=$(git diff --name-only "origin/${BASE}...HEAD" -- infra/prod/)
-          if [ -n "$tocados" ]; then
-            echo "::error::Esta PR cambia infra/prod/, y hacia \`test\` eso no se permite:"
-            echo "$tocados"
-            echo "Producción sólo se mueve promocionando (tag vX.Y.Z sobre \`test\`)."
-            echo "Si el cambio es del Compose de producción, va en la PR de promoción."
+          if [ -z "$tocados" ]; then
+            echo "Sin cambios en infra/prod/."
+            exit 0
+          fi
+          echo "Esta PR toca infra/prod/:"; echo "$tocados"
+
+          if ! echo "$tocados" | grep -qx 'infra/prod/compose.yml'; then
+            echo "No toca el Compose de producción: adelante."
+            exit 0
+          fi
+
+          # Las tres etiquetas de imagen y el ancla de entorno del worker son lo
+          # que `cd-promote.yml` reescribe al desplegar, y por tanto lo único de
+          # este árbol que una PR no puede decidir.
+          #
+          # La condición NO es «no las toques» sino «que digan lo que corre de
+          # verdad en producción», es decir, lo mismo que `main`. Prohibir el
+          # cambio a secas dejaba sin arreglo un fichero que se hubiera quedado
+          # atrás —y se quedó: estuvo en v1.0.5 con producción en v1.0.8—, que es
+          # justo el estado que hace que alguien lea una versión equivocada.
+          # Comparar contra `main` cierra las dos puertas a la vez: no se puede
+          # inventar una versión, y no se puede dejar el fichero mintiendo.
+          patron='^ *(image: ghcr\.io/|environment: \*[a-z-]+ # WORKER_ENV_ACTIVATION)'
+          git show "origin/main:infra/prod/compose.yml" | grep -E "$patron" > /tmp/prod-main.txt
+          git show 'HEAD:infra/prod/compose.yml'        | grep -E "$patron" > /tmp/prod-pr.txt
+
+          if ! diff -u --label 'lo que corre en producción (main)' /tmp/prod-main.txt \
+                        --label 'lo que declara esta PR'          /tmp/prod-pr.txt; then
+            echo "::error::El Compose de producción de esta PR no declara la versión desplegada."
+            echo "Esas líneas sólo las escribe «[MANUAL] Promocionar a producción», que"
+            echo "re-etiqueta el digest ya ensayado en test (ADR-028). Copia las de main:"
+            echo "  git checkout origin/main -- infra/prod/compose.yml   # y repite tus cambios"
+            echo "o, si sólo se han quedado atrás tras una promoción, sincronízalas y ya está."
             exit 1
           fi
-          echo "Sin cambios en infra/prod/."
+          echo "Declara la versión que corre en producción: adelante."
 
   verify:
     name: Lint, tests e infraestructura
@@ -126,6 +166,17 @@ jobs:
           # necesita, y son de baja entropía, no secretos reales. (Los compose.yml
           # son YAML y no pasan por este parser; su saneado se documenta en
           # docs/auditoria-seguridad.md.)
+          #
+          # `infra/local/.env.example` es el tercer caso de la misma familia que
+          # los `.env.ci`: el entorno local trae las dos APIs encendidas y los
+          # secretos puestos a propósito, que es lo que permite levantarlo y
+          # probarlo sin configurar nada. Ahí la regla no puede ser «vacío» —eso
+          # rompería el arranque en local—, pero tampoco «lo que sea», que es
+          # como se cuela un token real. Se exige que el valor SE DECLARE de
+          # desarrollo: sólo minúsculas, dígitos y guiones, y con `local`
+          # dentro. Un secreto de verdad —`openssl rand -hex 32`, un bearer de
+          # Moodle, una contraseña con mayúsculas o símbolos— no cumple ninguna
+          # de las dos cosas y sigue fallando aquí.
           for f in $(git ls-files 'infra/*/.env' 'infra/*/.env.sample' 'infra/*/.env.example'); do
             [ -f "$f" ] || continue
             while IFS= read -r line; do
@@ -133,10 +184,18 @@ jobs:
               key=${line%%=*}; value=${line#*=}
               case "$key" in
                 *SECRET*|*PASSWORD*|*TOKEN*|*AUTHKEY*)
-                  if [ -n "$value" ]; then
+                  [ -n "$value" ] || continue
+                  if [ "$f" = 'infra/local/.env.example' ] &&
+                     printf '%s' "$value" | grep -qE '^[a-z0-9-]+$' &&
+                     printf '%s' "$value" | grep -q 'local'; then
+                    continue
+                  fi
+                  if [ "$f" = 'infra/local/.env.example' ]; then
+                    echo "::error file=$f::$key no se declara de desarrollo (minúsculas, dígitos y guiones, con «local» dentro). Si es un secreto real, sácalo de aquí"
+                  else
                     echo "::error file=$f::$key tiene valor en un fichero versionado"
-                    fail=1
-                  fi ;;
+                  fi
+                  fail=1 ;;
               esac
             done < "$f"
           done

@@ -114,9 +114,14 @@ test('.env.example avisa de que un token sin su lista aborta el arranque', () =>
  * qué una API responde 404 — pasó con `REPORTS_API_TOKEN`, que estuvo meses en
  * el Compose de test sin aparecer en ninguna plantilla.
  *
- * `infra/prod/` no entra aquí: hacia `test` no se puede tocar (ADR-028, y el job
- * «Frontera entre entornos» lo rechaza), así que su plantilla se pone al día en
- * la PR de promoción y no puede ser condición para mergear a `test`.
+ * `infra/prod/` SÍ entra aquí. Antes no podía: la «Frontera entre entornos»
+ * rechazaba toda PR hacia `test` que tocara ese árbol, así que exigirle una
+ * plantilla al día habría sido pedir algo imposible de cumplir. Esa regla ahora
+ * protege sólo lo que de verdad es de la promoción —las tres etiquetas de imagen
+ * y el ancla de entorno del worker—, y el resto del Compose de producción se
+ * mantiene por el carril normal. El precio de aquella exención fue exacto:
+ * `REPORTS_API_TOKEN` llegó al Compose de test y a su plantilla, y producción se
+ * quedó sin la variable y con una plantilla que documentaba 31 de 82.
  */
 
 /** Las variables que un Compose deja configurar desde el entorno del stack. */
@@ -136,7 +141,8 @@ const RESPALDOS_HEREDADOS = new Set(['BIND_ADDRESS'])
 
 const entornos = [
   { nombre: 'local', compose: 'infra/local/compose.yml', plantilla: 'infra/local/.env.example' },
-  { nombre: 'test', compose: 'infra/test/compose.yml', plantilla: 'infra/test/.env.sample' }
+  { nombre: 'test', compose: 'infra/test/compose.yml', plantilla: 'infra/test/.env.sample' },
+  { nombre: 'prod', compose: 'infra/prod/compose.yml', plantilla: 'infra/prod/.env.sample' }
 ]
 
 const plantillaDeTest = await readFile(path.join(root, 'infra/test/.env.sample'), 'utf8')
@@ -166,6 +172,27 @@ for (const entorno of entornos) {
       `claves de ${entorno.plantilla} sin ningún comentario que las explique`)
   })
 }
+
+test('las dos APIs se pueden configurar en LOS TRES entornos', async () => {
+  // El fallo que motivó esta prueba: `REPORTS_API_TOKEN` se cableó en el Compose
+  // de test y no en el de producción, así que la API de informes habría llegado
+  // a producción respondiendo 404 sin que nada lo dijera — y con el token puesto
+  // en Portainer, porque el operador no tiene forma de saber que el Compose no
+  // lo lee. Una variable que existe en un entorno y no en otro es una promoción
+  // que se descubre rota en producción.
+  for (const entorno of entornos) {
+    const compose = await readFile(path.join(root, entorno.compose), 'utf8')
+    const configurables = variablesDelCompose(compose)
+    for (const nombre of [
+      'CONTENT_API_TOKEN',
+      'CONTENT_API_ALLOWED_PLATFORM_IDS',
+      'REPORTS_API_TOKEN',
+      'REPORTS_API_ALLOWED_PLATFORM_IDS'
+    ]) {
+      assert.ok(configurables.has(nombre), `${entorno.compose} no deja configurar ${nombre}`)
+    }
+  }
+})
 
 test('la plantilla de test avisa de la trampa de las dos APIs', () => {
   // En test NODE_ENV=production: un token sin su lista de plataformas aborta el

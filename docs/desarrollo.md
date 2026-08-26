@@ -446,8 +446,11 @@ son automáticos: no los edites ni los borres a mano, son lo que activa GitOps.
 
 Sólo se promociona un commit que ya esté desplegado en test: si no existe su
 `:sha-<commit>` en GHCR, o su firma no es la de `cd-test.yml`, la promoción falla
-en cerrado. Y una PR hacia `test` que toque `infra/prod/` la rechaza el job
-«Frontera entre entornos» de `ci.yml`. Empujar un tag a mano no promociona nada.
+en cerrado. Y una PR hacia `test` que mueva la versión desplegada en producción
+—las etiquetas `image:` o el ancla del worker de `infra/prod/compose.yml`— la
+rechaza el job «Frontera entre entornos» de `ci.yml`; el resto de la
+configuración de prod sí se mantiene por ese carril. Empujar un tag a mano no
+promociona nada.
 
 **Todo el pipeline —qué hace cada workflow, cómo se promociona paso a paso, qué
 comprobar y qué errores significan qué— está en
