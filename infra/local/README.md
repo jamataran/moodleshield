@@ -11,6 +11,12 @@ con ffmpeg dentro, entrega firmada. Diferencias deliberadas: secretos de
 desarrollo incrustados, `MARK_ALPHA=0.5` (la marca A/B se ve a simple vista) y
 `NODE_ENV=development` (permite `PUBLIC_URL` en http cuando no hay túnel).
 
+Qué se puede configurar y qué significa cada cosa:
+[`.env.example`](.env.example) — es la lista completa de lo que lee
+`compose.yml`, con el valor por defecto de cada variable. Ahí están también los
+tokens de desarrollo de las dos APIs de `/api/v1`, que en local vienen
+**encendidas** para poder probarlas sin configurar nada.
+
 ## Arrancar
 
 Todo el ciclo de vida del entorno local son scripts de esta carpeta. No hace

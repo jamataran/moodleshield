@@ -212,6 +212,24 @@ En especial:
 
 No regeneres el bloque al actualizar un stack. Conserva siempre sus variables.
 
+#### Qué significa cada variable
+
+El generador emite lo imprescindible y sin comentarios, porque Portainer no
+interpreta un fichero `.env` —un `# nota` acabaría convertido en una variable con
+nombre absurdo—. La lista **completa y explicada** de lo que lee cada Compose
+vive junto a él, y ninguna de las dos puede quedarse atrás: `npm test` compara
+cada plantilla con su Compose y falla si aparece una variable sin documentar, si
+sobra una que ya nadie lee, o si alguna se queda sin comentario.
+
+| Entorno | Plantilla | Para qué |
+|---|---|---|
+| local | [`local/.env.example`](local/.env.example) | Todo lo configurable del stack de desarrollo, con sus valores por defecto y los tokens de las dos APIs, que en local vienen encendidas |
+| test | [`test/.env.sample`](test/.env.sample) | Referencia de las 84 variables del stack, con cuáles son obligatorias y cuáles no se pueden rotar nunca |
+| prod | [`prod/.env.sample`](prod/.env.sample) | Lo mismo para producción. Sólo se actualiza en la PR de promoción: hacia `test` no se puede tocar `infra/prod/` (ADR-028) |
+
+Y la de la aplicación, por debajo del Compose, en
+[`.env.example`](../.env.example) de la raíz.
+
 ### 3. Elegir cómo llega el nginx externo
 
 - **Nginx/Nginx Proxy Manager en otro contenedor** —el caso normal, y el valor

@@ -18,16 +18,39 @@ repositorio, así que rellenarlos aquí no los publica.
 
 | Variable | Qué es | Cómo lo consigues |
 |---|---|---|
-| `baseUrl` | Origen de la herramienta | `http://localhost:3000` en local; en `test`, tu dominio |
-| `reportsToken` | `REPORTS_API_TOKEN` | Del `.env` del entorno |
-| `contentToken` | `CONTENT_API_TOKEN` | Del `.env` del entorno |
-| `platformId` | UUID de la instancia Moodle | Lo rellena sola *Contenido → Plataformas* |
+| `baseUrl` | Origen de la herramienta | `http://localhost:8088` en local (el stack de `infra/local` entra por nginx); en `test`, tu dominio |
+| `reportsToken` | `REPORTS_API_TOKEN` | Del `.env` del entorno — en local, el de abajo |
+| `contentToken` | `CONTENT_API_TOKEN` | Del `.env` del entorno — en local, el de abajo |
+| `platformId` | UUID de la instancia Moodle | Lo rellena sola *Contenido → Plataformas*, o de la URL del botón «Editar» de la consola |
 | `contextId` | Aula de Moodle | Lo rellena sola *Informes → Aulas conocidas* |
 | `identity` | Username de Moodle de un alumno | El que quieras consultar |
 | `ownerSub` | `sub` LTI del profesor propietario | Sólo para la API de contenido |
 
 Empieza por **Informes → Aulas conocidas**: si tienes `platformId`, deja
 `contextId` puesto para las demás.
+
+### En local, los dos tokens ya vienen puestos
+
+El stack de `infra/local` arranca con las dos APIs encendidas y valores de
+desarrollo fijos —inseguros a propósito, documentados en
+[`infra/local/.env.example`](../../infra/local/.env.example)—, así que sólo hay
+que copiarlos al entorno `local` de Bruno:
+
+```
+reportsToken   local-reports-api-token-0000000000000000
+contentToken   local-content-api-token-0000000000000000
+```
+
+Y para salir de dudas sin abrir Bruno:
+
+```sh
+curl -s "http://localhost:8088/api/v1/reports/courses?platformId=$PLATFORM_ID" \
+     -H "Authorization: Bearer local-reports-api-token-0000000000000000"
+```
+
+Si en vez del stack completo usas `npm run dev` (app en el host, sólo Postgres en
+Docker), `baseUrl` es `http://localhost:3000` y los tokens son los de tu `.env`
+de la raíz, que salen vacíos: sin ellos la API responde 404.
 
 > Los dos tokens **no son intercambiables**. `reportsToken` sólo lee;
 > `contentToken` escribe eligiendo `owner_sub`, es decir, suplantando a cualquier
