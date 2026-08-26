@@ -166,6 +166,17 @@ jobs:
           # necesita, y son de baja entropía, no secretos reales. (Los compose.yml
           # son YAML y no pasan por este parser; su saneado se documenta en
           # docs/auditoria-seguridad.md.)
+          #
+          # `infra/local/.env.example` es el tercer caso de la misma familia que
+          # los `.env.ci`: el entorno local trae las dos APIs encendidas y los
+          # secretos puestos a propósito, que es lo que permite levantarlo y
+          # probarlo sin configurar nada. Ahí la regla no puede ser «vacío» —eso
+          # rompería el arranque en local—, pero tampoco «lo que sea», que es
+          # como se cuela un token real. Se exige que el valor SE DECLARE de
+          # desarrollo: sólo minúsculas, dígitos y guiones, y con `local`
+          # dentro. Un secreto de verdad —`openssl rand -hex 32`, un bearer de
+          # Moodle, una contraseña con mayúsculas o símbolos— no cumple ninguna
+          # de las dos cosas y sigue fallando aquí.
           for f in $(git ls-files 'infra/*/.env' 'infra/*/.env.sample' 'infra/*/.env.example'); do
             [ -f "$f" ] || continue
             while IFS= read -r line; do
@@ -173,10 +184,18 @@ jobs:
               key=${line%%=*}; value=${line#*=}
               case "$key" in
                 *SECRET*|*PASSWORD*|*TOKEN*|*AUTHKEY*)
-                  if [ -n "$value" ]; then
+                  [ -n "$value" ] || continue
+                  if [ "$f" = 'infra/local/.env.example' ] &&
+                     printf '%s' "$value" | grep -qE '^[a-z0-9-]+$' &&
+                     printf '%s' "$value" | grep -q 'local'; then
+                    continue
+                  fi
+                  if [ "$f" = 'infra/local/.env.example' ]; then
+                    echo "::error file=$f::$key no se declara de desarrollo (minúsculas, dígitos y guiones, con «local» dentro). Si es un secreto real, sácalo de aquí"
+                  else
                     echo "::error file=$f::$key tiene valor en un fichero versionado"
-                    fail=1
-                  fi ;;
+                  fi
+                  fail=1 ;;
               esac
             done < "$f"
           done
