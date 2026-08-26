@@ -19,16 +19,29 @@
 # que es el módulo del que depende la firma de segmento.
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
 
+# Lo pasa el bake para las tres imágenes: sirve para que la etiqueta de versión
+# de la imagen coincida con la de app y worker, y —igual de importante— para
+# invalidar el `apk upgrade` de abajo.
+#
+# SU POSICIÓN ES DELIBERADA: tiene que ir ANTES del upgrade. Estaba después, y
+# como la caché `gha` (mode=max) sólo invalida una capa cuando cambia algo por
+# encima, el upgrade quedó congelado: servía los paquetes del día en que se
+# construyó esa capa por primera vez. Se vio con CVE-2026-14456 — el gate de
+# Trivy tumbó un proxy con openssl 3.5.7-r0 mientras Alpine ya publicaba
+# 3.5.8-r0 y este mismo `apk upgrade`, ejecutado de nuevo, lo recogía. Una capa
+# de parches de seguridad servida desde caché es peor que no tenerla: da el
+# verde sin aplicar nada.
+#
+# Como el CI pasa el sha del commit, esto se reconstruye en cada build. Cuesta
+# unos segundos; el valor es que el upgrade se aplica de verdad, siempre.
+ARG APP_VERSION=dev
+
 # La imagen oficial se reconstruye más despacio de lo que Alpine publica
 # parches, así que al construir arrastra paquetes con CVE altas ya
 # corregidas aguas arriba (openssl, curl, expat, libxml2, nghttp2…). Este
 # upgrade las recoge. Es la única capa no reproducible de las tres
 # imágenes, y se acepta a propósito: es un proxy que termina TLS.
 RUN apk upgrade --no-cache
-
-# Lo pasa el bake para las tres imágenes; aquí sólo sirve para que la etiqueta
-# de versión de la imagen coincida con la de app y worker.
-ARG APP_VERSION=dev
 
 COPY infra/nginx/templates/ /etc/nginx/templates/
 COPY infra/nginx/proxy_headers.conf /etc/nginx/proxy_headers.conf

@@ -23,6 +23,13 @@ ENV NODE_ENV=production \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
 WORKDIR /app
+# Antes del upgrade a propósito, y no por orden estético: la caché `gha`
+# (mode=max) sólo invalida una capa cuando cambia algo por encima, así que un
+# `apk upgrade` sin nada variable delante queda congelado y sirve los paquetes
+# del día en que se construyó. Es exactamente lo que le pasó al proxy con
+# CVE-2026-14456. El CI pasa aquí el sha del commit, de modo que los parches se
+# aplican de verdad en cada build. Ver la nota larga en Dockerfile.proxy.
+ARG APP_VERSION=dev
 # `node:22-alpine` se reconstruye más despacio de lo que Alpine publica
 # parches, así que al construir arrastra paquetes del sistema con CVE altas ya
 # corregidas aguas arriba. No es hipotético: CVE-2026-14456 (openssl, DoS por
