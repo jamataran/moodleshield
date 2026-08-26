@@ -23,7 +23,19 @@ ENV NODE_ENV=production \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
 WORKDIR /app
-RUN apk add --no-cache su-exec
+# `node:22-alpine` se reconstruye más despacio de lo que Alpine publica
+# parches, así que al construir arrastra paquetes del sistema con CVE altas ya
+# corregidas aguas arriba. No es hipotético: CVE-2026-14456 (openssl, DoS por
+# crecimiento de memoria sin cota) tumbó el CD con libcrypto3/libssl3 3.5.7-r0
+# mientras el digest fijado arriba YA era el último `22-alpine` publicado —
+# subirlo no arreglaba nada porque el parche vive en el repositorio de Alpine,
+# no en la imagen de Node.
+#
+# Mismo trato que en Dockerfile.proxy, y el mismo precio: esta capa es la única
+# no reproducible de la imagen. Se acepta a propósito. La alternativa —excluir
+# la ruta del análisis— dejaría el binario vulnerable dentro y el gate en verde,
+# que es exactamente al revés de lo que el gate existe para hacer.
+RUN apk upgrade --no-cache && apk add --no-cache su-exec
 
 # npm no pinta nada en runtime: la app arranca con `node src/server.js`, el
 # worker con `node src/worker.js` y el entrypoint no lo llama. Pero sus

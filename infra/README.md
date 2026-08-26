@@ -225,7 +225,7 @@ sobra una que ya nadie lee, o si alguna se queda sin comentario.
 |---|---|---|
 | local | [`local/.env.example`](local/.env.example) | Todo lo configurable del stack de desarrollo, con sus valores por defecto y los tokens de las dos APIs, que en local vienen encendidas |
 | test | [`test/.env.sample`](test/.env.sample) | Referencia de las 84 variables del stack, con cuáles son obligatorias y cuáles no se pueden rotar nunca |
-| prod | [`prod/.env.sample`](prod/.env.sample) | Lo mismo para producción. Sólo se actualiza en la PR de promoción: hacia `test` no se puede tocar `infra/prod/` (ADR-028) |
+| prod | [`prod/.env.sample`](prod/.env.sample) | Lo mismo para producción. Se mantiene por PR a `test` como las otras dos, y llega a prod con la siguiente promoción; lo único que no se puede tocar desde una PR son las etiquetas de imagen (ADR-028) |
 
 Y la de la aplicación, por debajo del Compose, en
 [`.env.example`](../.env.example) de la raíz.

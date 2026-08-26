@@ -1076,8 +1076,8 @@ riesgo que era.
 Dos cierres más, porque una convención que sólo vive en la cabeza de alguien no
 es un control:
 
-- El job `frontera-entornos` de `ci.yml` rechaza toda PR hacia `test` que toque
-  `infra/prod/`. Producción no se edita trabajando.
+- El job `frontera-entornos` de `ci.yml` rechaza toda PR hacia `test` que mueva
+  la versión desplegada en producción. Producción no se despliega trabajando.
 - `cd-promote.yml` falla en cerrado si no existe el `:sha-<commit>` del commit
   etiquetado: no se promociona nada que no haya pasado por test.
 
@@ -1089,6 +1089,37 @@ versión, verifica la firma, etiqueta, re-etiqueta el digest y mueve `main`.
 Empujar un tag a mano ya no promociona nada. Todos los workflows llevan además
 `[AUTO]` o `[MANUAL]` en el nombre —el prefijo dice si hay que hacer algo— y el
 manual del pipeline vive en [`.github/README.md`](../.github/README.md).
+
+**Actualización (27 de agosto de 2026): la frontera protege la versión, no el
+directorio.** `frontera-entornos` rechazaba toda PR hacia `test` que tocara
+`infra/prod/`, y el mensaje de error remitía a «la PR de promoción» — que dejó de
+existir con la actualización de arriba, cuando `cd-promote.yml` pasó a mergear
+solo. El resultado fue un árbol sin ningún camino de mantenimiento: el Compose de
+producción se quedó sin `REPORTS_API_TOKEN` mientras test sí lo tenía, y su
+plantilla documentaba 31 de 82 variables. La API de informes habría llegado a
+producción respondiendo 404, con el token puesto en Portainer y nada que lo
+explicara.
+
+La regla pasa a comprobar **lo que la promoción escribe de verdad**: las tres
+etiquetas `image:` y el ancla `WORKER_ENV_ACTIVATION` de
+`infra/prod/compose.yml`. Mover esas líneas desde una PR de trabajo es desplegar
+producción por la puerta de atrás —sin tag, sin firma verificada y sin haber
+ensayado el digest en test— y se sigue rechazando. El resto del árbol de
+producción —variables, límites, plantilla, README— viaja por el carril normal:
+PR a `test`, CI, y llega a producción con la siguiente promoción y su número de
+versión. Es más trazable que antes, no menos: el cambio se revisa y se ensaya
+en vez de aplicarse a mano sobre `main`.
+
+El punto ciego que lo permitió también se cierra: `test/env-example.test.js`
+estaba exento de mirar `infra/prod/` precisamente porque no se podía tocar, y
+ahora exige a su plantilla lo mismo que a las otras dos —documentar cada
+variable configurable, y ninguna de más—, con una prueba extra que comprueba que
+las dos APIs se pueden configurar en **los tres** entornos.
+
+Las etiquetas de imagen quedan, eso sí, una versión por detrás en `test` entre
+promoción y promoción: nadie despliega producción desde ahí, y el merge de la
+promoción conserva las de `main` porque `test` no las toca. Está escrito en la
+cabecera del propio Compose para que el fichero no vuelva a mentir en silencio.
 
 **Cómo revertirlo.** Devolver los dos stacks de Portainer a `refs/heads/main`,
 volver a disparar `cd-test.yml` con `branches: [main]` y quitar el job

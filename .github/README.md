@@ -198,8 +198,11 @@ git show origin/main:infra/prod/compose.yml | grep 'image: ghcr'
 
 Un control que nunca has visto fallar no sabes si existe.
 
-**a) Una PR hacia `test` que toque `infra/prod/`.** La rechaza el job
-«Frontera entre entornos». Producción no se edita trabajando.
+**a) Una PR hacia `test` que mueva la versión desplegada en producción.** La
+rechaza el job «Frontera entre entornos»: las tres etiquetas `image:` y el ancla
+`WORKER_ENV_ACTIVATION` de `infra/prod/compose.yml` sólo las escribe la
+promoción. El resto de `infra/prod/` —variables, límites, plantilla— sí se
+mantiene por PR a `test`, y llega a producción con la siguiente promoción.
 
 **b) Promocionar un commit que no pasó por `test`.** El workflow comprueba que
 existe `:sha-<commit>` en GHCR y que su firma es la de `cd-test.yml`. Falla en
@@ -222,7 +225,7 @@ despliegue no llega a escribir el Compose.
 | `falta DB_APP_PASSWORD` al interpolar | El `.env` del stack no tiene los secretos nuevos | Añadirlos; ver prerrequisitos |
 | `infra/test/compose.yml no apunta a una imagen sha-* válida` | `cd-test.yml` no ha corrido todavía sobre esa rama | Mergear algo a `test`, o lanzarlo a mano |
 | `No existe ghcr.io/…:sha-…` | Se intenta promocionar algo que no pasó por `test` | Empujar a `test`, esperar el build y promocionar después |
-| `Esta PR cambia infra/prod/` | La PR toca producción | Sacar el cambio: producción se mueve promocionando |
+| `Esta PR mueve la versión desplegada en producción` | La PR cambia una etiqueta `image:` o el ancla del worker en `infra/prod/compose.yml` | Sacar esas líneas: la versión sólo la mueve la promoción. Un cambio de configuración de prod sí puede ir en la PR |
 | `El tag vX.Y.Z ya existe y apunta a otro commit` | Se promocionó antes esa versión desde otro commit | Elegir el siguiente salto |
 | `main se movió durante el push` | Otro push aterrizó a la vez | Se reintenta 3 veces solo |
 | El workflow no arranca al empujar | El cambio sólo toca `docs/**` o `*.md` | Lanzarlo con *Run workflow* |
