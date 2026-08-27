@@ -138,8 +138,8 @@ Salida esperada: dos patrones distintos, del estilo `AABBBAAAAA` y `BBABABBAAB`.
 
 ```bash
 npm run lint              # ESLint
-npm test                  # 306 unitarias, sin base de datos (9 se saltan, ver abajo)
-npm run test:integration  # contra Postgres real
+npm test                  # 453 unitarias, sin base de datos (9 se saltan, ver abajo)
+npm run test:integration  # 176 contra Postgres real
 npm run test:coverage     # cobertura nativa de node:test
 ```
 
@@ -192,6 +192,7 @@ aquí, pasa en CI.
 | `test/*.test.js` | Unitario. **Sin base de datos, sin red, sin filesystem compartido** |
 | `test/integration/*.integration.js` | Necesita Postgres. Se ejecuta con `--test-concurrency=1` |
 | `test/ui-iframe.test.js` | Vigila que la UI no use `alert`/`confirm`/`prompt`. **No lo ignores si falla** |
+| `test/guardia-datos.test.js` | Vigila el hook que aplica la Regla 0 (`.claude/hooks/guardia-datos.mjs`): qué corta y, sobre todo, qué **no** puede cortar. Un guardia que bloquea el trabajo normal acaba desactivado |
 
 ---
 
@@ -329,9 +330,8 @@ Utilidades:
 | `scripts/generate-secrets.sh` | Rellena los secretos de un `.env` local |
 | `scripts/generate-env.sh` | Genera el bloque de variables para Portainer (**no** para local) |
 
-> ⚠️ La rama de seguridad redacta tokens y queries sensibles, pero los logs siguen
-> conteniendo datos operativos y personales. **No pegues logs en una issue pública** sin
-> revisarlos; `v1.0.5` además es anterior a esa redacción.
+> ⚠️ Los logs redactan tokens y queries sensibles desde `v1.0.6`, pero siguen conteniendo
+> datos operativos y personales. **No pegues logs en un issue público** sin revisarlos.
 
 ---
 
@@ -352,6 +352,8 @@ Las que más se tocan durante el desarrollo:
 | `SEGMENT_SECONDS` | `4` | Duración de segmento; también la resolución del patrón |
 | `TRANSCODE_CONCURRENCY` | `1` | Debe permanecer en `1`: el arranque rechaza otro valor |
 | `CONTENT_API_TOKEN` | — | Activa la API de migración; vacío la mantiene en 404 |
+| `REPORTS_API_TOKEN` | — | Activa la API de informes (sólo lectura, [ADR-030](decisiones.md)); debe ser distinto del anterior |
+| `*_ALLOWED_PLATFORM_IDS` | — | UUID separados por coma. ⚠️ Con `NODE_ENV=production` —lo que usan **test y producción**— poner un token sin su lista **aborta el arranque**: van las dos, o ninguna |
 | `TRANSCODE_LEASE_SECONDS` | `90` | Plazo tras el que otro worker recupera un trabajo huérfano |
 | `LOG_LEVEL` | `info` | `debug` añade detalle operativo; las rutas sensibles se redactan en la rama endurecida |
 | `WATERMARK_SECRET` | — | ⚠️ **Permanente.** Cambiarlo invalida todas las trazas |
@@ -362,19 +364,24 @@ Las que más se tocan durante el desarrollo:
 
 ## Flujo de Git y despliegue
 
-**Las ramas de trabajo entran en `main` por PR, y `main` es la única rama que despliega.**
-Producción no se construye aparte: se promociona la imagen que ya pasó por test.
+**El entorno es la rama** ([ADR-028](decisiones.md)): `test` es el entorno de pruebas y
+**`main` es producción**. Las ramas de trabajo salen de `test` y vuelven a `test` por PR.
+A `main` no se mergea nunca a mano: sólo la mueve la promoción, que no reconstruye nada.
+
+Y antes de la rama va un **issue**. Es donde vive el «qué» y el «por qué», y donde se
+anota la evidencia al cerrarlo; `docs/` describe el sistema, no el trabajo pendiente.
 
 ```bash
-git switch main
-git pull --ff-only origin main
-git switch -c feature/mi-cambio
+git switch test
+git pull --ff-only origin test
+git switch -c feature/mi-cambio      # o fix/… , docs/… , chore/…
 
 # editar, probar
 npm run lint && npm test
 
 git commit -m "feat: describe el cambio"
 git push -u origin feature/mi-cambio
+gh pr create --base test --fill      # el PR va SIEMPRE contra `test`
 ```
 
 ### Worktrees: siempre dentro de `.claude/worktrees/`
@@ -409,10 +416,8 @@ las herramientas reales, migraciones idempotentes contra Postgres, validación d
 Compose, comprobación de que no hay secretos en los `.env` versionados y una construcción
 Docker sin publicar.
 
-**El entorno es la rama** (ADR-028). `test` es el entorno de pruebas y `main` es
-producción; cada Portainer sigue la suya. Todo el trabajo —features y dependabot—
-se mergea a `test`, y **a `main` no se mergea a mano nunca**: sólo lo mueve la
-promoción.
+Cada Portainer sigue su rama, y por eso el trabajo —features y dependabot— entra
+**siempre** por `test`.
 
 Qué pasa después del merge (esto sólo aplica al repositorio canónico):
 
@@ -441,8 +446,11 @@ son automáticos: no los edites ni los borres a mano, son lo que activa GitOps.
 
 Sólo se promociona un commit que ya esté desplegado en test: si no existe su
 `:sha-<commit>` en GHCR, o su firma no es la de `cd-test.yml`, la promoción falla
-en cerrado. Y una PR hacia `test` que toque `infra/prod/` la rechaza el job
-«Frontera entre entornos» de `ci.yml`. Empujar un tag a mano no promociona nada.
+en cerrado. Y una PR hacia `test` que mueva la versión desplegada en producción
+—las etiquetas `image:` o el ancla del worker de `infra/prod/compose.yml`— la
+rechaza el job «Frontera entre entornos» de `ci.yml`; el resto de la
+configuración de prod sí se mantiene por ese carril. Empujar un tag a mano no
+promociona nada.
 
 **Todo el pipeline —qué hace cada workflow, cómo se promociona paso a paso, qué
 comprobar y qué errores significan qué— está en

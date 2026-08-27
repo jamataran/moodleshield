@@ -54,7 +54,7 @@ dinámico resueltos.
 
 **Consecuencias.** Somos responsables de la corrección frente al spec. Se
 mitiga concentrando toda la validación en `src/lti/validate.js`, con la lista de
-comprobaciones documentada en [`tasks/T04`](tasks/done/T04-lti-handshake.md), y con
+comprobaciones documentada en [`tasks/T04`](https://github.com/jamataran/moodleshield/issues/43), y con
 tests sobre el aplanado de claims. Si algún día hace falta registro dinámico o
 AGS, hay que implementarlos.
 
@@ -983,7 +983,7 @@ propietario que ya no se consulta. Se decide antes de importar nada.
 ## ADR-027 · Ligar un placement a su actividad es anotar un hecho, no autorizar: lo hace el primer launch, sea quien sea
 
 **Estado**: aceptada · **Fecha**: 2026-08 · **Sustituye a** la condición de bind
-descrita en `auditoria-seguridad-contenido-y-plan.md` (F-05)
+descrita en `historia/auditoria-seguridad-contenido-y-plan.md` (F-05)
 
 **Contexto.** Un `resource_placement` nace en el Deep Linking, cuando la
 actividad de Moodle **todavía no existe**: no hay `resource_link_id` que
@@ -1047,7 +1047,7 @@ dos secretos que aún no existían en su `.env`, `DB_APP_PASSWORD` y
 `DB_WORKER_PASSWORD`. Falló al interpolar, antes de tocar ningún contenedor, así
 que el servicio siguió en pie; pero el margen entre eso y una caída real lo
 puso el azar, no el diseño. La «Transición obligatoria desde `v1.0.5`» de
-[`revision-seguridad-2026-08-10.md`](revision-seguridad-2026-08-10.md) son nueve
+[`historia/revision-seguridad-2026-08-10.md`](historia/revision-seguridad-2026-08-10.md) son nueve
 pasos con copia de seguridad y reinserción por Deep Linking: exactamente el tipo
 de cosa que no puede dispararla un merge.
 
@@ -1076,8 +1076,8 @@ riesgo que era.
 Dos cierres más, porque una convención que sólo vive en la cabeza de alguien no
 es un control:
 
-- El job `frontera-entornos` de `ci.yml` rechaza toda PR hacia `test` que toque
-  `infra/prod/`. Producción no se edita trabajando.
+- El job `frontera-entornos` de `ci.yml` rechaza toda PR hacia `test` que mueva
+  la versión desplegada en producción. Producción no se despliega trabajando.
 - `cd-promote.yml` falla en cerrado si no existe el `:sha-<commit>` del commit
   etiquetado: no se promociona nada que no haya pasado por test.
 
@@ -1089,6 +1089,45 @@ versión, verifica la firma, etiqueta, re-etiqueta el digest y mueve `main`.
 Empujar un tag a mano ya no promociona nada. Todos los workflows llevan además
 `[AUTO]` o `[MANUAL]` en el nombre —el prefijo dice si hay que hacer algo— y el
 manual del pipeline vive en [`.github/README.md`](../.github/README.md).
+
+**Actualización (27 de agosto de 2026): la frontera protege la versión, no el
+directorio.** `frontera-entornos` rechazaba toda PR hacia `test` que tocara
+`infra/prod/`, y el mensaje de error remitía a «la PR de promoción» — que dejó de
+existir con la actualización de arriba, cuando `cd-promote.yml` pasó a mergear
+solo. El resultado fue un árbol sin ningún camino de mantenimiento: el Compose de
+producción se quedó sin `REPORTS_API_TOKEN` mientras test sí lo tenía, y su
+plantilla documentaba 31 de 82 variables. La API de informes habría llegado a
+producción respondiendo 404, con el token puesto en Portainer y nada que lo
+explicara.
+
+La regla pasa a comprobar **lo que la promoción escribe de verdad**: las tres
+etiquetas `image:` y el ancla `WORKER_ENV_ACTIVATION` de
+`infra/prod/compose.yml`. Y la condición no es «no las toques» sino **que digan
+lo que corre de verdad en producción**: se comparan con las de `main`, y la PR
+pasa si coinciden. Prohibir el cambio a secas —que fue el primer intento— deja
+sin arreglo un fichero que se haya quedado atrás, y quedarse atrás es
+precisamente lo que hace que alguien lea una versión equivocada. Comparar contra
+`main` cierra las dos puertas de una vez: no se puede inventar una versión desde
+una PR, y no se puede dejar el fichero mintiendo.
+
+El resto del árbol de producción —variables, límites, plantilla, README— viaja
+por el carril normal: PR a `test`, CI, y llega a producción con la siguiente
+promoción y su número de versión. Es más trazable que antes, no menos: el cambio
+se revisa y se ensaya en vez de aplicarse a mano sobre `main`.
+
+El punto ciego que lo permitió también se cierra: `test/env-example.test.js`
+estaba exento de mirar `infra/prod/` precisamente porque no se podía tocar, y
+ahora exige a su plantilla lo mismo que a las otras dos —documentar cada
+variable configurable, y ninguna de más—, con una prueba extra que comprueba que
+las dos APIs se pueden configurar en **los tres** entornos.
+
+Las etiquetas de imagen quedan, eso sí, una versión por detrás en `test` desde
+cada promoción hasta la siguiente PR que toque ese Compose: nadie despliega
+producción desde ahí, y el merge de la promoción conserva las de `main` porque
+`test` no las toca. La comprobación sólo se exige a la PR que edita el fichero
+—que es justo cuando sincronizarlo cuesta un `git checkout`—, no a las demás.
+Está escrito además en la cabecera del propio Compose, para que el fichero no
+vuelva a mentir en silencio.
 
 **Cómo revertirlo.** Devolver los dos stacks de Portainer a `refs/heads/main`,
 volver a disparar `cd-test.yml` con `branches: [main]` y quitar el job
@@ -1180,3 +1219,149 @@ reinsertar nada en Moodle y sin que nadie tenga que enterarse de nada.
 `owner_sub = $3`, y quitar «Versiones…» del menú de las tarjetas compartidas en
 `catalog.js`. La columna `created_by_name` puede quedarse: es auditoría y no
 estorba a nadie.
+
+---
+
+## ADR-030 · El seguimiento docente es telemetría fail-open y agregada; el registro forense sigue siendo `view_event`
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Convive con ADR-013, ADR-021 y ADR-023
+
+**Contexto.** Los profesores seguían a sus alumnos con el «informe completo» de
+Moodle (`report/outline/user.php?mode=complete`), que se alimenta de los logs de
+la plataforma. Una actividad LTI es opaca para esos logs —Moodle sólo ve el
+launch— y con colecciones (ADR-013: N materiales en UNA actividad) la pérdida es
+total: el informe no puede decir qué material abrió cada alumno. La herramienta
+se había vuelto una caja negra justo en lo que el profesor necesita mirar.
+
+El 80 % del dato ya existía: `view_event` y `document_view_event` registran por
+alumno y por material —también dentro de colecciones— quién, qué, en qué curso y
+cuándo, desduplicado por sesión LTI y sin purga. Faltaban cuatro cosas: la
+apertura sin reproducción, el tiempo visto, las páginas leídas y el nombre del
+curso.
+
+**Decisión.** Se añade una capa de **telemetría docente** separada del registro
+forense, con contrato opuesto en lo único que importa: qué pasa cuando falla.
+
+| | Registro forense | Telemetría docente |
+|---|---|---|
+| Tablas | `view_event`, `document_view_event` | `activity_open_event`, `viewing_stats`, `reading_stats` |
+| Quién escribe | El servidor, al servir los bytes | El visor del alumno, por heartbeat |
+| Si falla | **503**, no se entrega (`requirePlaybackAudit`) | `warn` + 204: el visor ni se entera |
+| Granularidad | Evento por sesión y material | Agregado por alumno y material |
+| Falseable por el alumno | No | Sí, la suya, con topes por beat |
+
+Tres decisiones dentro de la decisión:
+
+- **Agregado, no serie de eventos.** Una fila por (alumno, material) con los
+  tramos vistos fusionados. Una serie de heartbeats crecería sin cota (~240
+  filas/alumno/hora) para responder preguntas que sólo necesitan agregados. La
+  cardinalidad y el ritmo de escritura son los de `learner_progress`, que
+  ADR-021 ya justificó, y como allí **no hay claves foráneas**: el dato es
+  consultivo y una fila huérfana es inofensiva.
+- **El beat es idempotente.** Manda la lista completa de tramos, no un
+  incremento: un reintento, o el envío de `pagehide` pisándose con el periódico,
+  no puede inflar el avance de nadie. `unique_seconds` —el que decide el %— se
+  deriva de los tramos; `watched_seconds` suma deltas y cuenta el revisionado.
+- **El informe es del curso, no del propietario.** `GET /reports/course` parte de
+  los placements vivos del contexto de la sesión (ADR-023): lo ve cualquier
+  profesor de esa aula aunque el material sea de otro, y revocar el placement lo
+  saca del informe. El `context_id` sale del `id_token`, nunca de la query.
+
+`learner_progress` **no se toca**: sigue siendo el marcador de reanudación, y su
+truco de `position=0` al terminar lo hace inservible como medida de completitud
+—quien terminó es indistinguible de quien no empezó—. Eso vive ahora en
+`viewing_stats.completed_at`.
+
+**Consecuencias.**
+
+- **El tiempo visto es orientativo y hay que decirlo así.** Los segmentos los
+  sirve nginx y el PDF viaja entero al navegador: el dato sólo existe en el
+  cliente. Un alumno puede falsear el suyo dentro de los topes por beat (≤ 45 s
+  de delta, ≤ 200 tramos, nada más allá de la duración real). Nada de esto toca
+  el trazado forense, que no depende del cliente.
+- **Lo anterior al despliegue se pinta «sin datos», nunca cero.** El informe
+  expone `telemetry.{opensSince, videoStatsSince, pdfStatsSince}` justo para
+  distinguir «no lo vio» de «no lo medíamos». Enseñar «0 min» sobre un material
+  que un alumno vio el curso pasado sería una acusación falsa.
+- **El histórico cuenta sin reinsertar nada** (Regla 0-bis): a los placements se
+  suma lo que aparezca en eventos del curso sin placement, que es lo que dejaron
+  las actividades anteriores a la migración 014.
+- **`viewing_stats` y `reading_stats` no llevan curso en la clave.** Si el mismo
+  alumno ve el mismo vídeo en dos cursos, el tiempo es el acumulado de los dos.
+  Es la misma propiedad que `learner_progress` y el caso es raro; separarlo
+  multiplicaría filas para un dato orientativo.
+- **Datos personales, y por tanto tratamiento nuevo.** El informe y su API son
+  destinatarios nuevos de los mismos datos: base jurídica, retención y acceso
+  siguen pendientes en [#65](https://github.com/jamataran/moodleshield/issues/65).
+  `ip` y `user_agent` no salen de este camino: ninguna consulta del servicio de
+  informes los selecciona.
+- **La API externa lleva su propio token.** `REPORTS_API_TOKEN` sólo lee;
+  `CONTENT_API_TOKEN` escribe suplantando al propietario del material. Quien
+  cruza avances con otra herramienta no debe sostener ese segundo secreto, y la
+  configuración rechaza que sean el mismo.
+
+**Cómo revertirlo.** Desmontar `/telemetry`, `/reports` y `/api/v1/reports` en
+`app.js` y quitar el botón del catálogo: el visor deja de mandar beats y todo lo
+demás sigue igual, porque nada del camino de reproducción depende de esta capa.
+Las tablas pueden quedarse vacías sin estorbar; borrarlas es opcional y, por
+Regla 0, se documenta antes de hacerse.
+
+## ADR-031 · El informe también se lee con la forma de la biblioteca, y la ruta de carpetas es privada de su profesor
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Extiende ADR-030 · Convive con ADR-016, ADR-018 y ADR-023
+
+**Contexto.** ADR-030 dejó el informe como una matriz plana: `activities` y
+`materials` responden «¿qué ha visto este alumno?». Falta la otra pregunta, la
+que el profesor se hacía de un vistazo cuando cada recurso era una actividad
+Moodle distinta y el curso se leía en orden: **«¿por dónde va?»**. Con
+colecciones y carpetas anidadas (ADR-013, ADR-016) esa lectura se perdió, y la
+herramienta externa del operador tampoco podía reconstruirla: la ruta de carpetas
+no salía por ninguna parte del informe.
+
+**Decisión.** El informe gana un campo **`tree`** con la forma de la biblioteca
+—carpeta > carpeta > … > colección > materiales—, y una vista de sólo lectura en
+la consola de administración que lo enseña por aula y por alumno.
+
+- **`tree` se añade; no sustituye a nada.** `activities` y `materials` son
+  contrato ya emitido a la herramienta externa y a la interfaz del profesor: si
+  el árbol los reemplazara, una integración escrita hoy dejaría de funcionar
+  mañana (Regla 0-bis). El árbol se monta con los mismos datos ya consultados,
+  en una función **pura** (`services/report-tree.js`), probable sin Postgres.
+- **La ruta de carpetas no es del curso, es del profesor.** El árbol es
+  organización privada (ADR-016) y el informe lo ve cualquier profesor del aula
+  (ADR-023). «Rehacer 2025» o «Borradores baja de Ana» son información del
+  claustro, no de la asignatura. A un compañero se le enseña el material —eso sí
+  es del curso— colgado de un nodo `restricted: true` («Biblioteca de …») salvo
+  que la carpeta esté compartida (ADR-018), en cuyo caso sale su ruta real. Lo
+  decide un `viewerSub` que en el camino del profesor sale **de la sesión**.
+- **El operador no tiene ese recorte.** La consola de administración y la API de
+  informes ven la ruta entera, igual que `/admin/platforms/:id/contenido` ya
+  enseña todo el inventario de una instancia. Son secretos de operador, no
+  sesiones de profesor.
+- **El porcentaje de un nodo es la media de los materiales CON dato.** Un
+  material sin telemetría no cuenta como 0: enseñar «0 %» de algo que no se midió
+  es la misma acusación falsa que ADR-030 se prohibió.
+- **La consola de administración es la cuarta pantalla, no una API nueva.** Los
+  datos van incrustados en el bootstrap, como el resto de la consola, y la
+  autenticación es su cookie: `REPORTS_API_TOKEN` es un secreto de servidor y no
+  baja al navegador de nadie.
+- **El contrato se escribe a mano y vive en `src/`.** `src/api/openapi.json` es
+  OpenAPI 3.1 y se sirve en `GET /api/v1/openapi.json`, recortado a las APIs que
+  ese despliegue tiene activas: prometer una operación que responde 404 porque su
+  token no está puesto es peor que no documentarla. No se genera —no hay
+  decoradores ni esquemas de los que derivarlo— y no vive en `docs/`, que
+  `.dockerignore` excluye del contexto de build. Lo que impide que envejezca es
+  `test/openapi.test.js`, que compara sus rutas con las que registran los routers.
+- **El probador no es Swagger UI.** `swagger-ui-dist` son ~12 MB y sería la
+  primera dependencia de producción que existe sólo para documentar; además
+  habría que comprobar que su bundle no exige `'unsafe-eval'`, y la CSP de esta
+  aplicación es `script-src 'self'` sin excepciones (T32). `GET /api/v1/docs` lo
+  sustituye con un módulo propio, y sólo deja probar la **API de informes**: un
+  formulario que invite a pegar `CONTENT_API_TOKEN` en un navegador deja en un
+  historial ajeno una credencial que suplanta a cualquier profesor.
+
+**Cómo revertirlo.** Quitar `tree` del retorno de `buildCourseReport` y
+`getStudentCourseReport` y desmontar `/admin/platforms/:id/seguimiento` y
+`/api/v1` → `openapiRouter` en `app.js`. Nada más depende de ello: el informe
+plano, la telemetría y el registro forense siguen exactamente igual, y no hay
+ninguna migración que deshacer — el árbol se calcula, no se guarda.

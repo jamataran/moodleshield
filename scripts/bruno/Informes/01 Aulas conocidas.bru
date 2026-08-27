@@ -1,0 +1,60 @@
+meta {
+  name: Aulas conocidas
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/courses?platformId={{platformId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  platformId: {{platformId}}
+}
+
+auth:bearer {
+  token: {{reportsToken}}
+}
+
+script:post-response {
+  // Si no habías fijado un aula, coge la primera: así las peticiones de abajo
+  // funcionan sin tener que copiar identificadores a mano.
+  //
+  // `setVar` y NO `setEnvVar`: el segundo reescribe el fichero del entorno, y
+  // acabaría dejando en el repositorio el identificador de un aula real.
+  const cursos = res.getBody()?.courses
+  if (res.getStatus() === 200 && cursos?.length && !bru.getEnvVar("contextId")) {
+    bru.setVar("contextId", cursos[0].contextId)
+  }
+}
+
+tests {
+  test("responde 200", function () {
+    expect(res.getStatus()).to.equal(200)
+  })
+
+  test("devuelve la lista de aulas", function () {
+    expect(res.getBody().courses).to.be.an("array")
+  })
+}
+
+docs {
+  Las aulas que esta herramienta conoce de una instancia Moodle: las que dejaron
+  título en un launch **más** las que tienen material desplegado.
+
+  Tope fijo de 200 y **sin paginación**: es un índice, no un exportador.
+
+  La plataforma viaja por query y no por cabecera porque aquí no hay sesión LTI
+  de la que sacarla.
+
+  Errores que conviene distinguir:
+
+  - **400** — falta `platformId` o no es un UUID.
+  - **401** — el bearer no es el de esta API. Ojo: `contentToken` **no** vale.
+  - **403** — el token no está autorizado para esa plataforma
+    (`reports_api_platform_not_allowed`, por `REPORTS_API_ALLOWED_PLATFORM_IDS`).
+  - **404** — la plataforma no existe o está deshabilitada… **o la API entera lo
+    está**, porque `REPORTS_API_TOKEN` está vacío.
+}

@@ -49,7 +49,7 @@ test('toLaunchContext aplana el id_token a la forma que usa la app', () => {
     [CLAIM.deploymentId]: 'dep-1',
     [CLAIM.messageType]: 'LtiResourceLinkRequest',
     [CLAIM.roles]: [LEARNER],
-    [CLAIM.context]: { id: 'curso-9', title: 'Cálculo I' },
+    [CLAIM.context]: { id: 'curso-9', title: 'Cálculo I', label: 'CAL1' },
     [CLAIM.resourceLink]: { id: 'rl-3' },
     [CLAIM.custom]: { videoId: 'abc', username: 'jgarcia' },
     [CLAIM.lis]: { person_sourcedid: '99999999R' },
@@ -64,11 +64,45 @@ test('toLaunchContext aplana el id_token a la forma que usa la app', () => {
   assert.equal(ctx.isInstructor, false)
   assert.equal(ctx.contextId, 'curso-9')
   assert.equal(ctx.contextTitle, 'Cálculo I')
+  assert.equal(ctx.contextLabel, 'CAL1')
   assert.equal(ctx.resourceLinkId, 'rl-3')
   assert.equal(ctx.custom.videoId, 'abc')
   assert.equal(ctx.custom.username, 'jgarcia')
   assert.equal(ctx.lisPersonSourcedId, '99999999R')
   assert.equal(ctx.returnUrl, 'https://moodle.example.org/vuelta')
+})
+
+test('si Moodle no comparte el nombre, el nombre es null y no cadena vacía', () => {
+  // Moodle omite `name`/`given_name`/`family_name` según su configuración de
+  // privacidad. Devolver '' hacía que ese vacío atravesara la sesión y acabara
+  // guardado en los eventos, y el informe de seguimiento enseñaba la celda
+  // «Alumno» en blanco porque `'' ?? identity ?? sub` es ''.
+  const ctx = toLaunchContext(
+    { iss: PLATFORM.issuer, aud: 'CID', sub: 'moodle-user-42', [CLAIM.roles]: [LEARNER] },
+    PLATFORM
+  )
+  assert.equal(ctx.name, null)
+
+  // Un nombre en blancos tampoco es un nombre.
+  assert.equal(
+    toLaunchContext({ iss: PLATFORM.issuer, aud: 'CID', sub: 'u', name: '   ' }, PLATFORM).name,
+    null
+  )
+})
+
+test('sin claim name se compone del nombre y los apellidos', () => {
+  const ctx = toLaunchContext(
+    {
+      iss: PLATFORM.issuer,
+      aud: 'CID',
+      sub: 'u',
+      given_name: 'Vega',
+      family_name: 'Solano',
+      [CLAIM.roles]: [LEARNER]
+    },
+    PLATFORM
+  )
+  assert.equal(ctx.name, 'Vega Solano')
 })
 
 test('con varios aud se toma el primero como client_id', () => {

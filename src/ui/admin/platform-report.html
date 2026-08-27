@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Seguimiento de alumnos · MoodleShield</title>
+  <link rel="stylesheet" href="/assets/app.css?v={{ASSET_VERSION}}">
+</head>
+<body class="admin" data-page="platform-report">
+  <header class="bar admin-bar">
+    <div><p class="eyebrow" id="platformName">MoodleShield</p><h1 id="pageTitle">Seguimiento de alumnos</h1></div>
+    <nav><span class="build" title="Entorno y compilación que sirven esta página"><b class="build-env">{{APP_ENV}}</b> {{APP_VERSION}}</span>
+      <a class="btn" id="coursesLink" href="/admin/platforms">Aulas</a>
+      <a class="btn" id="contentLink" href="/admin/platforms">Contenido del aula</a>
+      <a class="btn" href="/admin/platforms">Volver al listado</a>
+      <form id="logout" method="post" action="/admin/logout"><input type="hidden" name="_csrf"><button>Salir</button></form>
+    </nav>
+  </header>
+
+  <main class="admin-main">
+    <p class="muted" id="issuer"></p>
+
+    <section class="panel">
+      <h2>Buscar un alumno</h2>
+      <p class="muted">Por su nombre de usuario de Moodle. Devuelve su avance en todas las aulas de esta instancia.</p>
+      <form id="searchForm" method="get">
+        <p>
+          <label for="identity">Nombre de usuario</label>
+          <input type="text" id="identity" name="identity" maxlength="255" autocomplete="off" placeholder="vsolano">
+          <button type="submit">Buscar</button>
+        </p>
+      </form>
+    </section>
+
+    <div id="telemetryNotice" class="notice" hidden></div>
+    <div id="empty" class="notice warning" hidden></div>
+    <div id="views"></div>
+  </main>
+
+  <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script type="module" src="/assets/admin-report.js?v={{ASSET_VERSION}}"></script>
+</body>
+</html>

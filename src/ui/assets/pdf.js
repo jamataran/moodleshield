@@ -2,6 +2,7 @@ import { createPdfView } from './pdf-component.js?v=resume-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
 import { createViewerShell } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver } from './progress-client.js?v=resume-1'
+import { createPdfTelemetry } from './telemetry-client.js?v=seguimiento-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({
@@ -51,6 +52,13 @@ try {
         return Number.isInteger(pageNumber) && pageNumber >= 1 ? { pageNumber } : null
       }
     })
+    // El marcador guarda la última página; esto, cuántas distintas se abrieron.
+    const telemetry = createPdfTelemetry({
+      sessionToken: boot.sessionToken,
+      documentId: boot.document.id,
+      view
+    })
+    window.addEventListener('pagehide', () => telemetry.destroy())
   }
 } catch {
   // createPdfView ya dejó el motivo en el estado; aquí sólo se evita que el

@@ -14,7 +14,11 @@ import { uploadsRouter } from './routes/uploads.js'
 import { importsRouter } from './routes/imports.js'
 import { hlsRouter, mediaGrantRouter, mediaRouter } from './routes/hls.js'
 import { progressRouter } from './routes/progress.js'
+import { telemetryRouter } from './routes/telemetry.js'
+import { reportsRouter } from './routes/reports.js'
 import { contentApiRouter } from './routes/content-api.js'
+import { reportsApiRouter } from './routes/reports-api.js'
+import { openapiRouter } from './routes/openapi.js'
 import { healthRouter } from './routes/health.js'
 import { renderPage, uiDir } from './ui/render.js'
 import { adminRouter } from './admin/routes.js'
@@ -105,11 +109,15 @@ export async function createApp () {
   // inválido cae al límite por IP y no puede llenar el almacén con claves al azar.
   app.use(['/lti/login', '/lti/launch'], publicAuthLimiter)
   app.use('/api/v1', migrationApiLimiter)
-  app.use(['/materials', '/uploads', '/imports', '/folders', '/collections', '/videos', '/documents'],
-    catalogApiLimiter)
-  app.use(['/hls', '/progress', '/internal'], playbackApiLimiter)
+  app.use(['/materials', '/uploads', '/imports', '/folders', '/collections', '/videos', '/documents',
+    '/reports'], catalogApiLimiter)
+  app.use(['/hls', '/progress', '/telemetry', '/internal'], playbackApiLimiter)
 
   app.use(healthRouter)
+  // Antes que las dos APIs: el contrato es público y no lleva token, así que no
+  // puede quedar detrás de un guardián que exija uno.
+  app.use('/api/v1', openapiRouter)
+  app.use('/api/v1/reports', reportsApiRouter)
   app.use('/api/v1', contentApiRouter)
   app.use('/admin', adminRouter)
   app.use('/lti', ltiRouter)
@@ -123,6 +131,8 @@ export async function createApp () {
   app.use('/documents', documentsRouter)
   app.use('/hls', hlsRouter)
   app.use('/progress', progressRouter)
+  app.use('/telemetry', telemetryRouter)
+  app.use('/reports', reportsRouter)
   // En producción los segmentos los sirve nginx y esta ruta NO existe: la
   // aplicación no depende de que el proxy esté delante para no servir segmentos
   // sin firma (V-11). Fuera de producción se monta siempre, incluso con

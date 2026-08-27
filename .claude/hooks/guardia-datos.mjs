@@ -89,9 +89,12 @@ const REGLAS_BASH = [
   {
     nombre: 'secretos',
     patron: /(^|[\s;&|])(cat|echo|printf|tee)\b[^;&|]*>\s*[^\s;&|]*\.env(\.local)?(\s|$)/i,
-    motivo: 'sobrescribe un fichero de secretos: rotarlos invalida sesiones, enlaces firmados y la firma ' +
+    motivo: 'escribe sobre un fichero de secretos: rotarlos invalida sesiones, enlaces firmados y la firma ' +
       'de las actividades ya insertadas',
-    alternativa: 'Añadir claves al bloque existente (`>>` sobre una copia revisada), nunca regenerarlo entero.'
+    // También corta `>>`: un append no borra el bloque, pero una clave repetida gana en
+    // dotenv, así que añadir una línea es una forma indirecta de rotar un secreto.
+    alternativa: 'Di qué clave hay que añadir y con qué valor, y que la añada quien opera el entorno. ' +
+      'El bloque que ya existe no se regenera ni se pisa desde aquí.'
   }
 ]
 
@@ -115,7 +118,7 @@ function motivoPorRuta (ruta) {
       nombre: 'secretos',
       motivo: 'reescribe un fichero de secretos, y rotarlos invalida trazas, enlaces firmados, sesiones ' +
         'y la firma de las actividades ya insertadas',
-      alternativa: 'Añadir claves al bloque existente; el que hay no se regenera.'
+      alternativa: 'Di qué clave hay que añadir y con qué valor; la añade quien opera el entorno.'
     }
   }
   if (RUTAS_VIVAS.some((r) => r.test(ruta))) {

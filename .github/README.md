@@ -16,9 +16,11 @@ Si sólo lees dos frases, que sean estas:
 
 ---
 
-## El día a día, en cinco pasos
+## El día a día, en seis pasos
 
 ```
+0. Se abre un issue ─────────────────  qué hay que hacer, y por qué
+        │                              (en docs/ vive la documentación, no las tareas)
 1. Rama de trabajo desde `test`
         │
 2.      └── PR a `test` ─────────────► [AUTO] CI · valida cada PR
@@ -35,8 +37,12 @@ Si sólo lees dos frases, que sean estas:
                                          infra/prod/compose.yml → despliega PROD)
 ```
 
-Tú haces tres cosas: **abrir la PR**, **aprobarla y mergearla**, y **pulsar el
-botón de promoción cuando test te convenza**. Lo demás ocurre solo.
+Tú haces cuatro cosas: **abrir el issue**, **abrir la PR**, **aprobarla y
+mergearla**, y **pulsar el botón de promoción cuando test te convenza**. Lo demás
+ocurre solo.
+
+El issue no es burocracia: es donde queda escrito el «por qué» y donde se anota
+la evidencia al cerrarlo. La PR enlaza al issue con `Closes #NN`.
 
 ---
 
@@ -116,8 +122,9 @@ ya existe sobre el commit correcto y continúa desde donde se quedó.
 
 ### En el `.env` de los dos stacks
 
-Dos variables nuevas frente a `v1.0.5`, y **el stack no arranca sin ellas**
-(`${DB_APP_PASSWORD:?falta DB_APP_PASSWORD}`):
+Dos variables que **el stack exige para arrancar** desde `v1.0.6`
+(`${DB_APP_PASSWORD:?falta DB_APP_PASSWORD}`). Producción y test ya las tienen; esto
+es para dar de alta un entorno nuevo:
 
 ```
 DB_APP_PASSWORD=<openssl rand -hex 32>
@@ -191,8 +198,12 @@ git show origin/main:infra/prod/compose.yml | grep 'image: ghcr'
 
 Un control que nunca has visto fallar no sabes si existe.
 
-**a) Una PR hacia `test` que toque `infra/prod/`.** La rechaza el job
-«Frontera entre entornos». Producción no se edita trabajando.
+**a) Una PR hacia `test` que mueva la versión desplegada en producción.** La
+rechaza el job «Frontera entre entornos»: las tres etiquetas `image:` y el ancla
+`WORKER_ENV_ACTIVATION` de `infra/prod/compose.yml` tienen que declarar lo mismo
+que `main`, que es lo que corre de verdad. El resto de `infra/prod/` —variables,
+límites, plantilla— sí se mantiene por PR a `test`, y llega a producción con la
+siguiente promoción.
 
 **b) Promocionar un commit que no pasó por `test`.** El workflow comprueba que
 existe `:sha-<commit>` en GHCR y que su firma es la de `cd-test.yml`. Falla en
@@ -215,7 +226,7 @@ despliegue no llega a escribir el Compose.
 | `falta DB_APP_PASSWORD` al interpolar | El `.env` del stack no tiene los secretos nuevos | Añadirlos; ver prerrequisitos |
 | `infra/test/compose.yml no apunta a una imagen sha-* válida` | `cd-test.yml` no ha corrido todavía sobre esa rama | Mergear algo a `test`, o lanzarlo a mano |
 | `No existe ghcr.io/…:sha-…` | Se intenta promocionar algo que no pasó por `test` | Empujar a `test`, esperar el build y promocionar después |
-| `Esta PR cambia infra/prod/` | La PR toca producción | Sacar el cambio: producción se mueve promocionando |
+| `El Compose de producción de esta PR no declara la versión desplegada` | Las etiquetas `image:` de `infra/prod/compose.yml` no coinciden con las de `main` | Si te las has inventado, quítalas. Si sólo se han quedado atrás tras una promoción, sincronízalas: `git checkout origin/main -- infra/prod/compose.yml` y repite tus cambios |
 | `El tag vX.Y.Z ya existe y apunta a otro commit` | Se promocionó antes esa versión desde otro commit | Elegir el siguiente salto |
 | `main se movió durante el push` | Otro push aterrizó a la vez | Se reintenta 3 veces solo |
 | El workflow no arranca al empujar | El cambio sólo toca `docs/**` o `*.md` | Lanzarlo con *Run workflow* |
@@ -243,5 +254,5 @@ situación que causó el incidente de ADR-028.
 - [ADR-028](../docs/decisiones.md) — el entorno es la rama
 - [`docs/desarrollo.md`](../docs/desarrollo.md) — entorno local, tests, convenciones y flujo de Git
 - [`infra/README.md`](../infra/README.md) — alta de los stacks en Portainer
-- [`docs/revision-seguridad-2026-08-10.md`](../docs/revision-seguridad-2026-08-10.md) — transición desde `v1.0.5`
+- [`docs/seguridad.md`](../docs/seguridad.md) — estado de seguridad vigente y qué se comprueba en cada release
 - [`CLAUDE.md`](../CLAUDE.md) — reglas del proyecto (Regla 0: hay producción con material real dentro)

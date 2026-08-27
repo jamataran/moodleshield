@@ -1,0 +1,54 @@
+meta {
+  name: Subir un fragmento
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/api/v1/uploads/{{uploadId}}/chunks/0
+  body: none
+  auth: bearer
+}
+
+params:path {
+  uploadId: {{uploadId}}
+}
+
+auth:bearer {
+  token: {{contentToken}}
+}
+
+headers {
+  X-MoodleShield-Platform-Id: {{platformId}}
+  X-MoodleShield-Owner-Sub: {{ownerSub}}
+  Content-Type: application/octet-stream
+}
+
+docs {
+  **Esta petición está a medias a propósito: elige el fichero tú.**
+
+  El cuerpo son bytes crudos, así que Bruno no puede llevarlo en el `.bru` sin
+  incrustar un binario en el repositorio. Abre la pestaña **Body**, cambia el
+  tipo a **File / Binary** y escoge el fragmento. Cambia también el `0` final de
+  la URL por el índice que toque.
+
+  El tamaño exacto de cada fragmento lo dijo la reserva en `chunkBytes` (16 MiB
+  por defecto); todos son de ese tamaño salvo el último. Un fragmento mayor que
+  `UPLOAD_CHUNK_BYTES` recibe **413**.
+
+  > **Para una migración de verdad, no uses esto.** Trocear un fichero de 700 MB
+  > a mano no tiene ninguna gracia y un cliente gráfico mantiene el fichero en
+  > memoria. Está `scripts/upload-content.sh`, que hace el flujo entero por
+  > streaming:
+  >
+  > ```sh
+  > export MOODLESHIELD_URL=https://shield.example
+  > export CONTENT_API_TOKEN='...'
+  > export PLATFORM_ID='...'
+  > export OWNER_SUB='profesor-123'
+  > ./scripts/upload-content.sh export/tema-01.mp4
+  > ```
+  >
+  > Esta colección sirve para **entender y probar** el protocolo, no para mover
+  > gigabytes.
+}

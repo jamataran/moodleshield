@@ -1,0 +1,41 @@
+meta {
+  name: Contrato OpenAPI
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/openapi.json
+  body: none
+  auth: none
+}
+
+tests {
+  test("responde 200 · hay al menos una API activa", function () {
+    expect(res.getStatus()).to.equal(200)
+  })
+
+  test("es OpenAPI 3.1", function () {
+    expect(res.getBody().openapi).to.match(/^3\.1/)
+  })
+
+  test("sólo promete lo que este despliegue sirve", function () {
+    // El spec se recorta a las APIs activas: prometer una operación que va a
+    // responder 404 porque su token no está puesto es peor que no documentarla.
+    const rutas = Object.keys(res.getBody().paths)
+    expect(rutas.length).to.be.above(0)
+  })
+}
+
+docs {
+  El contrato de `/api/v1`, servido por la propia herramienta y **sin token**.
+
+  Se recorta a las APIs que ese despliegue tiene activas. Si responde **404** no
+  hay ninguna: falta poner `REPORTS_API_TOKEN` o `CONTENT_API_TOKEN` en el
+  entorno de la aplicación.
+
+  `servers[0].url` viene resuelto con el origen público real de la petición, que
+  es lo correcto cuando la herramienta responde por varios nombres.
+
+  Hay un lector con probador en `{{baseUrl}}/api/v1/docs`.
+}

@@ -12,8 +12,15 @@
 #   - Rutas de volumen absolutas: Portainer no ejecuta el compose desde una
 #     carpeta estable, así que las rutas relativas apuntan a cualquier sitio.
 #   - Los secretos se definen en las variables de entorno del stack en
-#     Portainer, NUNCA en este repositorio. Las referencias de imagen de abajo
-#     son el estado desplegado; el CI actualiza sus tags directamente aquí.
+#     Portainer, NUNCA en este repositorio.
+#   - Las tres etiquetas de imagen las escribe SÓLO la promoción, sobre `main`.
+#     En `main` son, por tanto, la versión que corre ahora mismo en producción.
+#     En `test` pueden ir una versión por detrás entre promoción y promoción, y
+#     es normal: nadie despliega producción desde `test`, y el merge de la
+#     promoción conserva las de `main` porque `test` no las toca. El job
+#     «Frontera entre entornos» rechaza la PR que intente moverlas.
+#     El resto de este fichero —variables, límites— sí se mantiene por el carril
+#     normal: PR a `test`, y llega a producción con la siguiente promoción.
 #   - Todo el estado persistente vive bajo ${DATA_ROOT}: pgdata, media y
 #     uploads. Cambiar de host sólo exige copiar esa raíz y conservar el .env.
 #
@@ -38,6 +45,11 @@ x-runtime-hardening: &runtime-hardening
 
 x-app-env: &app-env
   NODE_ENV: production
+  # Qué stack es éste, en la consola y en el log de arranque. `NODE_ENV` no
+  # sirve para distinguirlos —vale `production` en test y aquí— y ésa es justo
+  # la confusión que costó dos días. Va fijo, no por .env: un stack no puede
+  # mentir sobre cuál es.
+  MOODLESHIELD_ENV: prod
   SERVICE_ROLE: app
   LOG_LEVEL: ${LOG_LEVEL:-info}
   PUBLIC_URL: ${PUBLIC_URL:?falta PUBLIC_URL}
@@ -58,6 +70,11 @@ x-app-env: &app-env
   LTI_ADMIN_TOKEN: ${LTI_ADMIN_TOKEN:-}
   CONTENT_API_TOKEN: ${CONTENT_API_TOKEN:-}
   CONTENT_API_ALLOWED_PLATFORM_IDS: ${CONTENT_API_ALLOWED_PLATFORM_IDS:-}
+  # API de informes: sólo lectura, token PROPIO (ADR-030). Vacía = todas sus
+  # rutas en 404, que es como sale de fábrica. Poner el token SIN su lista de
+  # plataformas aborta el arranque: van las dos, o ninguna.
+  REPORTS_API_TOKEN: ${REPORTS_API_TOKEN:-}
+  REPORTS_API_ALLOWED_PLATFORM_IDS: ${REPORTS_API_ALLOWED_PLATFORM_IDS:-}
   ADMIN_USERNAME: ${ADMIN_USERNAME:?falta ADMIN_USERNAME}
   ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?falta ADMIN_PASSWORD_HASH}
   ADMIN_SESSION_SECRET: ${ADMIN_SESSION_SECRET:?falta ADMIN_SESSION_SECRET}
@@ -108,6 +125,10 @@ x-app-env: &app-env
   TRANSCODE_PROBE_TIMEOUT_SECONDS: ${TRANSCODE_PROBE_TIMEOUT_SECONDS:-30}
   TRANSCODE_PROCESS_TIMEOUT_SECONDS: ${TRANSCODE_PROCESS_TIMEOUT_SECONDS:-21600}
   VIDEO_MAX_OUTPUT_BITRATE_KBPS: ${VIDEO_MAX_OUTPUT_BITRATE_KBPS:-8000}
+  # Recorta el lado largo de la salida. 0 = sin recorte, que es el
+  # comportamiento que producción lleva teniendo siempre y no se cambia al
+  # cablearla: esto sólo hace que se PUEDA cambiar sin tocar el Compose.
+  VIDEO_MAX_OUTPUT_LONG_SIDE: ${VIDEO_MAX_OUTPUT_LONG_SIDE:-0}
   VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-14400}
   VIDEO_MAX_PIXELS: ${VIDEO_MAX_PIXELS:-8294400}
   VIDEO_MAX_DIMENSION: ${VIDEO_MAX_DIMENSION:-4096}
@@ -130,6 +151,7 @@ x-app-env: &app-env
 # como administrador aunque se comprometiera ffmpeg/Ghostscript.
 x-worker-env: &worker-env
   NODE_ENV: production
+  MOODLESHIELD_ENV: prod
   SERVICE_ROLE: worker
   LOG_LEVEL: ${LOG_LEVEL:-info}
   DB_HOST: db
@@ -160,6 +182,10 @@ x-worker-env: &worker-env
   TRANSCODE_PROBE_TIMEOUT_SECONDS: ${TRANSCODE_PROBE_TIMEOUT_SECONDS:-30}
   TRANSCODE_PROCESS_TIMEOUT_SECONDS: ${TRANSCODE_PROCESS_TIMEOUT_SECONDS:-21600}
   VIDEO_MAX_OUTPUT_BITRATE_KBPS: ${VIDEO_MAX_OUTPUT_BITRATE_KBPS:-8000}
+  # Recorta el lado largo de la salida. 0 = sin recorte, que es el
+  # comportamiento que producción lleva teniendo siempre y no se cambia al
+  # cablearla: esto sólo hace que se PUEDA cambiar sin tocar el Compose.
+  VIDEO_MAX_OUTPUT_LONG_SIDE: ${VIDEO_MAX_OUTPUT_LONG_SIDE:-0}
   VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-14400}
   VIDEO_MAX_PIXELS: ${VIDEO_MAX_PIXELS:-8294400}
   VIDEO_MAX_DIMENSION: ${VIDEO_MAX_DIMENSION:-4096}

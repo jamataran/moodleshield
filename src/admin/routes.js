@@ -26,6 +26,7 @@ import {
   issueLoginCsrf,
   verifyLoginCsrf
 } from './auth.js'
+import { adminReportsRouter } from './reports.js'
 import {
   endpointWarnings,
   normalizePlatformInput,
@@ -407,6 +408,9 @@ importScope.post('/done', async (req, res, next) => {
 })
 
 adminRouter.use('/platforms/:id/import', requireImportScope, requireImportCsrf, importScope)
+
+// Antes de `/platforms/:id`, que si no se traga `/platforms/:id/seguimiento`.
+adminRouter.use('/platforms/:id/seguimiento', adminReportsRouter)
 
 adminRouter.get('/platforms/:id', async (req, res, next) => {
   try {
