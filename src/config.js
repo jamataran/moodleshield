@@ -297,8 +297,13 @@ export const config = {
   },
 
   catalog: {
-    /** Techo por profesor: la biblioteca deja de ser navegable mucho antes. */
-    maxFoldersPerOwner: integer('MAX_FOLDERS_PER_OWNER', 100),
+    /**
+     * `-1` = sin límite (ADR-032). Cuenta la biblioteca ENTERA del propietario
+     * —la institucional comparte uno por instancia—, y con 100 paró una carga
+     * real en producción. Un número lo repone sin desplegar; la navegabilidad la
+     * cuida `maxFolderDepth`, no este contador.
+     */
+    maxFoldersPerOwner: integer('MAX_FOLDERS_PER_OWNER', -1),
     /** Niveles de anidamiento de carpetas. Más de esto, la miga no cabe en móvil. */
     maxFolderDepth: integer('MAX_FOLDER_DEPTH', 6),
     /** Materiales por colección. El `position` de la tabla es 0..49. */
@@ -626,6 +631,10 @@ export function assertConfigValid () {
       !cuotaValida(config.uploads.maxStoredBytesPerOwner)) {
     errors.push('Las cuotas de subida deben ser positivas o -1 para «sin límite» ' +
       '(STORAGE_MIN_FREE_BYTES puede ser 0, pero no -1)')
+  }
+  if (!cuotaValida(config.catalog.maxFoldersPerOwner)) {
+    errors.push('MAX_FOLDERS_PER_OWNER debe ser positivo o -1 para «sin límite»: ' +
+      'con 0 no se puede crear ninguna carpeta')
   }
   if (Object.values(config.rateLimits).some((value) => value < 1)) {
     errors.push('Todos los RATE_LIMIT_* deben ser enteros positivos')

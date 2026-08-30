@@ -1365,3 +1365,46 @@ la consola de administración que lo enseña por aula y por alumno.
 `/api/v1` → `openapiRouter` en `app.js`. Nada más depende de ello: el informe
 plano, la telemetría y el registro forense siguen exactamente igual, y no hay
 ninguna migración que deshacer — el árbol se calcula, no se guarda.
+
+---
+
+## ADR-032 · La biblioteca no tiene tope de carpetas
+
+**Estado**: aceptada · **Fecha**: 2026-08 · Extiende ADR-016 y ADR-025
+
+**Contexto.** El 31 de agosto de 2026, cargando contenido en producción, la
+importación de una carpeta se paró con «La importación superaría el máximo de
+100 carpetas». El tope, `MAX_FOLDERS_PER_OWNER`, nació con T17 como cota de
+interfaz —«la barra lateral deja de ser navegable mucho antes»— y la importación
+de ADR-025 lo heredó sin discutirlo. Dos cosas lo hacían peor de lo que parecía:
+cuenta **la biblioteca entera** de `(platform_id, owner_sub)`, a cualquier
+profundidad, no las carpetas de la importación en curso; y para la biblioteca
+institucional (ADR-026) ese propietario es uno solo por instancia, así que todo
+el material común del centro compartía un cupo de cien carpetas. Además `dryRun`
+no lo evaluaba: la previsión del diálogo decía «sí» y la importación real «no».
+
+**Decisión.** `MAX_FOLDERS_PER_OWNER` pasa a `-1` por defecto —«sin límite», la
+misma semántica que los cuatro cupos por propietario de ADR-025— y las dos
+comprobaciones (`createFolder` y `ensureFolderPath`) pasan por `superaCupo()`,
+la función pura que ya define esa semántica. El mando se queda: un número lo
+repone sin desplegar. `0` deja de arrancar, porque un cupo de cero no permite
+crear ninguna carpeta y siempre es una variable mal puesta, no una decisión. La
+profundidad (`MAX_FOLDER_DEPTH`) no cambia.
+
+**Razones.** Un tope de carpetas no protegía nada. Una carpeta es una fila; los
+materiales no tienen tope y lo que guarda la máquina son `STORAGE_MIN_FREE_BYTES`
+y `MAX_STORED_BYTES_PER_OWNER`. Y la navegabilidad que quería cuidar no depende
+del total de carpetas sino de cuántas hay en un mismo nivel y a qué profundidad:
+cien carpetas planas ya eran innavegables con el tope puesto, y quinientas bien
+anidadas se recorren sin problema. Lo que sí acota la miga en móvil es la
+profundidad, y esa cota sigue.
+
+**Consecuencias.** Nada de lo desplegado cambia: sin migración, sin UUID, sin
+secretos, sin contrato. Una biblioteca con cien carpetas o menos se comporta
+exactamente igual; la diferencia empieza en la 101. El código `too_many_folders`
+sigue existiendo para quien reponga un número. Límite conocido que se mantiene:
+con un tope repuesto, `dryRun` sigue sin evaluarlo, porque es de sólo lectura por
+diseño; con el valor por defecto el caso no se da.
+
+**Cómo revertirlo.** Poner un número en `MAX_FOLDERS_PER_OWNER` del stack. No hay
+nada que desplegar ni que migrar.
