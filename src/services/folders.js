@@ -1,6 +1,7 @@
 import { many, one, transaction } from '../db/index.js'
 import config from '../config.js'
 import { isUuid } from '../media/storage.js'
+import { superaCupo } from './upload-limits.js'
 
 /**
  * Carpetas personales anidadas (n niveles).
@@ -167,7 +168,7 @@ export function createFolder ({ platformId, ownerSub, ownerName = null, name, pa
       'SELECT count(*)::int AS total FROM catalog_folder WHERE platform_id = $1 AND owner_sub = $2',
       [platformId, ownerSub]
     )
-    if (counted[0].total >= config.catalog.maxFoldersPerOwner) {
+    if (superaCupo(counted[0].total, config.catalog.maxFoldersPerOwner, 1)) {
       throw new FolderError(
         `Has alcanzado el máximo de ${config.catalog.maxFoldersPerOwner} carpetas`,
         { status: 409, code: 'too_many_folders' }
@@ -268,7 +269,8 @@ export function ensureFolderPath ({
 
     // Se cuenta una vez y se lleva la cuenta en memoria: `maxFoldersPerOwner` es
     // un techo del profesor, no de esta llamada, y recontar por segmento sólo
-    // añadiría consultas al bucle.
+    // añadiría consultas al bucle. Por defecto es -1 —sin límite, ADR-032— y el
+    // conteo sólo frena si alguien repuso un número por variable de entorno.
     const { rows: counted } = await client.query(
       'SELECT count(*)::int AS total FROM catalog_folder WHERE platform_id = $1 AND owner_sub = $2',
       [platformId, ownerSub]
@@ -309,7 +311,7 @@ export function ensureFolderPath ({
             { status: 409, code: 'folder_too_deep' }
           )
         }
-        if (total >= config.catalog.maxFoldersPerOwner) {
+        if (superaCupo(total, config.catalog.maxFoldersPerOwner, 1)) {
           throw new FolderError(
             `La importación superaría el máximo de ${config.catalog.maxFoldersPerOwner} carpetas`,
             { status: 409, code: 'too_many_folders' }

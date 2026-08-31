@@ -179,15 +179,35 @@ test('un árbol demasiado profundo se rechaza antes de subir nada', async () => 
   assert.equal((await many('SELECT name FROM catalog_folder')).length, 0)
 })
 
-test('pasar del cupo de carpetas se rechaza con un error accionable', async () => {
-  const tope = config.catalog.maxFoldersPerOwner
+test('la biblioteca no tiene tope de carpetas: la 151 se crea igual que la primera', async () => {
+  // El caso de producción del 31-08-2026: el antiguo cupo de 100 contaba la
+  // biblioteca entera del propietario y paró una carga real a medias (ADR-032).
+  assert.equal(config.catalog.maxFoldersPerOwner, -1, 'el valor por defecto es «sin límite»')
   await query(
     `INSERT INTO catalog_folder (platform_id, owner_sub, name)
-     SELECT $1, $2, 'relleno-' || g FROM generate_series(1, $3) g`,
-    [PLATFORM_A, ANA, tope]
+     SELECT $1, $2, 'relleno-' || g FROM generate_series(1, 150) g`,
+    [PLATFORM_A, ANA]
+  )
+  const result = await ensureFolderPath({ ...scopeAna, segments: ['Álgebra'] })
+  assert.equal(result.created, 1)
+  assert.equal((await many('SELECT id FROM catalog_folder')).length, 151)
+})
+
+test('un tope repuesto por variable de entorno sigue frenando, al importar y al crear a mano', async (t) => {
+  const original = config.catalog.maxFoldersPerOwner
+  config.catalog.maxFoldersPerOwner = 3
+  t.after(() => { config.catalog.maxFoldersPerOwner = original })
+  await query(
+    `INSERT INTO catalog_folder (platform_id, owner_sub, name)
+     SELECT $1, $2, 'relleno-' || g FROM generate_series(1, 3) g`,
+    [PLATFORM_A, ANA]
   )
   await assert.rejects(
     ensureFolderPath({ ...scopeAna, segments: ['Álgebra'] }),
+    (err) => err instanceof FolderError && err.code === 'too_many_folders'
+  )
+  await assert.rejects(
+    createFolder({ ...scopeAna, name: 'Álgebra' }),
     (err) => err instanceof FolderError && err.code === 'too_many_folders'
   )
 })

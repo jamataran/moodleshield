@@ -308,7 +308,7 @@ capa por capa— en [`docs/arquitectura.md`](docs/arquitectura.md).
 |---|---|
 | 🧭 [`docs/README.md`](docs/README.md) | **Índice de la documentación, estado del proyecto y hoja de ruta** |
 | 🏗️ [`docs/arquitectura.md`](docs/arquitectura.md) | Flujos, modelo de datos, endpoints, modelo de seguridad |
-| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…031: por qué cada decisión y cómo revertirla |
+| 🤔 [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…032: por qué cada decisión y cómo revertirla |
 | 🔒 [`docs/seguridad.md`](docs/seguridad.md) | **Estado de seguridad vigente**: capas, hallazgos, límites aceptados y secretos permanentes |
 | 💻 [`docs/desarrollo.md`](docs/desarrollo.md) | **Guía para desarrolladores**: entorno, tests, convenciones, depuración |
 | 🎓 [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle, en seis pasos, con diagnóstico |

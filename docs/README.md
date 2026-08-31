@@ -28,7 +28,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | Documento | Qué resuelve |
 |---|---|
 | [`arquitectura.md`](arquitectura.md) | Vista general, árbol de medios, el camino de un visionado y el de una subida, modelo de datos, tabla de endpoints, modelo de seguridad capa por capa |
-| [`decisiones.md`](decisiones.md) | ADR-001…031. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
+| [`decisiones.md`](decisiones.md) | ADR-001…032. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
 | [`seguridad.md`](seguridad.md) | **Estado de seguridad vigente**: qué protege cada capa, dónde está cada hallazgo, los límites que hay que aceptar por escrito y qué secretos son permanentes |
 
 ### Para trabajar en él
