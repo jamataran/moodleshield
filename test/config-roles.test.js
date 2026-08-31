@@ -117,3 +117,22 @@ test('producción no permite degradar la autorización de placements a warn u of
     assert.match(result.stderr, /LAUNCH_RESOURCE_SIGNATURE debe ser enforce/)
   }
 })
+
+test('sin MAX_FOLDERS_PER_OWNER, el número de carpetas no tiene tope (ADR-032)', () => {
+  // Se lee el valor, no sólo que arranque: el incidente del 31-08-2026 fue un
+  // valor por defecto de 100 que nadie había puesto a conciencia.
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e',
+    "import config from './src/config.js'; process.stdout.write(String(config.catalog.maxFoldersPerOwner))"
+  ], { cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, ...commonApp } })
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, '-1')
+})
+
+test('MAX_FOLDERS_PER_OWNER=-1 arranca y 0 no: un cupo de cero bloquearía la biblioteca en silencio', () => {
+  const sinLimite = checkConfig({ ...commonApp, MAX_FOLDERS_PER_OWNER: '-1' })
+  assert.equal(sinLimite.status, 0, sinLimite.stderr)
+
+  const cero = checkConfig({ ...commonApp, MAX_FOLDERS_PER_OWNER: '0' })
+  assert.notEqual(cero.status, 0)
+  assert.match(cero.stderr, /MAX_FOLDERS_PER_OWNER debe ser positivo o -1/)
+})

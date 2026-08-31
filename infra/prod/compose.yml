@@ -135,7 +135,7 @@ x-app-env: &app-env
   VIDEO_MAX_STREAMS: ${VIDEO_MAX_STREAMS:-16}
   VIDEO_MAX_SOURCE_FPS: ${VIDEO_MAX_SOURCE_FPS:-120}
   VIDEO_MAX_AUDIO_CHANNELS: ${VIDEO_MAX_AUDIO_CHANNELS:-8}
-  MAX_FOLDERS_PER_OWNER: ${MAX_FOLDERS_PER_OWNER:-100}
+  MAX_FOLDERS_PER_OWNER: ${MAX_FOLDERS_PER_OWNER:--1}
   MAX_COLLECTION_ITEMS: ${MAX_COLLECTION_ITEMS:-50}
   MATERIAL_REVISION_ACTIVATION: ${MATERIAL_REVISION_ACTIVATION:-auto}
   MATERIAL_REVISION_RETENTION_DAYS: ${MATERIAL_REVISION_RETENTION_DAYS:-30}
@@ -234,7 +234,7 @@ services:
   # ---------------------------------------------------------------------------
   app:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/app:v1.0.8
+    image: ghcr.io/jamataran/moodleshield/app:v1.0.9
     restart: unless-stopped
     init: true
     depends_on:
@@ -265,7 +265,7 @@ services:
   # tumbe el servicio web y para poder limitarle CPU de forma independiente.
   worker:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/worker:v1.0.8
+    image: ghcr.io/jamataran/moodleshield/worker:v1.0.9
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -303,7 +303,7 @@ services:
   # que monta son los medios que sirve con sendfile.
   proxy:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/proxy:v1.0.8
+    image: ghcr.io/jamataran/moodleshield/proxy:v1.0.9
     restart: unless-stopped
     depends_on:
       app:

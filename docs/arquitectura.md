@@ -213,8 +213,10 @@ varias pasadas manuales esperando a que la cola bajara. Lo que de verdad guarda
 la máquina sigue en pie: `STORAGE_MIN_FREE_BYTES` (margen libre en disco) y
 `MAX_STORED_BYTES_PER_OWNER` (cuota del profesor).
 
-**`-1` es «sin límite» en los cuatro cupos por propietario**, y volver a poner un
-número es cambiar una variable de entorno, sin desplegar nada.
+**`-1` es «sin límite» en los cuatro cupos por propietario** y en el número de
+carpetas de la biblioteca (`MAX_FOLDERS_PER_OWNER`, ADR-032), y volver a poner un
+número es cambiar una variable de entorno, sin desplegar nada. Lo único que acota
+el árbol es la profundidad, `MAX_FOLDER_DEPTH`.
 
 Si aun así se alcanza una cuota —el disco, o un tope repuesto a mano—, el
 importador **se detiene** en vez de marcar como fallidos los ficheros que
