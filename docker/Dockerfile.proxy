@@ -17,7 +17,7 @@
 # sobre Alpine 3.21, con 35 CVE altas/críticas acumuladas (dos de OpenSSL).
 # 1.29 es la rama viva, sobre Alpine 3.23, y sigue trayendo `secure_link`,
 # que es el módulo del que depende la firma de segmento.
-FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+FROM nginx:1.31-alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
 
 # Lo pasa el bake para las tres imágenes: sirve para que la etiqueta de versión
 # de la imagen coincida con la de app y worker, y —igual de importante— para
