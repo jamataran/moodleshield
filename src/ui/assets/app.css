@@ -959,13 +959,20 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
 .video-view:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
+/* Bloque, no rejilla. Con `display: grid` la fila implícita `auto` crecía hasta
+   el alto intrínseco del vídeo (ancho ÷ relación de aspecto): el `height: 100%`
+   del <video> se resuelve contra un área de rejilla que aún no existe al
+   dimensionar las pistas, y el `overflow: hidden` recortaba por abajo todo lo
+   que no fuera 16:9 (con una grabación de iPad, 1,43:1, el 22 % del fotograma).
+   Con la caja definida, `object-fit: contain` centra y encaja él solo; los demás
+   hijos son absolutos y `place-items` no hacía nada. Lo mide de verdad
+   test/video-stage-layout.test.js. */
 .video-stage {
   position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
-  display: grid;
-  place-items: center;
+  display: block;
   overflow: hidden;
   background: #000;
 }

@@ -567,6 +567,10 @@ que pliega el panel lateral. Todo lo demás —título del material, lista de la
 colección, Anterior/Siguiente, descarga y línea de estado— vive en ese panel, de
 modo que el alto restante es íntegramente del contenido.
 
+Ese alto se usa para enseñar el fotograma **entero**: el reproductor encaja el
+vídeo con `object-fit: contain`, con franjas negras si su relación de aspecto no
+coincide con la del hueco. Una grabación de iPad (1,43:1) no se recorta.
+
 El chip abre un `<dialog>` con el aviso legal completo y los datos registrados
 de la sesión: nombre, identidad, IP, inicio y caducidad, referencia de
 auditoría, material y navegador. Esa **referencia es el `jti`**, el mismo valor

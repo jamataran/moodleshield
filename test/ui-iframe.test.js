@@ -509,6 +509,20 @@ test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua ca
     'ocultar el volumen no debe eliminar también el botón de silencio')
 })
 
+test('el fotograma se ve entero: el escenario del vídeo no es una rejilla', async () => {
+  // Con `display: grid` la fila implícita `auto` crecía hasta el alto intrínseco
+  // del vídeo y `overflow: hidden` recortaba por abajo el 22 % de una grabación
+  // de iPad. Esta prueba vigila la regla; test/video-stage-layout.test.js mide
+  // el hecho en Chrome headless.
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /\.video-stage\s*\{[^}]*display:\s*block/s,
+    'un grid con fila auto deja crecer el vídeo hasta su alto intrínseco y overflow:hidden lo recorta')
+  assert.doesNotMatch(css, /\.video-stage\s*\{[^}]*(display:\s*grid|place-items)/s,
+    'place-items no centraba nada: object-fit:contain ya lo hace dentro de la caja definida')
+  assert.match(css, /\.video-stage video\s*\{[^}]*object-fit:\s*contain/s,
+    'el vídeo se encaja entero, nunca se recorta con cover')
+})
+
 test('el player y los visores se sirven sin CDN', async () => {
   for (const file of await uiFiles('.html')) {
     const html = await readFile(file, 'utf8')

@@ -302,6 +302,16 @@ plataformas antes de probar el launch.
 
 **El keyset lo consulta el PHP de Moodle, no el navegador.** Ver Modo 3.
 
+**Un `display: grid` con fila implícita `auto` no acota a un hijo con `height: 100%`.** El
+porcentaje se resuelve contra el área de rejilla, que todavía no existe cuando se dimensionan
+las pistas, así que cuenta como `auto`: la fila crece hasta el alto intrínseco del vídeo a
+ancho completo y el `overflow: hidden` recorta por abajo. Con 16:9 el corte era del 3 % y pasó
+inadvertido diez versiones; con una grabación de iPad (1,43:1) es del 22 %. La pista que
+despista: la captura de `canvas.drawImage(video, 0, 0, videoWidth, videoHeight)` sale entera
+porque lee el elemento, no el layout. `.video-stage` es `display: block` a propósito, y lo
+mide de verdad `test/video-stage-layout.test.js` con Chrome headless (se salta si no hay
+Chrome; en el runner de CI lo hay).
+
 ---
 
 ## Depurar

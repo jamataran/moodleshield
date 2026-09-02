@@ -278,6 +278,10 @@ npm run test:integration:local
   `assertVariantsAligned` falla, la culpa casi siempre es del GOP.
 - `frame-ancestors` se calcula de las plataformas registradas; sin ninguna dada
   de alta queda en `'self'` (ver `src/security/frame-ancestors.js`).
+- Un `display: grid` con fila implícita `auto` **no acota** a un hijo con
+  `height: 100%`: crece hasta su alto intrínseco y `overflow: hidden` recorta por
+  abajo (16:9 ≈ 3 %, iPad 1,43:1 ≈ 22 %). `.video-stage` es `display: block` a
+  propósito; lo mide `test/video-stage-layout.test.js`.
 - **Nada de `alert`/`confirm`/`prompt` en `src/ui/`.** Chrome y Edge los
   retiraron de los iframes cross-origin: dentro de Moodle no abren nada y el
   botón que dependa de ellos no hace nada. Usa `<dialog>` y ábrelo siempre por
