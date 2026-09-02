@@ -89,7 +89,7 @@ sueltos. Antes de tocar nada:
 |---|---|
 | [`docs/README.md`](docs/README.md) | **EMPIEZA AQUÍ**: índice, estado del proyecto, hoja de ruta, limitaciones |
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Vista general, árbol de medios, camino de un visionado y de una subida, modelo de datos, endpoints, modelo de seguridad |
-| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…032: por qué cada decisión y cómo revertirla |
+| [`docs/decisiones.md`](docs/decisiones.md) | ADR-001…033: por qué cada decisión y cómo revertirla |
 | [`docs/seguridad.md`](docs/seguridad.md) | Estado de seguridad vigente: qué protege cada capa, dónde está cada hallazgo, límites aceptados y secretos permanentes |
 | [`docs/desarrollo.md`](docs/desarrollo.md) | Entorno, tests, convenciones, trampas, flujo de Git |
 | [`docs/moodle-setup.md`](docs/moodle-setup.md) | Alta de la herramienta en Moodle (6 pasos) |
@@ -278,6 +278,10 @@ npm run test:integration:local
   `assertVariantsAligned` falla, la culpa casi siempre es del GOP.
 - `frame-ancestors` se calcula de las plataformas registradas; sin ninguna dada
   de alta queda en `'self'` (ver `src/security/frame-ancestors.js`).
+- Un `display: grid` con fila implícita `auto` **no acota** a un hijo con
+  `height: 100%`: crece hasta su alto intrínseco y `overflow: hidden` recorta por
+  abajo (16:9 ≈ 3 %, iPad 1,43:1 ≈ 22 %). `.video-stage` es `display: block` a
+  propósito; lo mide `test/video-stage-layout.test.js`.
 - **Nada de `alert`/`confirm`/`prompt` en `src/ui/`.** Chrome y Edge los
   retiraron de los iframes cross-origin: dentro de Moodle no abren nada y el
   botón que dependa de ellos no hace nada. Usa `<dialog>` y ábrelo siempre por
