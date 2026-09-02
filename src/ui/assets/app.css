@@ -959,13 +959,20 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
 .video-view:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
+/* Bloque, no rejilla. Con `display: grid` la fila implícita `auto` crecía hasta
+   el alto intrínseco del vídeo (ancho ÷ relación de aspecto): el `height: 100%`
+   del <video> se resuelve contra un área de rejilla que aún no existe al
+   dimensionar las pistas, y el `overflow: hidden` recortaba por abajo todo lo
+   que no fuera 16:9 (con una grabación de iPad, 1,43:1, el 22 % del fotograma).
+   Con la caja definida, `object-fit: contain` centra y encaja él solo; los demás
+   hijos son absolutos y `place-items` no hacía nada. Lo mide de verdad
+   test/video-stage-layout.test.js. */
 .video-stage {
   position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
-  display: grid;
-  place-items: center;
+  display: block;
   overflow: hidden;
   background: #000;
 }
@@ -1051,7 +1058,23 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   padding: 3rem clamp(.55rem, 1.5vw, 1rem) .45rem;
   background: linear-gradient(to bottom, transparent, rgb(0 0 0 / .78) 58%, rgb(0 0 0 / .92));
   color: #fff;
+  transition: opacity .2s ease;
+  /* El degradado (padding-top 3rem) no intercepta clics ni cuenta como hover: la
+     línea de tiempo y la fila de botones recuperan pointer-events justo debajo.
+     El padding se queda porque .video-time se apoya en él en huecos ≤25rem. */
+  pointer-events: none;
 }
+.video-controls > * { pointer-events: auto; }
+/* Reproduciendo, la barra se retira sola (ADR-033). Sólo opacity + pointer-events:
+   sigue en el árbol de accesibilidad y en el orden de tabulación; nunca
+   visibility:hidden ni display:none. La marca de agua no entra aquí. */
+.video-view.is-idle .video-controls { opacity: 0; }
+.video-view.is-idle .video-controls,
+.video-view.is-idle .video-controls > * { pointer-events: none; }
+/* Cinturón: aunque el JS fallara, un control con foco de teclado nunca queda invisible. */
+.video-view.is-idle .video-controls:has(:focus-visible) { opacity: 1; }
+/* En el root y no en el escenario, para que cubra también :fullscreen. */
+.video-view.is-idle { cursor: none; }
 .video-timeline {
   --played: 0%;
   --buffered: 0%;
@@ -1162,6 +1185,8 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .video-view.is-buffering .video-loader { animation: none; }
+  /* La barra se sigue retirando; sólo se va el fundido. */
+  .video-controls,
   .video-center-play,
   .video-timeline::-webkit-slider-thumb,
   .video-icon-button { transition: none; }

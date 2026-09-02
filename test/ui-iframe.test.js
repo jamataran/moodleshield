@@ -509,6 +509,57 @@ test('el vídeo ofrece navegación completa, PiP, captura y una marca de agua ca
     'ocultar el volumen no debe eliminar también el botón de silencio')
 })
 
+test('el fotograma se ve entero: el escenario del vídeo no es una rejilla', async () => {
+  // Con `display: grid` la fila implícita `auto` crecía hasta el alto intrínseco
+  // del vídeo y `overflow: hidden` recortaba por abajo el 22 % de una grabación
+  // de iPad. Esta prueba vigila la regla; test/video-stage-layout.test.js mide
+  // el hecho en Chrome headless.
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /\.video-stage\s*\{[^}]*display:\s*block/s,
+    'un grid con fila auto deja crecer el vídeo hasta su alto intrínseco y overflow:hidden lo recorta')
+  assert.doesNotMatch(css, /\.video-stage\s*\{[^}]*(display:\s*grid|place-items)/s,
+    'place-items no centraba nada: object-fit:contain ya lo hace dentro de la caja definida')
+  assert.match(css, /\.video-stage video\s*\{[^}]*object-fit:\s*contain/s,
+    'el vídeo se encaja entero, nunca se recorta con cover')
+})
+
+test('la barra de controles se retira sola sin salir del árbol de accesibilidad', async () => {
+  // ADR-033. Sólo opacity + pointer-events: un lector de pantalla y el Tab
+  // siguen llegando a los botones; la marca de agua y el chip no se ocultan.
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /\.video-view\.is-idle \.video-controls\s*\{[^}]*opacity:\s*0/s,
+    'la barra oculta se retira con opacity')
+  assert.match(css, /\.video-view\.is-idle \.video-controls,\s*\.video-view\.is-idle \.video-controls > \*\s*\{[^}]*pointer-events:\s*none/s,
+    'una barra invisible no puede seguir recibiendo toques')
+  assert.doesNotMatch(css, /\.video-view\.is-idle \.video-controls\s*\{[^}]*(visibility|display)/s,
+    'visibility:hidden o display:none la sacarían del árbol de accesibilidad y del Tab')
+  assert.doesNotMatch(css, /\.is-idle[^{]*watermark/, 'la marca de agua no se oculta nunca')
+  assert.match(css, /\.video-view\.is-idle\s*\{[^}]*cursor:\s*none/s, 'el cursor se va con la barra')
+  assert.match(css, /\.video-controls\s*\{[^}]*pointer-events:\s*none/s,
+    'el degradado no debe interceptar clics ni contar como hover')
+  assert.match(css, /\.video-controls > \*\s*\{[^}]*pointer-events:\s*auto/s,
+    'la línea de tiempo y los botones sí se tocan')
+  assert.match(css, /prefers-reduced-motion: reduce\)\s*\{[^]*?\.video-controls[^}]*transition:\s*none/,
+    'con movimiento reducido se quita el fundido, no el ocultado')
+
+  const code = await readFile(path.join(uiDir, 'assets/video-component.js'), 'utf8')
+  assert.match(code, /export function createControlsAutohide/, 'la máquina tiene que ser pura y probada')
+  assert.match(code, /pointerType/, 'táctil y ratón no se comportan igual')
+  assert.match(code, /:focus-visible/, 'sólo el foco de teclado fija la barra')
+  assert.match(code, /tapRevealed/, 'un toque con la barra oculta sólo la revela')
+  assert.match(code, /autohide\.destroy\(\)/, 'la colección destruye y recrea reproductores')
+  assert.doesNotMatch(code, /touchstart/, 'pointerdown ya cubre el toque; un touchstart penaliza el scroll')
+  assert.doesNotMatch(code, /controls\.(setAttribute\('aria-hidden'|inert)/,
+    'la barra oculta sigue anunciándose')
+
+  const player = await readFile(path.join(uiDir, 'assets/player.js'), 'utf8')
+  const collection = await readFile(path.join(uiDir, 'assets/collection.js'), 'utf8')
+  const version = (src) => src.match(/video-component\.js\?v=([\w-]+)/)?.[1]
+  assert.ok(version(player))
+  assert.equal(version(player), version(collection),
+    'dos ?v= distintos cargan el módulo dos veces, con dos estados')
+})
+
 test('el player y los visores se sirven sin CDN', async () => {
   for (const file of await uiFiles('.html')) {
     const html = await readFile(file, 'utf8')

@@ -1408,3 +1408,57 @@ diseño; con el valor por defecto el caso no se da.
 
 **Cómo revertirlo.** Poner un número en `MAX_FOLDERS_PER_OWNER` del stack. No hay
 nada que desplegar ni que migrar.
+
+## ADR-033 · La barra de controles del vídeo se retira sola durante la reproducción
+
+**Estado**: aceptada · **Fecha**: 2026-09 · Extiende ADR-022
+
+**Contexto.** El 2 de septiembre de 2026, en producción, una grabación de iPad
+(1,43:1) se veía recortada por abajo: el escenario del reproductor era una
+rejilla con fila `auto` y el vídeo la desbordaba (issue #95; un fallo, no una
+decisión). Arreglado el encuadre quedó a la vista lo que el desbordamiento
+tapaba: la barra de controles y su degradado ocupan la franja inferior del vídeo
+**siempre**, también reproduciendo, y en un vídeo limitado por alto —el caso
+normal en un hueco ancho— esa franja es imagen, no fondo. En una pizarra escrita
+hasta el borde son las últimas líneas. El reproductor nació con los controles
+fijos porque nadie lo decidió, no porque se decidiera.
+
+**Decisión.** Reproduciendo, la barra se retira a los tres segundos sin
+actividad y vuelve con el ratón, una tecla que sea un atajo, un toque o el foco.
+Se queda fija —sin temporizador— en pausa, al terminar y antes de empezar, y
+mientras dura un *pin*: arrastrar la línea de tiempo (aunque el puntero salga
+del reproductor), el ratón sobre la barra, foco de teclado dentro de ella
+(`:focus-visible`; el foco que un clic de ratón deja en un botón no cuenta) y la
+ventana flotante. Soltar el último pin re-arma el temporizador, nunca oculta en
+seco; sacar el ratón del reproductor sí. La barra oculta sólo pierde `opacity` y
+`pointer-events`: sigue en el árbol de accesibilidad y en el orden de tabulación,
+y un `:has(:focus-visible)` en CSS la enseña aunque el JavaScript fallara. En
+táctil, un toque con la barra oculta sólo la revela; el segundo pausa. El
+degradado deja de recibir punteros: un clic en él es un clic en el vídeo.
+`prefers-reduced-motion` quita el fundido, no el ocultado. La lógica es una
+máquina de estados pura (`createControlsAutohide`) con el reloj inyectado,
+probada sin DOM; cada reproductor lleva la suya.
+
+**Razones.** Es la convención de todos los reproductores que el alumno usa, y la
+única forma de devolverle la franja inferior sin quitar controles.
+`visibility: hidden` o `display: none` habrían sido más simples, pero sacan los
+botones del Tab y de los lectores de pantalla justo cuando más se necesitan;
+`focus-within` como pin fijaba la barra para siempre, porque cada clic en el
+escenario enfoca el reproductor y Chrome enfoca el botón pulsado; y un listener
+de toque aparte sobraba (`pointerdown` lo cubre) y penaliza el scroll. Revelar
+sin pausar al tocar es lo que hace YouTube en móvil: «mirar por dónde voy» no
+puede detener la clase.
+
+**Consecuencias.** Lo que ADR-022 promete no cambia: el chip «Sesión
+monitorizada» vive en la barra superior, fuera del reproductor, y la marca de
+agua no entra en ningún selector de ocultado; los dos están en pantalla el 100 %
+del tiempo. Nada de lo desplegado se entera: sólo CSS y JavaScript del visor.
+Límite aceptado, el mismo que YouTube o Vimeo: un lector de pantalla que navega
+con cursor virtual, sin mover el foco, puede anunciar botones que no ve;
+cualquier tecla los enseña. Efecto colateral menor del encuadre, no de esta
+decisión: con franjas laterales la marca de agua puede caer en parte sobre fondo
+negro; sigue en el campo visual y la traza forense es el patrón A/B.
+
+**Cómo revertirlo.** Quitar `autohide` de `createVideoView` y las reglas
+`.is-idle` de `app.css`. Lo vigila el test «la barra de controles se retira sola
+sin salir del árbol de accesibilidad» de `test/ui-iframe.test.js`.
