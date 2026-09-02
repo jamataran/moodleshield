@@ -28,7 +28,7 @@ README.md (raíz)  →  este documento  →  arquitectura.md  →  decisiones.md
 | Documento | Qué resuelve |
 |---|---|
 | [`arquitectura.md`](arquitectura.md) | Vista general, árbol de medios, el camino de un visionado y el de una subida, modelo de datos, tabla de endpoints, modelo de seguridad capa por capa |
-| [`decisiones.md`](decisiones.md) | ADR-001…032. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
+| [`decisiones.md`](decisiones.md) | ADR-001…033. Por qué cada decisión, qué alternativas se descartaron y **cómo revertirla** |
 | [`seguridad.md`](seguridad.md) | **Estado de seguridad vigente**: qué protege cada capa, dónde está cada hallazgo, los límites que hay que aceptar por escrito y qué secretos son permanentes |
 
 ### Para trabajar en él
@@ -82,9 +82,9 @@ El manual completo, con los errores que verás y qué significan, está en
 
 ## Estado del proyecto
 
-**Producción: `v1.0.8`** (20 de agosto de 2026) · 21 migraciones en `test` ·
-**448 pruebas unitarias** (439 pasan, 9 se saltan sin las herramientas de la imagen del
-worker) y **176 de integración** contra PostgreSQL real · `npm audit` en 0.
+**Producción: `v1.0.10`** (31 de agosto de 2026) · 21 migraciones en `test` ·
+**480 pruebas unitarias** (471 pasan, 9 se saltan sin las herramientas de la imagen del
+worker) y **177 de integración** contra PostgreSQL real · `npm audit` en 0.
 
 El sistema está **en uso, sirviendo material real**. Lo que sigue no es una lista de
 funcionalidad por construir, sino el mapa de lo que hay:

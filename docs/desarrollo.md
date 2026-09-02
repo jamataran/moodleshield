@@ -138,8 +138,8 @@ Salida esperada: dos patrones distintos, del estilo `AABBBAAAAA` y `BBABABBAAB`.
 
 ```bash
 npm run lint              # ESLint
-npm test                  # 453 unitarias, sin base de datos (9 se saltan, ver abajo)
-npm run test:integration  # 176 contra Postgres real
+npm test                  # 480 unitarias, sin base de datos (9 se saltan, ver abajo)
+npm run test:integration  # 177 contra Postgres real
 npm run test:coverage     # cobertura nativa de node:test
 ```
 

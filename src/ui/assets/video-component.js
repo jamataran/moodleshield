@@ -77,6 +77,83 @@ export function mediaShortcut (rawKey, { onButton = false } = {}) {
 }
 
 /**
+ * Auto-ocultado de la barra de controles (ADR-033). Pura a propósito: no sabe
+ * qué hora es ni toca el DOM; recibe `schedule`/`cancel` y avisa por `onChange`
+ * sólo en las transiciones visible ↔ oculta.
+ *
+ * En pausa, al terminar o antes de empezar no hay temporizador: la barra queda
+ * fija sin necesidad de pin. Los pins ('scrub', 'hover', 'focus', 'pip') la
+ * mantienen visible mientras duren, y soltar el último re-arma el temporizador
+ * en vez de ocultar en seco: quien suelta la línea de tiempo o sale de la barra
+ * con el ratón tiene `idleMs` de margen.
+ */
+export function createControlsAutohide ({ idleMs = 3000, schedule, cancel, onChange }) {
+  let visible = true
+  let playing = false
+  let timer = null
+  let destroyed = false
+  const pins = new Set()
+
+  const clearTimer = () => {
+    if (timer === null) return
+    cancel(timer)
+    timer = null
+  }
+  // Se re-comprueba al vencer: un cancel que no llegó no puede ocultar una
+  // barra que entre tanto se fijó o se pausó.
+  const tryHide = () => {
+    timer = null
+    if (destroyed || !playing || pins.size > 0 || !visible) return
+    visible = false
+    onChange(false)
+  }
+  const arm = () => {
+    clearTimer()
+    timer = schedule(tryHide, idleMs)
+  }
+  const show = () => {
+    if (destroyed) return
+    if (!visible) {
+      visible = true
+      onChange(true)
+    }
+    if (playing && pins.size === 0) arm()
+    else clearTimer()
+  }
+
+  return {
+    get visible () { return visible },
+    activity: show,
+    setPlaying (next) {
+      if (destroyed) return
+      playing = Boolean(next)
+      show()
+    },
+    pin (reason) {
+      if (destroyed) return
+      pins.add(reason)
+      show()
+    },
+    unpin (reason) {
+      if (destroyed || !pins.delete(reason)) return
+      if (pins.size === 0 && playing) arm()
+    },
+    leave () {
+      if (destroyed) return
+      clearTimer()
+      if (playing && pins.size === 0 && visible) {
+        visible = false
+        onChange(false)
+      }
+    },
+    destroy () {
+      clearTimer()
+      destroyed = true
+    }
+  }
+}
+
+/**
  * Decide qué hacer ante un ERROR de hls.js. Función pura para poder probarla.
  *
  * La distinción importante es el 401/403: hls.js lo clasifica como error de red,
@@ -280,6 +357,29 @@ export function createVideoView ({
   let destroyed = false
   const reducedMotion = win.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
+  // La barra se retira sola reproduciendo (ADR-033). `reducedMotion` no la
+  // desactiva: sólo quita el fundido (CSS). Cada reproductor lleva la suya:
+  // una colección crea y destruye varios en la misma página.
+  const autohide = createControlsAutohide({
+    schedule: (fn, ms) => win.setTimeout(fn, ms),
+    cancel: (handle) => win.clearTimeout(handle),
+    onChange: (visible) => root.classList.toggle('is-idle', !visible)
+  })
+  // En táctil, un toque con la barra oculta sólo la revela: «mirar por dónde
+  // voy» no puede pausar el vídeo. Se decide en pointerdown y el click que
+  // llega después se traga en captura, sea cual sea su destino (al revelar, el
+  // botón que aparece bajo el dedo no debe recibirlo).
+  let tapRevealed = false
+  const isFocusVisible = (el) => {
+    try { return el.matches(':focus-visible') } catch { return true }
+  }
+  // El foco fija la barra sólo si es de teclado: el `root.focus()` de cada clic
+  // en el escenario y el foco que Chrome da a un botón pulsado con ratón no cuentan.
+  const syncFocusPin = (target) => {
+    if (controls.contains(target) && isFocusVisible(target)) autohide.pin('focus')
+    else autohide.unpin('focus')
+  }
+
   const listen = (target, type, handler, options) => {
     target.addEventListener(type, handler, options)
     cleanups.push(() => target.removeEventListener(type, handler, options))
@@ -414,6 +514,10 @@ export function createVideoView ({
       pip.setAttribute('aria-label', label)
       pip.title = label
     }
+    // Mientras el vídeo está en la flotante, la zona en línea es un cartel y el
+    // botón de cerrarla tiene que seguir a la vista.
+    if (active) autohide.pin('pip')
+    else autohide.unpin('pip')
   }
 
   const togglePip = async () => {
@@ -450,6 +554,9 @@ export function createVideoView ({
       active ? ICONS.exitFullscreen : ICONS.fullscreen,
       active ? 'Salir de pantalla completa (F)' : 'Pantalla completa (F)'
     )
+    // El layout acaba de cambiar (o se vuelve del fullscreen nativo de iOS, donde
+    // este overlay no existe): que el alumno vea dónde están las cosas.
+    autohide.activity()
   }
 
   const toggleFullscreen = async () => {
@@ -555,12 +662,14 @@ export function createVideoView ({
     centerPlay.setAttribute('aria-label', 'Pausar')
     centerPlay.title = 'Pausar'
     startWatermark()
+    autohide.setPlaying(true)
   }
   const onPause = () => {
     root.classList.remove('is-playing')
     setButton(playPause, element.ended ? ICONS.replay : ICONS.play, element.ended ? 'Volver a reproducir (K)' : 'Reproducir (K)')
     setButton(centerPlay, element.ended ? ICONS.replay : ICONS.play, element.ended ? 'Volver a reproducir' : 'Reproducir')
     stopWatermark()
+    autohide.setPlaying(false)
   }
   const onEnded = () => {
     root.classList.add('has-ended')
@@ -578,11 +687,13 @@ export function createVideoView ({
     if (total === null || !Number.isFinite(next)) return
     element.currentTime = Math.min(total, Math.max(0, next))
     updateTimeline({ preserveThumb: true })
+    autohide.activity()
   }
   const endScrubbing = () => {
     scrubbing = false
     root.classList.remove('is-scrubbing')
     updateTimeline({ preserveThumb: false })
+    autohide.unpin('scrub')
   }
   const onVolumeInput = () => {
     const next = Number(volume.value)
@@ -590,6 +701,7 @@ export function createVideoView ({
     element.volume = Math.min(1, Math.max(0, next))
     element.muted = element.volume === 0
     updateVolume()
+    autohide.activity()
   }
   const onStageClick = (event) => {
     if (event.target !== stage && event.target !== element) return
@@ -611,6 +723,7 @@ export function createVideoView ({
     else if (action === 'toggle-fullscreen') void toggleFullscreen()
     else if (action === 'toggle-pip') void togglePip()
     else return
+    autohide.activity()
     event.preventDefault()
     event.stopPropagation()
   }
@@ -632,6 +745,7 @@ export function createVideoView ({
   listen(timeline, 'pointerdown', () => {
     scrubbing = true
     root.classList.add('is-scrubbing')
+    autohide.pin('scrub')
   })
   listen(timeline, 'input', onTimelineInput)
   listen(timeline, 'change', endScrubbing)
@@ -655,6 +769,49 @@ export function createVideoView ({
   listen(doc, 'fullscreenchange', updateFullscreen)
   listen(element, 'webkitbeginfullscreen', updateFullscreen)
   listen(element, 'webkitendfullscreen', updateFullscreen)
+
+  // Sólo el ratón tiene hover y salida reales: en táctil, pointermove llega al
+  // hacer scroll sobre el vídeo y pointerleave al levantar el dedo.
+  listen(root, 'pointermove', (event) => {
+    if (event.pointerType !== 'touch') autohide.activity()
+  })
+  listen(root, 'pointerdown', (event) => {
+    const wasIdle = !autohide.visible
+    autohide.activity()
+    tapRevealed = event.pointerType === 'touch' && wasIdle &&
+      (event.target === stage || event.target === element)
+  })
+  listen(root, 'click', (event) => {
+    if (!tapRevealed) return
+    tapRevealed = false
+    event.preventDefault()
+    event.stopPropagation()
+  }, true)
+  listen(root, 'pointerleave', (event) => {
+    if (event.pointerType === 'mouse') autohide.leave()
+  })
+  // Llegan aunque .video-controls tenga pointer-events:none: es ancestro del
+  // botón o de la línea de tiempo que recibe el puntero; el degradado no cuenta.
+  listen(controls, 'pointerenter', (event) => {
+    if (event.pointerType === 'mouse') autohide.pin('hover')
+  })
+  listen(controls, 'pointerleave', (event) => {
+    if (event.pointerType === 'mouse') autohide.unpin('hover')
+  })
+  // Aparte del listener de atajos: cualquier tecla con el foco en la barra la
+  // fija (Chrome convierte un foco de ratón en :focus-visible sin nuevo focusin).
+  listen(root, 'keydown', () => {
+    autohide.activity()
+    if (controls.contains(doc.activeElement)) autohide.pin('focus')
+  })
+  listen(root, 'focusin', (event) => {
+    autohide.activity()
+    syncFocusPin(event.target)
+  })
+  // Durante focusout, document.activeElement vale body en Chrome: relatedTarget.
+  listen(root, 'focusout', (event) => {
+    if (!event.relatedTarget || !controls.contains(event.relatedTarget)) autohide.unpin('focus')
+  })
 
   // Disuasión básica: evita el clic derecho → guardar accidental. La protección
   // real no depende de impedir operaciones en el navegador.
@@ -801,6 +958,9 @@ export function createVideoView ({
       if (destroyed) return
       destroyed = true
       stopWatermark()
+      // Antes de retirar los listeners: un temporizador pendiente no puede tocar
+      // un root que ya no está en la página.
+      autohide.destroy()
       for (const cleanup of cleanups.splice(0)) cleanup()
       if (doc.pictureInPictureElement === element) {
         doc.exitPictureInPicture?.().catch?.(() => {})

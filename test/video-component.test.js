@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   classifyHlsError,
   classifyNativeError,
+  createControlsAutohide,
   formatMediaTime,
   mediaProgress,
   mediaShortcut,
@@ -104,4 +105,193 @@ test('el HLS nativo re-pide ticket ante errores de red o de origen, con cupo', (
     assert.equal(classifyNativeError(code, { attempts: 2 }).action, 'reticket')
     assert.equal(classifyNativeError(code, { attempts: 3 }).action, 'fatal')
   }
+})
+
+// ---- Auto-ocultado de la barra (ADR-033) ----
+// La máquina recibe schedule/cancel inyectados: sin temporizadores reales ni DOM.
+
+function fakeTimers () {
+  const pending = new Map()
+  let next = 0
+  return {
+    schedule (fn, ms) { const id = ++next; pending.set(id, { fn, ms }); return id },
+    cancel (id) { pending.delete(id) },
+    fire () { const due = [...pending.values()]; pending.clear(); for (const { fn } of due) fn() },
+    pending: () => pending.size,
+    last: () => [...pending.values()].at(-1) ?? null
+  }
+}
+
+function autohideHarness (options = {}) {
+  const timers = fakeTimers()
+  const changes = []
+  const autohide = createControlsAutohide({
+    schedule: timers.schedule,
+    cancel: timers.cancel,
+    onChange: (visible) => changes.push(visible),
+    ...options
+  })
+  return { timers, changes, autohide }
+}
+
+test('la barra nace visible, en pausa y sin avisar', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  assert.equal(autohide.visible, true)
+  assert.deepEqual(changes, [])
+  assert.equal(timers.pending(), 0)
+  autohide.activity()
+  assert.equal(timers.pending(), 0, 'en pausa no hay nada que ocultar')
+  assert.deepEqual(changes, [])
+})
+
+test('al reproducir programa el ocultado con idleMs y sólo oculta una vez', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.setPlaying(true)
+  assert.equal(timers.last().ms, 3000)
+  const { fn } = timers.last()
+  timers.fire()
+  assert.deepEqual(changes, [false])
+  assert.equal(autohide.visible, false)
+  fn()
+  assert.deepEqual(changes, [false], 'vencer dos veces no avisa dos veces')
+
+  const corto = autohideHarness({ idleMs: 1200 })
+  corto.autohide.setPlaying(true)
+  assert.equal(corto.timers.last().ms, 1200)
+})
+
+test('la actividad revela y reinicia el temporizador; onChange sólo en transiciones', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.setPlaying(true)
+  timers.fire()
+  autohide.activity()
+  assert.deepEqual(changes, [false, true])
+  assert.equal(timers.pending(), 1)
+  autohide.activity()
+  autohide.activity()
+  assert.equal(timers.pending(), 1, 'cada actividad sustituye el temporizador, no lo apila')
+  assert.deepEqual(changes, [false, true])
+})
+
+test('la pausa fija la barra y cancela el temporizador', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.setPlaying(true)
+  timers.fire()
+  autohide.setPlaying(true)
+  const { fn } = timers.last()
+  autohide.setPlaying(false)
+  assert.equal(changes.at(-1), true)
+  assert.equal(timers.pending(), 0)
+  autohide.activity()
+  assert.equal(timers.pending(), 0)
+  fn()
+  assert.equal(autohide.visible, true, 'un cancel perdido no puede ocultar en pausa')
+  assert.equal(changes.at(-1), true)
+})
+
+test('al terminar la barra vuelve, y volver a reproducir la vuelve a retirar', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.setPlaying(true)
+  timers.fire()
+  autohide.setPlaying(false)
+  assert.deepEqual(changes, [false, true])
+  autohide.setPlaying(true)
+  assert.equal(timers.pending(), 1)
+  timers.fire()
+  assert.deepEqual(changes, [false, true, false])
+})
+
+test('un pin mantiene visible aunque venza el temporizador, y revela sin armar', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.setPlaying(true)
+  const { fn } = timers.last()
+  autohide.pin('hover')
+  assert.equal(timers.pending(), 0)
+  fn()
+  assert.equal(autohide.visible, true)
+  assert.deepEqual(changes, [])
+
+  const oculta = autohideHarness()
+  oculta.autohide.setPlaying(true)
+  oculta.timers.fire()
+  oculta.autohide.pin('focus')
+  assert.equal(oculta.changes.at(-1), true)
+  assert.equal(oculta.timers.pending(), 0, 'con un pin no hay temporizador')
+})
+
+test('sólo al soltar el último pin se re-arma, y soltar nunca oculta en seco', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.setPlaying(true)
+  autohide.pin('hover')
+  autohide.pin('focus')
+  autohide.unpin('hover')
+  assert.equal(timers.pending(), 0)
+  autohide.unpin('focus')
+  assert.equal(timers.pending(), 1)
+  autohide.unpin('inexistente')
+  assert.equal(timers.pending(), 1)
+  assert.deepEqual(changes, [], 'soltar un pin da idleMs de margen')
+  timers.fire()
+  assert.deepEqual(changes, [false])
+
+  const repetido = autohideHarness()
+  repetido.autohide.setPlaying(true)
+  repetido.autohide.pin('hover')
+  repetido.autohide.pin('hover')
+  repetido.autohide.unpin('hover')
+  assert.equal(repetido.timers.pending(), 1, 'los pins son un conjunto, no un contador')
+})
+
+test('reproducir con el foco en la barra no programa nada', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.pin('focus')
+  autohide.setPlaying(true)
+  assert.equal(timers.pending(), 0)
+  assert.deepEqual(changes, [])
+  autohide.unpin('focus')
+  assert.equal(timers.pending(), 1)
+})
+
+test('el ratón fuera del reproductor oculta en seco sólo reproduciendo y sin pin', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.leave()
+  assert.deepEqual(changes, [], 'en pausa no pasa nada')
+  autohide.setPlaying(true)
+  autohide.pin('scrub')
+  autohide.leave()
+  assert.deepEqual(changes, [], 'arrastrando, el puntero puede salir sin perder la barra')
+  autohide.unpin('scrub')
+  assert.equal(timers.pending(), 1)
+  timers.fire()
+  assert.deepEqual(changes, [false])
+  autohide.leave()
+  assert.deepEqual(changes, [false], 'ya oculta: no repite')
+  autohide.activity()
+  autohide.leave()
+  assert.deepEqual(changes, [false, true, false])
+  assert.equal(timers.pending(), 0)
+})
+
+test('destroy cancela lo pendiente y enmudece', () => {
+  const { timers, changes, autohide } = autohideHarness()
+  autohide.setPlaying(true)
+  const { fn } = timers.last()
+  autohide.destroy()
+  assert.equal(timers.pending(), 0)
+  autohide.activity()
+  autohide.setPlaying(false)
+  autohide.pin('hover')
+  autohide.leave()
+  fn()
+  assert.deepEqual(changes, [])
+  assert.equal(timers.pending(), 0)
+  assert.doesNotThrow(() => autohide.destroy())
+})
+
+test('setPlaying acepta valores no booleanos', () => {
+  const { timers, autohide } = autohideHarness()
+  autohide.setPlaying(1)
+  assert.equal(timers.pending(), 1)
+  autohide.setPlaying(undefined)
+  assert.equal(timers.pending(), 0)
 })

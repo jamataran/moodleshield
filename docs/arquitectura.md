@@ -570,6 +570,9 @@ modo que el alto restante es íntegramente del contenido.
 Ese alto se usa para enseñar el fotograma **entero**: el reproductor encaja el
 vídeo con `object-fit: contain`, con franjas negras si su relación de aspecto no
 coincide con la del hueco. Una grabación de iPad (1,43:1) no se recorta.
+Los controles se retiran solos mientras reproduce y vuelven con cualquier
+actividad (ADR-033); la marca de agua y el chip de sesión monitorizada siguen en
+pantalla el 100 % del tiempo.
 
 El chip abre un `<dialog>` con el aviso legal completo y los datos registrados
 de la sesión: nombre, identidad, IP, inicio y caducidad, referencia de
