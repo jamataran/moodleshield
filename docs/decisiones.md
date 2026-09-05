@@ -374,6 +374,14 @@ item de Deep Linking usa un icono genérico y nunca la primera página, que podr
 ser justo el material sensible. Las pruebas de la cadena se ejecutan dentro de una
 imagen con esas herramientas, no en el runner de CI.
 
+*Nota (2026-09-05, #97).* `qpdf --check` distingue avisos (código 3) de errores
+(código 2), y el primer filtro se quedaba con cualquiera de los dos como «dañado».
+Desde entonces acepta el código 3 sólo cuando todos los avisos están en una lista
+corta de patrones inofensivos verificados —hoy, las entradas xref a offset 0 que
+deja el Quartz de macOS—, y rechaza el resto con el texto del aviso. No se
+relaja más porque qpdf también repara un fichero truncado y lo cuenta como
+avisos; publicarlo sería publicar páginas de menos sin que nadie lo notara.
+
 ---
 
 ## ADR-015 · Carpetas personales por profesor, no por institución

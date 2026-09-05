@@ -15,7 +15,13 @@ export function runProcess (command, args, {
   onLine,
   signal,
   timeoutMs = 0,
-  nice = config.transcode.niceness
+  nice = config.transcode.niceness,
+  /**
+   * Códigos de salida que no son un fallo. qpdf devuelve 3 cuando ha
+   * encontrado avisos sin errores, y quien lo llama tiene que leer `stderr`
+   * para decidir si esos avisos son aceptables: por eso se devuelve `code`.
+   */
+  acceptExitCodes = [0]
 } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason ?? new Error('Proceso cancelado'))
@@ -95,7 +101,7 @@ export function runProcess (command, args, {
         return reject(new Error(`${command} superó el límite de ${Math.round(timeoutMs / 1000)} s y se detuvo`))
       }
       if (aborted) return reject(signal?.reason ?? new Error('Proceso cancelado'))
-      if (code === 0) return resolve({ stdout, stderr })
+      if (acceptExitCodes.includes(code)) return resolve({ code, stdout, stderr })
       reject(new Error(`${command} terminó con código ${code}:\n${stderr.slice(-2000)}`))
     })
   })
