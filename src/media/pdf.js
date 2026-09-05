@@ -37,12 +37,33 @@ function timeout () {
 /** Un PDF con contraseña hace fallar a casi todas las herramientas por igual. */
 const ENCRYPTED_RE = /encrypt|password|contrase|cifrad/i
 
+/**
+ * qpdf sale con 3 cuando ha encontrado avisos pero ningún error. Sólo se
+ * aceptan los avisos cuya inocuidad está comprobada; el resto sigue siendo
+ * «dañado». La lista es corta a propósito: qpdf también «repara» un fichero
+ * truncado reconstruyendo la xref y lo cuenta como avisos, y ese sí hay que
+ * rechazarlo, porque las páginas que faltan se publicarían sin que nadie lo
+ * notara (pdfinfo tampoco las vería, y la comparación de páginas no saltaría).
+ *
+ * - `object has offset 0`: entradas de la xref marcadas «en uso» sin objeto
+ *   detrás. Las deja el Quartz de macOS al descartar objetos durante la
+ *   exportación; qpdf las trata como `null` y no se pierde contenido.
+ */
+const BENIGN_WARNINGS = [/object has offset 0/]
+const QPDF_WARNINGS_OK = 3
+
+function warningLines (stderr) {
+  return String(stderr).split('\n').map((line) => line.trim()).filter((line) => line.startsWith('WARNING:'))
+}
+
 /** Estructura del fichero. `qpdf --check` recorre el xref y los objetos. */
-async function checkStructure (file, signal) {
+async function checkStructure (file, signal, log) {
+  let result
   try {
-    await runProcess(config.pdf.qpdfPath, ['--check', '--no-warn', file], {
+    result = await runProcess(config.pdf.qpdfPath, ['--check', file], {
       signal,
-      timeoutMs: timeout()
+      timeoutMs: timeout(),
+      acceptExitCodes: [0, QPDF_WARNINGS_OK]
     })
   } catch (err) {
     // Un PDF cifrado también hace fallar `--check`, y decirle al profesor que
@@ -54,10 +75,26 @@ async function checkStructure (file, signal) {
       )
     }
     throw new PdfValidationError(
-      `El PDF está dañado o su estructura no es válida: ${firstLine(err.message)}`,
+      `El PDF está dañado o su estructura no es válida: ${detail(err.message)}`,
       { code: 'corrupt_pdf' }
     )
   }
+  if (result.code !== QPDF_WARNINGS_OK) return
+
+  const warnings = warningLines(result.stderr)
+  const suspicious = warnings.find((line) => !BENIGN_WARNINGS.some((re) => re.test(line)))
+  // Código 3 sin ningún aviso legible también se rechaza: no se acepta lo que
+  // no se puede explicar.
+  if (suspicious || warnings.length === 0) {
+    throw new PdfValidationError(
+      `El PDF está dañado o su estructura no es válida: ${suspicious ?? 'qpdf avisó sin detalle'}`,
+      { code: 'corrupt_pdf' }
+    )
+  }
+  log?.warn(
+    { file: path.basename(file), warnings: warnings.length, sample: warnings.slice(0, 3) },
+    'qpdf aceptó el PDF con avisos benignos'
+  )
 }
 
 /**
@@ -72,7 +109,7 @@ async function inspect (file, signal) {
       timeoutMs: timeout()
     }))
   } catch (err) {
-    throw new PdfValidationError(`No se pudo leer el PDF: ${firstLine(err.message)}`, {
+    throw new PdfValidationError(`No se pudo leer el PDF: ${detail(err.message)}`, {
       code: 'unreadable_pdf'
     })
   }
@@ -133,7 +170,7 @@ async function normalize (input, output, signal) {
     ], { signal, timeoutMs: timeout() })
   } catch (err) {
     throw new PdfValidationError(
-      `No se pudo normalizar el PDF: ${firstLine(err.message)}`,
+      `No se pudo normalizar el PDF: ${detail(err.message)}`,
       { code: 'normalize_failed' }
     )
   }
@@ -167,8 +204,17 @@ async function renderPoster (input, outputDir, signal) {
   }
 }
 
-function firstLine (message) {
-  return String(message).split('\n').find((line) => line.trim()) ?? 'sin detalle'
+/**
+ * La línea de `stderr` que explica el fallo. `runProcess` encabeza el mensaje
+ * con «terminó con código N:», que no dice nada; y qpdf imprime primero los
+ * avisos y al final el error, que es la línea que importa. Antes se tomaba la
+ * primera línea a secas y el log de producción acabó diciendo «código 3:» y
+ * nada más.
+ */
+function detail (message) {
+  const lines = String(message).split('\n').map((line) => line.trim()).filter(Boolean)
+  const body = lines.filter((line) => !/terminó con código \d+:$/.test(line))
+  return body.find((line) => !line.startsWith('WARNING:')) ?? body[0] ?? lines[0] ?? 'sin detalle'
 }
 
 async function sha256File (file) {
@@ -197,7 +243,7 @@ export async function processDocumentRevision ({
   const log = logger.child({ documentId, revisionId })
   await mkdir(outputDir, { recursive: true })
 
-  await checkStructure(sourcePath, signal)
+  await checkStructure(sourcePath, signal, log)
   const info = await inspect(sourcePath, signal)
   log.info({ pages: info.pageCount }, 'PDF validado')
 
@@ -207,7 +253,7 @@ export async function processDocumentRevision ({
   // Segunda pasada sobre el fichero ya normalizado: Ghostscript también puede
   // producir algo que qpdf no acepte, y publicar eso sería publicar un PDF que
   // el visor no abrirá.
-  await checkStructure(normalized, signal)
+  await checkStructure(normalized, signal, log)
   const normalizedInfo = await inspect(normalized, signal)
   if (normalizedInfo.pageCount !== info.pageCount) {
     throw new PdfValidationError(
