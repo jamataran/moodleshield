@@ -168,9 +168,9 @@ npm run test:integration
 npm run test:integration:local
 ```
 
-### Las 9 pruebas que se saltan solas
+### Las 10 pruebas que se saltan solas
 
-Ocho son de la cadena de PDF y una del lector forense con vídeo real. Necesitan `qpdf`,
+Nueve son de la cadena de PDF y una del lector forense con vídeo real. Necesitan `qpdf`,
 `pdfinfo`, `ghostscript` o `ffmpeg`, que viven en la imagen del worker y no necesariamente
 en tu Mac. Para ejecutar las de PDF de verdad:
 
@@ -295,6 +295,18 @@ Escape no lo toca. Lo vigila `test/ui-iframe.test.js`.
 
 **Moodle nunca avisa de que se borró una actividad.** No existe callback. Cualquier diseño
 que asuma lo contrario está mal.
+
+**`qpdf --check` sale con 3 cuando hay avisos sin errores**, y avisa también de cosas
+inofensivas. El Quartz de macOS deja entradas de la xref «en uso» a offset 0 sin objeto
+detrás (`object has offset 0 - a common error handled correctly by qpdf`), y así llegó a
+producción un PDF de 51 páginas que el worker rechazó como dañado
+([#97](https://github.com/jamataran/moodleshield/issues/97)). `checkStructure` en
+`src/media/pdf.js` acepta el código 3 **sólo** si todos los avisos están en una lista corta
+de patrones verificados; cualquier otro sigue siendo `corrupt_pdf`, ahora con el texto del
+aviso en el mensaje. No lo relajes con `--warning-exit-0`: qpdf también «repara» un fichero
+truncado reconstruyendo la xref y lo cuenta como avisos, y las páginas que faltan se
+publicarían sin que nadie lo notara. Un aviso nuevo se lee en el log y, si es inofensivo, se
+añade a la lista con una fixture que lo reproduzca.
 
 **`frame-ancestors` se calcula de las plataformas registradas.** Sin ninguna dada de alta
 queda en `'self'`: Moodle no podrá embeber la herramienta. En producción, registra las

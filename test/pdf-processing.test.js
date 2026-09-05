@@ -71,6 +71,21 @@ function buildPdf (pages = 1) {
   return Buffer.from(body, 'latin1')
 }
 
+/**
+ * Lo que deja el Quartz de macOS cuando descarta objetos al exportar: la xref
+ * anuncia `phantoms` objetos más, «en uso» y a offset 0, sin nada detrás. qpdf
+ * lo acepta con avisos (código 3), y así llegó a producción un PDF de 51
+ * páginas que el worker rechazó como dañado (issue #97).
+ */
+function withPhantomObjects (pdf, phantoms = 2) {
+  const text = pdf.toString('latin1')
+  const size = Number(/\/Size (\d+)/.exec(text)[1])
+  return Buffer.from(text
+    .replace(`xref\n0 ${size}\n`, `xref\n0 ${size + phantoms}\n`)
+    .replace('trailer\n', `${'0000000000 00000 n \n'.repeat(phantoms)}trailer\n`)
+    .replace(`/Size ${size}`, `/Size ${size + phantoms}`), 'latin1')
+}
+
 async function withWorkspace (fn) {
   const dir = await mkdtemp(path.join(tmpdir(), 'moodleshield-pdf-'))
   try {
@@ -134,6 +149,19 @@ test('se genera portada, y nunca se publica en el content item', { skip }, async
   })
 })
 
+test('un PDF con entradas xref a offset 0 (Quartz de macOS) se procesa entero', { skip }, async () => {
+  await withWorkspace(async (dir) => {
+    const source = path.join(dir, 'quartz.pdf')
+    const output = path.join(dir, 'staging')
+    await writeFile(source, withPhantomObjects(buildPdf(3), 2))
+
+    const meta = await run(DOC, REV, source, output)
+    assert.equal(meta.pageCount, 3, 'los objetos fantasma no son páginas')
+    const normalized = await readFile(documentPath(output))
+    assert.ok(normalized.subarray(0, 5).toString() === '%PDF-')
+  })
+})
+
 test('un PDF truncado termina en error permanente', { skip }, async () => {
   await withWorkspace(async (dir) => {
     const source = path.join(dir, 'roto.pdf')
@@ -146,6 +174,12 @@ test('un PDF truncado termina en error permanente', { skip }, async () => {
         assert.ok(err instanceof PdfValidationError, `tipo inesperado: ${err.name}`)
         // Un fichero corrupto no mejora reintentándolo tres veces.
         assert.equal(err.permanent, true)
+        assert.equal(err.code, 'corrupt_pdf')
+        // qpdf «repara» un truncado reconstruyendo la xref y lo cuenta como
+        // avisos; el que sean avisos no lo convierte en aceptable. Y el motivo
+        // tiene que quedar escrito: «código 3:» a secas no le sirve a nadie.
+        assert.match(err.message, /dañado.*: .*\S/, `mensaje sin detalle: ${err.message}`)
+        assert.doesNotMatch(err.message, /terminó con código \d+:$/)
         return true
       }
     )
