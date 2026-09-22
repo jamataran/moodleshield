@@ -327,28 +327,76 @@ function descendantsOf (id) {
  * Opciones de un `<select>` de carpetas con sangría por nivel.
  * `exclude` aparta una carpeta y todo su subárbol: el destino de un movimiento
  * no puede ser la propia carpeta que se mueve.
+ *
+ * Las carpetas compartidas no son destino de nada… salvo de una colección
+ * NUEVA (`sharedDestinations`), que en la carpeta de otro profesor nace suya
+ * (ADR-034). Van aparte, en su propio grupo, para que nadie guarde en la
+ * biblioteca de un compañero creyendo que es la suya.
  */
-function folderOptions ({ exclude = null, rootLabel = 'Biblioteca (raíz)' } = {}) {
+function folderOptions ({ exclude = null, rootLabel = 'Biblioteca (raíz)', sharedDestinations = false } = {}) {
   const excluded = exclude ? new Set([exclude, ...descendantsOf(exclude)]) : new Set()
-  const options = [{ id: '', name: rootLabel, depth: 0 }]
-  const walk = (parentId, depth) => {
+  const option = ({ id, name, depth }) => {
+    const node = document.createElement('option')
+    node.value = id
+    node.textContent = depth > 1 ? `${' '.repeat(depth - 1)}└ ${name}` : name
+    return node
+  }
+  const walk = (parentId, depth, out, accept) => {
     for (const child of childrenOf(parentId)) {
-      // Las carpetas compartidas no aparecen como destino: se puede usar lo que
-      // hay dentro, pero no guardar ahí. La carpeta pertenece a su autor.
-      if (excluded.has(child.id) || isShared(child)) continue
-      options.push({ id: child.id, name: child.name, depth })
-      walk(child.id, depth + 1)
+      if (excluded.has(child.id) || !accept(child)) continue
+      out.push({ id: child.id, name: depth === 1 && isShared(child) ? `${child.name} · de ${ownerLabel(child)}` : child.name, depth })
+      walk(child.id, depth + 1, out, accept)
+    }
+    return out
+  }
+  const own = [{ id: '', name: rootLabel, depth: 0 }, ...walk(null, 1, [], (f) => !isShared(f))]
+  const nodes = own.map(option)
+  if (sharedDestinations) {
+    const shared = walk(null, 1, [], (f) => isShared(f) && admitsCollection(f))
+    if (shared.length > 0) {
+      const group = document.createElement('optgroup')
+      group.label = 'Carpetas de otros profesores'
+      group.append(...shared.map(option))
+      nodes.push(group)
     }
   }
-  walk(null, 1)
-  return options.map((option) => {
-    const node = document.createElement('option')
-    node.value = option.id
-    node.textContent = option.depth > 1
-      ? `${' '.repeat(option.depth - 1)}└ ${option.name}`
-      : option.name
-    return node
-  })
+  return nodes
+}
+
+/**
+ * Carpeta que admite una colección nueva: la propia o la compartida de otro
+ * profesor. La biblioteca del centro no: la gestiona sólo el administrador
+ * (ADR-026) y nadie podría archivar lo que se creara dentro.
+ */
+function admitsCollection (folder) {
+  return Boolean(folder) && (!isShared(folder) || !folder.institutional)
+}
+
+/** Destino de una colección nueva: la carpeta abierta si la admite; si no, la raíz. */
+function collectionFolderId () {
+  if (state.view !== 'browse') return null
+  return admitsCollection(folderById(state.folderId)) ? state.folderId : null
+}
+
+/**
+ * Quien guarda en la carpeta de otro profesor tiene que saber, antes de
+ * guardar, que la colección será de ese otro y que la verá quien vea la
+ * carpeta —también el material propio que meta dentro—.
+ */
+function avisoDestinoColeccion () {
+  const node = el('collection-owner-hint')
+  const select = el('collection-folder')
+  const folder = select.disabled ? null : folderById(select.value || null)
+  if (!isShared(folder)) {
+    node.hidden = true
+    node.textContent = ''
+    return
+  }
+  const owner = ownerLabel(folder)
+  node.textContent = `«${folder.name}» es de ${owner}: la colección será suya. Podrás editarla e ` +
+    `insertarla en tus cursos, pero sólo ${owner} podrá archivarla, y la verá todo el que vea ` +
+    'esa carpeta, con el material que pongas dentro.'
+  node.hidden = false
 }
 
 // ---------------------------------------------------------------------------
@@ -1730,15 +1778,16 @@ function openNewCollection () {
   el('collection-heading').textContent = 'Nueva colección'
   el('collection-title').value = ''
   el('collection-description').value = ''
-  el('collection-folder').replaceChildren(...folderOptions({ rootLabel: 'Biblioteca' }))
-  el('collection-folder').value = destinationFolderId() ?? ''
+  el('collection-folder').replaceChildren(...folderOptions({ rootLabel: 'Biblioteca', sharedDestinations: true }))
+  el('collection-folder').value = collectionFolderId() ?? ''
   el('collection-folder').disabled = false
   el('collection-save').textContent = 'Guardar'
   configureCollectionActions()
   dialogStatus('collection-error')
   avisoColeccion()
+  avisoDestinoColeccion()
   renderCollectionItems()
-  resetPicker(destinationFolderId())
+  resetPicker(collectionFolderId())
   abrirDialogo(el('collection-dialog'))
   el('collection-title').focus()
 }
@@ -1782,6 +1831,7 @@ async function openCollectionEditor (collection) {
     configureCollectionActions()
     dialogStatus('collection-error')
     avisoColeccion()
+    avisoDestinoColeccion()
     renderCollectionItems()
     resetPicker(full.folderId ?? null)
     abrirDialogo(el('collection-dialog'))
@@ -1845,10 +1895,10 @@ async function openCollectionFromFolder () {
   el('collection-title').value = folder.name
   el('collection-description').value = ''
   const destino = el('collection-folder')
-  destino.replaceChildren(...folderOptions({ rootLabel: 'Biblioteca' }))
-  // Una carpeta compartida es de su autor: se puede usar lo que hay dentro,
-  // pero lo que se crea se guarda en la biblioteca propia.
-  destino.value = isShared(folder) ? '' : folder.id
+  destino.replaceChildren(...folderOptions({ rootLabel: 'Biblioteca', sharedDestinations: true }))
+  // En la carpeta de otro profesor la colección se queda ahí y nace suya
+  // (ADR-034); en la biblioteca del centro, no: cae en la raíz propia.
+  destino.value = admitsCollection(folder) ? folder.id : ''
   destino.disabled = false
   el('collection-save').textContent = 'Guardar'
   configureCollectionActions()
@@ -1870,8 +1920,9 @@ async function openCollectionFromFolder () {
     (todos.length > dentro.length
       ? `. ${mensajeTope()} Se han quedado fuera ${todos.length - dentro.length}.`
       : '. Quita lo que no quieras y ordénalo antes de guardar.') +
-    (isShared(folder) ? ` La carpeta es de ${ownerLabel(folder)}: la colección se guarda en tu biblioteca.` : '')
+    (admitsCollection(folder) ? '' : ` La carpeta es de ${ownerLabel(folder)}: la colección se guarda en tu biblioteca.`)
   )
+  avisoDestinoColeccion()
   abrirDialogo(el('collection-dialog'))
   el('collection-title').focus()
 }
@@ -2278,6 +2329,7 @@ el('collection-search').addEventListener('input', () => {
   }, 300)
 })
 el('collection-picker-more').addEventListener('click', () => { void loadPicker({ append: true }) })
+el('collection-folder').addEventListener('change', avisoDestinoColeccion)
 
 /**
  * Guarda primero y sólo después envía a Moodle. Si el segundo paso falla, la
@@ -2326,7 +2378,9 @@ async function saveCollection ({ insert = false } = {}) {
     } else {
       const data = await apiJson('/collections', { method: 'POST', body: JSON.stringify(body) })
       collectionId = data.collection.id
-      notify('Colección guardada')
+      notify(isShared(data.collection)
+        ? `Colección guardada en la carpeta de ${ownerLabel(data.collection)}`
+        : 'Colección guardada')
     }
 
     el('collection-dialog').close()

@@ -21,7 +21,11 @@
 
 const BEAT_INTERVAL_MS = 15_000
 const SAMPLE_INTERVAL_MS = 1000
-/** Un salto mayor que esto entre dos muestras es un seek, no reproducción. */
+/**
+ * Un salto mayor que esto entre dos muestras es un seek, no reproducción. Es a
+ * 1×: el tope crece con la velocidad, porque a 2,5× un segundo de reloj ya son
+ * dos y medio de vídeo y, con el tope fijo, todo contaría como salto.
+ */
 const MAX_GAP_SECONDS = 2
 const MAX_INTERVALS = 200
 const MAX_DELTA_SECONDS = 45
@@ -84,8 +88,9 @@ export function createPlaybackTracker ({ maxGap = MAX_GAP_SECONDS, limit = MAX_I
   }
 
   return {
-    sample (position) {
+    sample (position, { rate = 1 } = {}) {
       if (typeof position !== 'number' || !Number.isFinite(position) || position < 0) return
+      const tope = maxGap * (Number.isFinite(rate) && rate > 1 ? rate : 1)
       maxima = Math.max(maxima, position)
       const previa = ultima
       ultima = position
@@ -94,7 +99,7 @@ export function createPlaybackTracker ({ maxGap = MAX_GAP_SECONDS, limit = MAX_I
         return
       }
       const avance = position - previa
-      if (avance > 0 && avance <= maxGap) {
+      if (avance > 0 && avance <= tope) {
         actual[1] = position
         pendiente += avance
       } else {
@@ -199,7 +204,7 @@ export function createVideoTelemetry ({ sessionToken, videoId, view, url = null 
   let ultimosTramos = null
   const muestreo = setInterval(() => {
     try {
-      tracker.sample(view.currentTime)
+      tracker.sample(view.currentTime, { rate: view.playbackRate })
     } catch { /* el visor se desmontó entre dos muestras */ }
   }, SAMPLE_INTERVAL_MS)
 

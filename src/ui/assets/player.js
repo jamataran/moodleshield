@@ -1,7 +1,7 @@
-import { createVideoView } from './video-component.js?v=video-fit-1'
+import { createVideoView } from './video-component.js?v=velocidad-1'
 import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
-import { createVideoTelemetry } from './telemetry-client.js?v=seguimiento-1'
+import { createVideoTelemetry } from './telemetry-client.js?v=velocidad-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({

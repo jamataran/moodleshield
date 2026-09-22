@@ -39,6 +39,35 @@ test('un salto cierra el tramo y abre otro; lo saltado no se cuenta', () => {
   assert.equal(beat.maxPositionSeconds, 610)
 })
 
+test('a 2× y 2,5× la reproducción sigue siendo un tramo, no una ristra de saltos', () => {
+  // Una muestra por segundo de reloj durante un beat (15 s): a 2,5× el vídeo
+  // avanza 2,5 s entre dos, y el beat entero —37,5 s— cabe bajo el tope de 45.
+  for (const rate of [2, 2.25, 2.5]) {
+    const tracker = createPlaybackTracker()
+    for (let reloj = 0; reloj <= 15; reloj++) tracker.sample(reloj * rate, { rate })
+    const beat = tracker.drain()
+    assert.deepEqual(beat.intervals, [[0, Math.round(150 * rate) / 10]], `a ${rate}×`)
+    assert.equal(beat.deltaSeconds, Math.floor(15 * rate), `a ${rate}×`)
+  }
+})
+
+test('a 2,5× un salto de verdad sigue siendo un salto', () => {
+  const tracker = createPlaybackTracker()
+  for (let t = 0; t <= 10; t += 2.5) tracker.sample(t, { rate: 2.5 })
+  tracker.sample(600, { rate: 2.5 })
+  const beat = tracker.drain()
+  assert.deepEqual(beat.intervals, [[0, 10]])
+  assert.equal(beat.deltaSeconds, 10)
+})
+
+test('más despacio de 1× el tope de salto no se estrecha', () => {
+  const tracker = createPlaybackTracker()
+  // A 0,5× las muestras avanzan medio segundo: con o sin velocidad, un tramo.
+  for (let t = 0; t <= 10; t += 0.5) tracker.sample(t, { rate: 0.5 })
+  tracker.sample(11.5, { rate: 0.5 }) // un tirón del temporizador, no un seek
+  assert.deepEqual(tracker.drain().intervals, [[0, 11.5]])
+})
+
 test('el vídeo pausado no acumula nada', () => {
   const tracker = createPlaybackTracker()
   reproduce(tracker, 0, 5)

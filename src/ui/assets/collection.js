@@ -1,9 +1,9 @@
-import { createVideoView } from './video-component.js?v=video-fit-1'
+import { createVideoView } from './video-component.js?v=velocidad-1'
 import { createPdfView } from './pdf-component.js?v=resume-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
 import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
-import { createPdfTelemetry, createVideoTelemetry } from './telemetry-client.js?v=seguimiento-1'
+import { createPdfTelemetry, createVideoTelemetry } from './telemetry-client.js?v=velocidad-1'
 
 /**
  * Visor de una colección: varios materiales dentro de UNA actividad Moodle.

@@ -103,10 +103,35 @@ test('«Nuevo» ofrece la colección de la carpeta abierta', async () => {
     'la opción tiene que estar cableada')
   assert.match(code, /const carpetas = \[folder\.id, \.\.\.subarbolEnOrden\(folder\.id\)\]/,
     'una carpeta importada tiene el material en sus subcarpetas: hay que bajar')
-  assert.match(code, /destino\.value = isShared\(folder\) \? '' : folder\.id/,
-    'se guarda en la misma carpeta, salvo que sea de otro profesor')
+  assert.match(code, /destino\.value = admitsCollection\(folder\) \? folder\.id : ''/,
+    'se guarda en la misma carpeta, también la de otro profesor (ADR-034), salvo la del centro')
   assert.match(code, /boton\.disabled = !folder/,
     'sin carpeta abierta la opción no puede hacer nada: se apaga')
+})
+
+/**
+ * ADR-034: una colección NUEVA puede guardarse en la carpeta compartida de otro
+ * profesor, y nace suya. Editar no: mudar una colección a una carpeta ajena le
+ * cambiaría el dueño. Y el diálogo lo dice antes de guardar.
+ */
+test('la colección nueva admite la carpeta de otro profesor; la edición, no', async () => {
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  assert.match(html, /id="collection-owner-hint"/, 'falta el aviso de a quién pertenecerá')
+  assert.match(code, /return Boolean\(folder\) && \(!isShared\(folder\) \|\| !folder\.institutional\)/,
+    'la biblioteca del centro no admite colecciones (ADR-026)')
+
+  const cuerpo = (nombre) => {
+    const inicio = code.indexOf(`function ${nombre} (`)
+    assert.ok(inicio >= 0, `falta ${nombre}`)
+    return code.slice(inicio, code.indexOf('\n}\n', inicio))
+  }
+  assert.match(cuerpo('openNewCollection'), /sharedDestinations: true/)
+  assert.match(cuerpo('openCollectionFromFolder'), /sharedDestinations: true/)
+  assert.doesNotMatch(cuerpo('openCollectionEditor'), /sharedDestinations/,
+    'editar no ofrece carpetas ajenas: owner_sub no se mueve')
+  assert.match(code, /el\('collection-folder'\)\.addEventListener\('change', avisoDestinoColeccion\)/,
+    'cambiar el destino tiene que actualizar el aviso')
 })
 
 /**

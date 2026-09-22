@@ -1,6 +1,6 @@
 import { many, one, transaction } from '../db/index.js'
 import config from '../config.js'
-import { assertFolderInTransaction, normalizeName } from './folders.js'
+import { assertFolderInTransaction, normalizeName, resolveNewCollectionHome } from './folders.js'
 import { likePattern } from './materials.js'
 import { placedInContextSql, visibleClause } from './sharing.js'
 import { isUuid } from '../media/storage.js'
@@ -326,20 +326,26 @@ export function getCollectionForPlatform (id, platformId) {
   )
 }
 
+/**
+ * En la carpeta compartida de otro profesor, la colección nace de ese otro
+ * (ADR-034, ver `resolveNewCollectionHome`); los elementos, en cambio, se
+ * comprueban contra lo que ve QUIEN la crea, que es quien los elige.
+ */
 export function createCollection ({
   platformId, ownerSub, ownerName, title, description, folderId, items
 }) {
   const clean = assertTitle(title)
   const normalized = normalizeItems(items)
   return transaction(async (client) => {
-    const folder = await assertFolderInTransaction(client, { folderId, platformId, ownerSub })
+    const home = await resolveNewCollectionHome(client, { folderId, platformId, ownerSub, ownerName })
     await assertItemsUsable(client, normalized, { platformId, ownerSub })
     const { rows } = await client.query(
       `INSERT INTO content_collection
          (title, description, platform_id, owner_sub, owner_name, folder_id)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [clean, String(description ?? '').slice(0, 2000), platformId, ownerSub,
-        ownerName ?? null, folder]
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING *, (owner_sub IS DISTINCT FROM $7) AS shared`,
+      [clean, String(description ?? '').slice(0, 2000), platformId, home.ownerSub,
+        home.ownerName ?? null, home.folderId, ownerSub]
     )
     await replaceItems(client, rows[0].id, normalized)
     return rows[0]

@@ -524,6 +524,12 @@ nueva** a la columna de la izquierda: quien usa el material lo corrige donde
 está. La tabla de arriba se lee con esa línea cambiada de sitio; el resto sigue
 igual.
 
+**Actualización (22 de septiembre de 2026).** ADR-034 abre una excepción a «no
+se escribe dentro»: una colección **nueva** puede crearse en la carpeta
+compartida de otro profesor, y nace de ese profesor. Las FK compuestas no
+cambian —la carpeta sigue conteniendo sólo cosas de su dueño— y subir o mover
+material a una carpeta ajena sigue respondiendo 409.
+
 **Consecuencias.** Todo lo publicado antes de la migración sigue privado:
 `is_public` nace en `false`. La biblioteca de un profesor puede crecer con
 material que no es suyo, así que las tarjetas dicen de quién es y esconden las
@@ -1470,3 +1476,66 @@ negro; sigue en el campo visual y la traza forense es el patrón A/B.
 **Cómo revertirlo.** Quitar `autohide` de `createVideoView` y las reglas
 `.is-idle` de `app.css`. Lo vigila el test «la barra de controles se retira sola
 sin salir del árbol de accesibilidad» de `test/ui-iframe.test.js`.
+
+## ADR-034 · Una colección nueva puede nacer en la carpeta compartida de otro profesor, y nace suya
+
+**Estado**: aceptada · **Fecha**: 2026-09 · Amplía a ADR-018 · Respeta ADR-026 y ADR-029
+
+**Contexto.** En septiembre de 2026, en producción, un profesor abrió la carpeta
+que un compañero había compartido con el claustro para montar una colección con
+ese temario y no pudo dejarla allí: la colección se guardaba en la raíz de **su**
+biblioteca. Era la regla de ADR-018 —«se ve la biblioteca del otro, no se
+escribe dentro»—, que protegen las FK compuestas `(folder_id, platform_id,
+owner_sub)`: una carpeta sólo contiene cosas de su dueño. Para el caso de uso
+que justifica compartir —dos profesores manteniendo la misma asignatura— el
+resultado era una colección fuera del sitio donde los dos la buscan.
+
+**Decisión.** Al **crear** una colección en la carpeta compartida de otro
+profesor, la colección nace **de ese profesor**: `owner_sub` y `owner_name` son
+los de la carpeta. Las FK no se relajan ni se toca el esquema. Quien la crea
+conserva exactamente el acceso de trabajo que ya le daba la carpeta compartida
+—verla, editarla, componerla, insertarla en sus cursos—, y lo irreversible
+—archivarla— es del dueño, como todo lo que no tiene vuelta (ADR-029).
+
+Tres límites van con la decisión:
+
+1. **Sólo al crear.** Mover una colección propia a una carpeta ajena le
+   cambiaría el dueño, y `owner_sub` no se mueve nunca: sigue respondiendo 409.
+   La interfaz sólo ofrece carpetas ajenas en el diálogo de colección nueva.
+2. **Los elementos se comprueban contra lo que ve quien la crea**, no contra lo
+   que ve el dueño. Una colección a nombre de otro no puede servir para colar su
+   material privado: sólo se compone con lo que uno ya ve.
+3. **La biblioteca del centro (ADR-026) sigue cerrada.** Su dueño es sintético y
+   nadie podría archivar desde la interfaz lo que se creara dentro; responde 409
+   con el motivo, y la colección puede guardarse en la biblioteca propia con el
+   material del centro dentro, como hasta ahora.
+
+**Razones.** Es la alternativa que no toca nada de lo ya emitido: ni migración,
+ni FK, ni firma. La firma T24 (`custom.resourcesig`) se calcula sobre el
+`owner_sub` de la fila, que es el de la carpeta, así que insertar una colección
+así sigue el mismo camino que insertar una colección compartida hoy. Se descartó
+la colección «del creador dentro de la carpeta del otro»: exige relajar la FK
+compuesta con una migración y revisar borrar y mover carpeta, que hoy dan por
+hecho que todo lo que hay dentro es del mismo dueño.
+
+**Consecuencias.**
+
+- Quien crea la colección en una carpeta ajena **no puede archivarla**: si se
+  equivoca, la corrige (título, elementos, orden) o se lo pide al dueño. El
+  diálogo lo dice antes de guardar.
+- **Lo que meta dentro lo verá todo el que vea la carpeta**, también su propio
+  material privado: está dentro de una colección de una carpeta compartida. El
+  diálogo lo dice antes de guardar.
+- Si el dueño deja de compartir la carpeta, quien la creó deja de verla, igual
+  que cualquier otra cosa de esa carpeta. Lo ya insertado en Moodle no se entera:
+  el alumno entra por su `resource_link` y su placement.
+- No hay registro de quién creó la colección: `content_collection` no guarda
+  autor distinto del dueño, y añadirlo sería una migración que este cambio evita.
+
+**Cómo revertirlo.** En `createCollection`, volver a `assertFolderInTransaction`
+en lugar de `resolveNewCollectionHome`, y quitar `sharedDestinations` del
+diálogo. Las colecciones ya creadas así se quedan como están: son del dueño de
+la carpeta y en su carpeta, un estado válido también con la regla anterior. Lo
+vigilan las pruebas «ADR-034» de `test/integration/catalog.integration.js` y «la
+colección nueva admite la carpeta de otro profesor; la edición, no» de
+`test/ui-catalogo.test.js`.

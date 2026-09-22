@@ -16,7 +16,8 @@ import { isUuid } from '../media/storage.js'
  *
  *        ver · abrir · insertar en un curso · editar metadatos ·
  *        componer y reordenar una colección compartida ·
- *        subir una versión corregida, publicarla y volver atrás
+ *        subir una versión corregida, publicarla y volver atrás ·
+ *        crear una colección nueva en su carpeta (nace del autor, ADR-034)
  *                                                        → cualquier profesor
  *        publicar/despublicar · archivar · borrar · purgar revisiones ·
  *        retener para una investigación · mover de carpeta
