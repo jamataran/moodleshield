@@ -574,6 +574,15 @@ Los controles se retiran solos mientras reproduce y vuelven con cualquier
 actividad (ADR-033); la marca de agua y el chip de sesión monitorizada siguen en
 pantalla el 100 % del tiempo.
 
+La velocidad se elige de 0,5× a 2,5× con un `<select>` nativo en la barra (en
+móvil abre la rueda del sistema); en un reproductor de 36rem o menos sube sobre
+la línea de tiempo, porque en la fila echaría fuera la pantalla completa. Se
+fija también como `defaultPlaybackRate`, que es la que el `<video>` restaura al
+recibir fuente, y dentro de una colección pasa de un vídeo al siguiente. La
+telemetría docente mide segundos **de vídeo** (ADR-030), así que su umbral de
+«esto es un salto, no reproducción» crece con la velocidad: con el umbral fijo,
+a 2,5× todo contaba como salto y el informe decía que no se había visto nada.
+
 El chip abre un `<dialog>` con el aviso legal completo y los datos registrados
 de la sesión: nombre, identidad, IP, inicio y caducidad, referencia de
 auditoría, material y navegador. Esa **referencia es el `jti`**, el mismo valor

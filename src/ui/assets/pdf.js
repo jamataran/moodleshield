@@ -2,7 +2,7 @@ import { createPdfView } from './pdf-component.js?v=resume-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
 import { createViewerShell } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver } from './progress-client.js?v=resume-1'
-import { createPdfTelemetry } from './telemetry-client.js?v=seguimiento-1'
+import { createPdfTelemetry } from './telemetry-client.js?v=velocidad-1'
 
 const boot = JSON.parse(document.getElementById('bootstrap').textContent)
 const shell = createViewerShell({
