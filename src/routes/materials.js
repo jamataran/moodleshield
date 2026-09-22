@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { requireCatalogInstructor } from './auth.js'
 import { assertUuid } from '../media/storage.js'
-import { listMaterials } from '../services/materials.js'
+import { getOwnedMaterialUsage, listMaterials } from '../services/materials.js'
 import { getVisibleMaterial } from '../services/sharing.js'
 import {
   activateRevision,
@@ -24,6 +24,28 @@ function assertKind (raw) {
     throw err
   }
   return raw
+}
+
+/** Misma forma en la vista previa y en el 409: la interfaz pinta las dos igual. */
+function usageBody (usage) {
+  return {
+    total: usage.total,
+    collections: usage.collections,
+    foreignCollections: usage.foreignCollections
+  }
+}
+
+/**
+ * El 409 que recibe un borrado sin `?detachCollections=1` —un catálogo viejo en
+ * caché, o una colección añadida entre la vista previa y el borrado—.
+ */
+export function referencedBody (subject, usage) {
+  return {
+    error: `${subject} está en ${usage.total} colección(es). ` +
+      'Confirma el borrado para quitarlo de ellas, o archívalo.',
+    code: 'material_referenced',
+    ...usageBody(usage)
+  }
 }
 
 /** Catálogo unificado: vídeos y PDFs en la misma lista, con la misma forma. */
@@ -218,6 +240,26 @@ materialsRouter.post('/:kind/:id/revisions/:rid/hold', requireCatalogInstructor,
     if (result.status === 'material_not_found') return res.status(404).json({ error: 'Material no encontrado' })
     if (result.status === 'revision_not_found') return res.status(404).json({ error: 'Revisión no encontrada' })
     res.json({ legalHold: result.legalHold })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * Lo que el borrado definitivo le quitaría a las colecciones, para avisar en el
+ * mismo diálogo que lo confirma (ADR-035). Sólo el autor: a quien no puede
+ * borrar, el material no le existe (404).
+ */
+materialsRouter.get('/:kind/:id/collections', requireCatalogInstructor, async (req, res, next) => {
+  try {
+    const usage = await getOwnedMaterialUsage({
+      kind: assertKind(req.params.kind),
+      id: assertUuid(req.params.id, 'Identificador de material'),
+      platformId: req.session.platformId,
+      ownerSub: req.session.sub
+    })
+    if (!usage) return res.status(404).json({ error: 'Material no encontrado' })
+    res.json(usageBody(usage))
   } catch (err) {
     next(err)
   }

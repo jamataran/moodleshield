@@ -178,3 +178,36 @@ test('la tarjeta compartida ofrece versiones, y avisa de quién es el material',
   assert.match(code, /const puedeDescartar = esMio \|\| revision\.mine/,
     'descartar la candidata de otro no se ofrece: el servidor la rechaza')
 })
+
+/**
+ * ADR-035: borrar un material que está en colecciones lo quita de ellas, pero
+ * sólo después de enseñarlas. La vista previa va antes del diálogo, el diálogo
+ * lleva el aviso, y `detachCollections` sólo viaja si ese aviso se enseñó: un
+ * borrado sin colecciones no puede llevárselas por delante si alguien lo añade
+ * a una entretanto.
+ */
+test('borrar un material enseña sus colecciones antes de quitarlo de ellas', async () => {
+  const html = await readFile(path.join(uiDir, 'catalog.html'), 'utf8')
+  const code = await readFile(path.join(uiDir, 'assets/catalog.js'), 'utf8')
+  const inicio = code.indexOf('async function deleteMaterial (')
+  assert.notEqual(inicio, -1, 'falta deleteMaterial')
+  const cuerpo = code.slice(inicio, code.indexOf('\n}\n', inicio))
+
+  const vistaPrevia = cuerpo.indexOf('/collections`)')
+  const confirmacion = cuerpo.indexOf('askConfirm(')
+  assert.ok(vistaPrevia >= 0 && vistaPrevia < confirmacion,
+    'la vista previa de colecciones tiene que ir antes del diálogo')
+  assert.match(cuerpo, /\.\.\.usageWarning\(usage\)/, 'el diálogo tiene que llevar el aviso')
+  assert.match(cuerpo, /const detach = usage\.total > 0/)
+  assert.match(cuerpo, /detach \? `\$\{path\}\?detachCollections=1` : path/,
+    'el permiso para quitarlo de las colecciones sólo viaja si se enseñaron')
+
+  // El bloque del aviso existe y se reescribe en cada apertura del diálogo.
+  for (const id of ['confirm-extra', 'confirm-warning', 'confirm-list', 'confirm-note']) {
+    assert.ok(html.includes(`id="${id}"`), `falta #${id} en el diálogo de confirmación`)
+  }
+  const confirm = code.slice(code.indexOf('function askConfirm ('), code.indexOf('\n}\n', code.indexOf('function askConfirm (')))
+  assert.match(confirm, /el\('confirm-list'\)\.replaceChildren\(/)
+  assert.match(confirm, /el\('confirm-extra'\)\.hidden = /)
+  assert.doesNotMatch(confirm, /innerHTML/, 'los títulos de colección son datos del servidor')
+})

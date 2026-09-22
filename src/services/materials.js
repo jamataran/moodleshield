@@ -1,4 +1,4 @@
-import { many, one } from '../db/index.js'
+import { many, one, query } from '../db/index.js'
 import config from '../config.js'
 import { isUuid } from '../media/storage.js'
 import { placedInContextSql, visibleClause } from './sharing.js'
@@ -267,4 +267,83 @@ export function listCollectionsUsing ({ kind, id }) {
       ORDER BY c.title`,
     [id]
   )
+}
+
+/**
+ * Lo que un borrado definitivo le quitaría a las colecciones (ADR-035).
+ *
+ * `db` es el cliente de la transacción del borrado o, fuera de ella, el pool:
+ * la vista previa del diálogo y la comprobación dentro del borrado leen con la
+ * misma consulta.
+ *
+ * Las colecciones de otro profesor se cuentan sin título. Pueden contener el
+ * material porque él lo compartió (ADR-018/029), pero una colección privada
+ * ajena no es cosa suya, y su título tampoco.
+ */
+export async function collectionUsage (db, { kind, id, ownerSub }) {
+  const column = kind === 'pdf' ? 'document_id' : 'video_id'
+  const { rows } = await db.query(
+    `SELECT c.id, c.title, c.archived_at, c.owner_sub,
+            (SELECT count(*) FROM content_collection_item o
+              WHERE o.collection_id = c.id)::int AS item_count
+       FROM content_collection_item i
+       JOIN content_collection c ON c.id = i.collection_id
+      WHERE i.${column} = $1
+      ORDER BY lower(c.title), c.id`,
+    [id]
+  )
+  const own = rows.filter((row) => row.owner_sub === ownerSub)
+  return {
+    total: rows.length,
+    collections: own.map((row) => ({
+      id: row.id,
+      title: row.title,
+      archived: Boolean(row.archived_at),
+      emptied: row.item_count === 1
+    })),
+    foreignCollections: rows.length - own.length
+  }
+}
+
+/** Vista previa del borrado: sólo para el autor, como el borrado (ADR-029). */
+export async function getOwnedMaterialUsage ({ kind, id, platformId, ownerSub }) {
+  const table = kind === 'pdf' ? 'pdf_document' : 'video'
+  const owned = await one(
+    `SELECT id FROM ${table} WHERE id = $1 AND platform_id = $2 AND owner_sub = $3`,
+    [id, platformId, ownerSub]
+  )
+  if (!owned) return null
+  return collectionUsage({ query }, { kind, id, ownerSub })
+}
+
+/**
+ * Suelta las referencias que `ON DELETE RESTRICT` defiende, justo antes del
+ * `DELETE` del material y en su misma transacción.
+ *
+ * La instantánea de las colecciones insertadas (`resource_placement_item`) se
+ * limpia siempre. El launch la cruza con la composición actual, así que una
+ * fila de un material que ya no está en la colección no concede nada; quitarla
+ * sólo estrecha el acceso. Sin esto, borrar un material que alguna vez viajó en
+ * una colección insertada era un error de integridad.
+ *
+ * Quitarlo de las colecciones, en cambio, sólo con permiso explícito de quien
+ * borra. Tocar `updated_at` hace que un editor abierto con la lista vieja
+ * reciba `stale_collection` en vez de volver a guardarla.
+ */
+export async function detachMaterial (client, { kind, id, fromCollections }) {
+  const column = kind === 'pdf' ? 'document_id' : 'video_id'
+  await client.query(`DELETE FROM resource_placement_item WHERE ${column} = $1`, [id])
+  if (!fromCollections) return []
+  const { rows } = await client.query(
+    `DELETE FROM content_collection_item WHERE ${column} = $1 RETURNING collection_id`,
+    [id]
+  )
+  const collectionIds = rows.map((row) => row.collection_id)
+  if (collectionIds.length > 0) {
+    await client.query(
+      'UPDATE content_collection SET updated_at = now() WHERE id = ANY($1::uuid[])',
+      [collectionIds]
+    )
+  }
+  return collectionIds
 }

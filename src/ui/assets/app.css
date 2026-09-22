@@ -648,6 +648,24 @@ dialog label { display: block; font-size: .875rem; color: var(--muted); margin-b
   color: var(--muted);
 }
 .import-skipped li { padding: .15rem 0; overflow-wrap: anywhere; }
+.confirm-extra {
+  margin-top: .7rem;
+  padding: .6rem .8rem;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+}
+/* El ámbar va en el borde y el icono: como color de texto no se lee en claro. */
+.confirm-warning { margin: 0; font-weight: 600; }
+.confirm-warning::before { content: "⚠ "; color: var(--warn); }
+.confirm-list {
+  margin: .35rem 0 0;
+  padding-left: 1.2rem;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+.confirm-list li { padding: .1rem 0; overflow-wrap: anywhere; }
+.confirm-extra .muted { margin: .45rem 0 0; }
 .import-progress { margin-top: .6rem; }
 .import-progress progress { width: 100%; height: .6rem; }
 .import-progress p { margin: .3rem 0 0; overflow-wrap: anywhere; }

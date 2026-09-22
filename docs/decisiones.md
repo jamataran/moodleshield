@@ -344,6 +344,12 @@ afectadas (`ON DELETE RESTRICT`), en vez de dejar una colección rota en silenci
 Las colecciones se archivan, nunca se borran: no hay forma de demostrar que no
 queda ninguna actividad apuntándolas.
 
+**Actualización (22 de septiembre de 2026).** ADR-035 convierte ese 409 en un
+aviso: el diálogo de borrado enseña antes las colecciones afectadas y, al
+confirmarlo, el material se quita de ellas y se borra. El 409 sigue siendo la
+respuesta a quien borra sin haber visto la lista. Las colecciones siguen sin
+borrarse nunca: se quedan, aunque sea vacías.
+
 ---
 
 ## ADR-014 · El PDF se normaliza en el worker, y su protección no es forense
@@ -1539,3 +1545,92 @@ la carpeta y en su carpeta, un estado válido también con la regla anterior. Lo
 vigilan las pruebas «ADR-034» de `test/integration/catalog.integration.js` y «la
 colección nueva admite la carpeta de otro profesor; la edición, no» de
 `test/ui-catalogo.test.js`.
+
+---
+
+## ADR-035 · Borrar un material lo quita de sus colecciones, con aviso previo
+
+**Estado**: aceptada · **Fecha**: 2026-09 · Actualiza a ADR-013 · Respeta ADR-018 y ADR-029
+
+**Contexto.** «Borrar definitivamente» un vídeo o un PDF que estaba en alguna
+colección respondía 409 con la lista de colecciones (ADR-013), y la biblioteca
+lo enseñaba como un aviso rojo sin salida. Para borrarlo había que ir colección
+por colección quitándolo, y eso no siempre era posible. Una colección archivada
+contaba igual, pero el editor no la abre. Una colección privada de otro
+profesor —que puede contener tu material si lo compartiste— ni siquiera se ve, y
+el 409 filtraba su título.
+
+Había además un fallo latente en el mismo camino. La instantánea de una
+colección insertada en Moodle (`resource_placement_item`, migración 014) también
+lleva `ON DELETE RESTRICT`. Un material que había viajado en una colección
+insertada seguía en esa foto aunque ya no estuviera en la colección, y borrarlo
+era un error de integridad que llegaba a la interfaz como **500**.
+
+**Decisión.** Se puede borrar aunque el material esté en colecciones. El aviso
+va **en el mismo diálogo que confirma el borrado**:
+
+- La biblioteca pregunta antes `GET /materials/:kind/:id/collections`, que sólo
+  responde al autor (404 a cualquier otro).
+- El diálogo lista las colecciones propias, marcando las archivadas y las que
+  se quedarán vacías, y cuenta sin título las de otros.
+- Al confirmar, `DELETE /videos/:id?detachCollections=1` (o
+  `/documents/:id?detachCollections=1`) hace en una transacción, antes del
+  `DELETE` del material:
+  - quita el material de esas colecciones;
+  - toca su `updated_at`;
+  - limpia sus filas de la instantánea.
+
+Tres reglas acompañan a la decisión:
+
+1. **Quitarlo de colecciones exige opt-in.** Sin el parámetro, el borrado sigue
+   respondiendo el 409 `material_referenced` de siempre, ahora con la misma
+   forma que la vista previa. Así, un catálogo viejo en caché —o uno al que le
+   añadieron una colección entre la vista previa y el borrado— no se lleva por
+   delante colecciones que no enseñó. La biblioteca, ante ese 409, vuelve a
+   preguntar una vez con la lista al día.
+2. **La instantánea se limpia siempre.** El launch la cruza con la composición
+   actual («bajas sí, altas no», `loadPlacementCollectionItems`), así que una
+   fila de un material que ya no está en la colección no concede nada. Quitarla
+   sólo estrecha el acceso: F-11 y T24 siguen en pie.
+3. **Lo ajeno se cuenta, no se nombra.** El título de una colección privada de
+   otro profesor no es de quien borra, aunque su material esté dentro.
+
+**Razones.** Es lo que pedía el uso real, sin tocar nada de lo ya emitido: ni
+migración, ni FK, ni UUID, ni firma. Las `ON DELETE RESTRICT` se quedan como red
+de seguridad: el servicio suelta antes lo que defienden, y cualquier camino que
+no lo haga sigue chocando con ellas en vez de romper una colección en silencio.
+Se descartó cambiar las FK a `ON DELETE CASCADE` con una migración. Habría hecho
+invisible el efecto en las colecciones y habría quitado la red para cualquier
+otro borrado futuro.
+
+**Consecuencias.**
+
+- **La actividad de Moodle de una colección afectada sigue abriendo, sin ese
+  material.** Si la colección se queda vacía, sus alumnos ven el aviso de
+  colección vacía (`empty_collection`) hasta que el profesor le añada algo. La
+  colección no se archiva sola. El diálogo lo anuncia antes.
+- **La actividad que inserta el material directamente deja de abrir**, igual
+  que con cualquier borrado definitivo anterior a este ADR.
+- **El profesor dueño de una colección ajena afectada no recibe aviso.** Pierde
+  ese elemento, como si lo hubiera quitado él. Es el precio de que borrar sea
+  del autor (ADR-029), y por eso el diálogo del autor lo cuenta.
+- **El «seguir donde lo dejé» de un alumno puede caer en el material de al
+  lado.** Guarda un índice dentro de la colección, igual que cuando el profesor
+  quita un elemento desde el editor.
+- **Un borrado y un guardado simultáneos de la misma colección pueden
+  interbloquearse.** Postgres aborta uno y el profesor reintenta. Es raro y no
+  compensa reordenar los bloqueos.
+
+**Cómo revertirlo.**
+
+1. En `deleteOwnedVideo` y `deleteOwnedDocument`, ignorar `detachCollections`.
+2. En `deleteMaterial` de `catalog.js`, dejar de enviarlo.
+
+El servidor vuelve entonces al 409 de ADR-013, con la vista previa como
+información. La limpieza de la instantánea conviene mantenerla, porque sin ella
+vuelve el 500. Lo vigilan:
+
+- las pruebas «ADR-035» de `test/integration/catalog.integration.js` y de
+  `test/integration/resource-placement.integration.js`;
+- «borrar un material enseña sus colecciones antes de quitarlo de ellas» de
+  `test/ui-catalogo.test.js`.
