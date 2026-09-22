@@ -1,7 +1,13 @@
 import { many, one, query, transaction } from '../db/index.js'
 import logger from '../logger.js'
 import { assertFolderInTransaction, normalizeName } from './folders.js'
-import { listCollectionsUsing, listMaterials, VIEWERS_LIMIT } from './materials.js'
+import {
+  collectionUsage,
+  detachMaterial,
+  listCollectionsUsing,
+  listMaterials,
+  VIEWERS_LIMIT
+} from './materials.js'
 import { insertRevision, syncMaterialStatus } from './revisions.js'
 import { visibleClause } from './sharing.js'
 
@@ -218,7 +224,8 @@ export function requestDocumentCancellation ({ documentId, platformId, ownerSub 
   })
 }
 
-export function deleteOwnedDocument ({ documentId, platformId, ownerSub }) {
+/** Mismo contrato que `deleteOwnedVideo`, colecciones incluidas (ADR-035). */
+export function deleteOwnedDocument ({ documentId, platformId, ownerSub, detachCollections = false }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `SELECT id, status FROM pdf_document
@@ -234,13 +241,10 @@ export function deleteOwnedDocument ({ documentId, platformId, ownerSub }) {
     )
     if (active[0].total > 0) return { status: 'active', sourcePaths: [], revisions: [] }
 
-    const { rows: used } = await client.query(
-      `SELECT c.id, c.title FROM content_collection_item i
-         JOIN content_collection c ON c.id = i.collection_id
-        WHERE i.document_id = $1`,
-      [documentId]
-    )
-    if (used.length > 0) return { status: 'referenced', collections: used, sourcePaths: [], revisions: [] }
+    const usage = await collectionUsage(client, { kind: 'pdf', id: documentId, ownerSub })
+    if (usage.total > 0 && !detachCollections) {
+      return { status: 'referenced', ...usage, sourcePaths: [], revisions: [] }
+    }
 
     const { rows: jobs } = await client.query(
       'SELECT source_path FROM pdf_job WHERE document_id = $1 FOR UPDATE',
@@ -250,9 +254,13 @@ export function deleteOwnedDocument ({ documentId, platformId, ownerSub }) {
       'SELECT id, storage_layout FROM pdf_revision WHERE document_id = $1',
       [documentId]
     )
+    const detachedFrom = await detachMaterial(client, {
+      kind: 'pdf', id: documentId, fromCollections: detachCollections
+    })
     await client.query('DELETE FROM pdf_document WHERE id = $1', [documentId])
     return {
       status: 'deleted',
+      detachedFrom,
       sourcePaths: jobs.map((job) => job.source_path).filter(Boolean),
       revisions
     }

@@ -170,11 +170,25 @@ function askText ({ heading, label, value = '', okLabel = 'Aceptar', maxLength =
   })
 }
 
-function askConfirm ({ heading, message, okLabel = 'Continuar' }) {
+/**
+ * `warning`, `items` y `note` son un aviso opcional con lista debajo del
+ * mensaje. El diálogo es compartido, así que se reescribe entero en cada
+ * apertura: el aviso de un borrado no puede asomar en la confirmación siguiente.
+ */
+function askConfirm ({ heading, message, okLabel = 'Continuar', warning = '', items = [], note = '' }) {
   const dialog = el('confirm-dialog')
   el('confirm-heading').textContent = heading
   el('confirm-message').textContent = message
   el('confirm-ok').textContent = okLabel
+  el('confirm-warning').textContent = warning
+  el('confirm-list').replaceChildren(...items.map((text) => {
+    const li = document.createElement('li')
+    li.textContent = text
+    return li
+  }))
+  el('confirm-note').textContent = note
+  el('confirm-note').hidden = !note
+  el('confirm-extra').hidden = !warning && items.length === 0
 
   return new Promise((resolve) => {
     const done = () => {
@@ -1197,24 +1211,62 @@ el('edit-form').addEventListener('submit', async (event) => {
   }
 })
 
-async function deleteMaterial (item) {
+function colecciones (n) {
+  return `${n} colección${n === 1 ? '' : 'es'}`
+}
+
+/** El aviso de colecciones del diálogo de borrado, con la vista previa del servidor. */
+function usageWarning (usage) {
+  if (!usage?.total) return {}
+  const items = usage.collections.map((collection) => {
+    const marcas = [
+      collection.archived && 'archivada',
+      collection.emptied && 'se quedará vacía'
+    ].filter(Boolean)
+    return marcas.length ? `${collection.title} (${marcas.join(', ')})` : collection.title
+  })
+  const ajenas = usage.foreignCollections
+  if (ajenas > 0) items.push(`${colecciones(ajenas)} que no ${ajenas === 1 ? 'es tuya' : 'son tuyas'}`)
+  const vacias = usage.collections.some((collection) => collection.emptied)
+  return {
+    warning: `Está en ${colecciones(usage.total)}; se quitará de ${usage.total === 1 ? 'ella' : 'ellas'}:`,
+    items,
+    note: 'Las actividades de Moodle que usan esas colecciones seguirán abriendo, pero sin este material.' +
+      (vacias ? ' Una colección que se quede vacía avisará a los alumnos de que no tiene materiales.' : '')
+  }
+}
+
+async function deleteMaterial (item, { retried = false } = {}) {
+  // Antes de confirmar se pregunta en qué colecciones está, para avisarlo en el
+  // mismo diálogo (ADR-035). Sin esa respuesta no se confirma a ciegas.
+  let usage
+  try {
+    usage = await apiJson(`/materials/${item.kind}/${item.id}/collections`)
+  } catch (err) {
+    notify(`No se pudo comprobar en qué colecciones está: ${err.message}`, 'error')
+    return
+  }
   const ok = await askConfirm({
     heading: `Borrar «${item.title}»`,
     message: 'Se eliminan el material y todos sus ficheros, incluidas las versiones anteriores, ' +
-      'y las actividades Moodle que lo usen dejarán de abrir. Esta acción no se puede deshacer. ' +
-      'Si sólo quieres retirarlo del selector, archívalo.',
-    okLabel: 'Borrar definitivamente'
+      'y las actividades Moodle que lo enlazan directamente dejarán de abrir. Esta acción no se ' +
+      'puede deshacer. Si sólo quieres retirarlo del selector, archívalo.',
+    okLabel: 'Borrar definitivamente',
+    ...usageWarning(usage)
   })
   if (!ok) return
   const path = item.kind === 'pdf' ? `/documents/${item.id}` : `/videos/${item.id}`
+  // Quitarlo de las colecciones sólo se pide si el diálogo las ha enseñado.
+  const detach = usage.total > 0
   try {
-    await apiJson(path, { method: 'DELETE' })
-    notify('Material borrado')
+    await apiJson(detach ? `${path}?detachCollections=1` : path, { method: 'DELETE' })
+    notify(detach ? `Material borrado y quitado de ${colecciones(usage.total)}` : 'Material borrado')
     await reload()
   } catch (err) {
-    if (err.status === 409 && err.payload?.code === 'material_referenced') {
-      const titles = (err.payload.collections ?? []).map((c) => c.title).join(', ')
-      notify(`${err.message} Colecciones: ${titles}`, 'error')
+    if (err.status === 409 && err.payload?.code === 'material_referenced' && !retried) {
+      // Alguien lo metió en una colección después de la vista previa: se vuelve
+      // a preguntar con la lista al día, en vez de quitarlo de una sin avisar.
+      await deleteMaterial(item, { retried: true })
       return
     }
     if (err.status === 409 && ['video_active', 'document_active'].includes(err.payload?.code)) {

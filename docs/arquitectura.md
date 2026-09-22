@@ -284,8 +284,10 @@ Tres decisiones que conviene tener presentes al leer el esquema:
   tabla polimórfica con la mitad de columnas nulas.
 - **`content_collection_item` usa dos FK nullable con un `CHECK`**, no una
   referencia `kind + uuid` sin integridad: así Postgres impide referencias
-  huérfanas. `ON DELETE RESTRICT` convierte «borrar material referenciado» en un
-  409 accionable en vez de una colección rota en silencio.
+  huérfanas. `ON DELETE RESTRICT` impide que un material desaparezca de una
+  colección sin que nadie lo decida: el borrado definitivo lo quita antes de sus
+  colecciones y de las instantáneas de sus inserciones, y sólo si quien borra ha
+  visto la lista (`?detachCollections=1`, ADR-035); sin eso responde 409.
 - **Las columnas físicas de `video`/`pdf_document` son una proyección** de la
   revisión activa, mantenida en la misma transacción que la activación. La
   fuente de verdad es la tabla de revisiones; la proyección existe para que el
@@ -335,17 +337,19 @@ Detalle y motivos en las fichas de cierre archivadas como issues:
 | DELETE | `/materials/:kind/:id/revisions/:rid` | catálogo | Purgar si la retención lo permite |
 | DELETE | `/materials/:kind/:id` | catálogo | Archivar el material lógico |
 | POST | `/materials/:kind/:id/restore` | catálogo | Restaurar del archivo |
+| GET | `/materials/:kind/:id/collections` | catálogo (sólo el autor) | Colecciones que perdería al borrarlo: las propias con título, las ajenas contadas (ADR-035) |
 | GET/POST | `/folders` | catálogo | Árbol de carpetas visibles (propias + compartidas), plano con `parentId`; alta con padre opcional |
 | PATCH/DELETE | `/folders/:id` | catálogo | Renombrar, mover (`parentId`) o compartir (`isPublic`) / borrar subiendo contenido y subcarpetas al padre |
 | GET | `/videos` | catálogo | Catálogo de vídeo (compatibilidad) |
 | POST | `/videos` | catálogo | Subida en streaming |
 | POST | `/videos/:id/revisions` | catálogo | Sustituir el fichero sin cambiar el UUID |
 | PATCH | `/videos/:id` | catálogo | Título, descripción y carpeta |
-| DELETE | `/videos/:id` | catálogo | Borrado con ficheros (409 si está en una colección) |
+| DELETE | `/videos/:id` | catálogo | Borrado con ficheros; con `?detachCollections=1` lo quita antes de sus colecciones, sin él 409 si está en alguna (ADR-035) |
 | GET | `/videos/:id/viewers` | catálogo | Candidatos del trazado |
 | GET | `/videos/:id/poster.jpg` | sesión con alcance | Miniatura |
 | POST | `/documents` | catálogo | Subida de PDF |
 | POST | `/documents/:id/revisions` | catálogo | Sustituir el PDF |
+| DELETE | `/documents/:id` | catálogo | Borrado con ficheros; mismo contrato que `DELETE /videos/:id` |
 | GET/HEAD | `/documents/:id/content` | sesión con alcance | **PDF con `Range`**; nunca estático |
 | GET | `/documents/:id/download` | sesión con alcance | **Copia descargable sellada**: identidad en cada página + cifrado con permisos (ADR-017) |
 | GET | `/documents/:id/poster.jpg` | sesión con alcance | Portada (no va al content item) |

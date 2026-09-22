@@ -14,6 +14,7 @@ import {
   updateVideoMetadata
 } from '../services/videos.js'
 import { listMaterials, toMaterialDto } from '../services/materials.js'
+import { referencedBody } from './materials.js'
 import { getActiveRevision, getCandidateRevision, publicRevision } from '../services/revisions.js'
 import { authorizeResource } from '../services/authorization.js'
 import {
@@ -239,7 +240,8 @@ videosRouter.delete('/:id', requireCatalogInstructor, async (req, res, next) => 
     const result = await deleteOwnedVideo({
       videoId: id,
       platformId: req.session.platformId,
-      ownerSub: req.session.sub
+      ownerSub: req.session.sub,
+      detachCollections: req.query.detachCollections === '1'
     })
     if (result.status === 'not_found') return res.status(404).json({ error: 'Vídeo no encontrado' })
     if (result.status === 'active') {
@@ -249,12 +251,7 @@ videosRouter.delete('/:id', requireCatalogInstructor, async (req, res, next) => 
       })
     }
     if (result.status === 'referenced') {
-      return res.status(409).json({
-        error: `Este vídeo forma parte de ${result.collections.length} colección(es). ` +
-          'Quítalo de ellas o archívalo en vez de borrarlo.',
-        code: 'material_referenced',
-        collections: result.collections.map((row) => ({ id: row.id, title: row.title }))
-      })
+      return res.status(409).json(referencedBody('Este vídeo', result))
     }
     await removeMaterialFiles('video', id).catch((err) => {
       logger.warn({ err, videoId: id }, 'Vídeo borrado de DB; quedan ficheros para reconciliar')

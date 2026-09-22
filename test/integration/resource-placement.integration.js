@@ -11,6 +11,7 @@ import {
   loadPlacementCollectionItems,
   ResourcePlacementError
 } from '../../src/services/resource-placements.js'
+import { deleteOwnedVideo } from '../../src/services/videos.js'
 
 const PLATFORM_ID = randomUUID()
 const VIDEO_A = randomUUID()
@@ -204,6 +205,51 @@ test('F-11: una colección no amplía actividades antiguas con elementos nuevos'
     [COLLECTION_ID, VIDEO_A]
   )
   assert.deepEqual(await loadPlacementCollectionItems(placed.placementId, COLLECTION_ID), [])
+})
+
+async function snapshotRows (placementId) {
+  const { rows } = await query(
+    'SELECT video_id FROM resource_placement_item WHERE placement_id=$1 ORDER BY position',
+    [placementId]
+  )
+  return rows.map((row) => row.video_id)
+}
+
+test('ADR-035: borrar un material de una colección insertada la deja abriendo sin él', async () => {
+  await query(
+    'INSERT INTO content_collection_item (collection_id,position,video_id) VALUES ($1,1,$2)',
+    [COLLECTION_ID, VIDEO_B]
+  )
+  const placed = await place({ id: COLLECTION_ID, kind: 'collection', owner_sub: OWNER })
+  const scope = { platformId: PLATFORM_ID, ownerSub: OWNER }
+
+  // Sin permiso explícito no se toca nada, tampoco la instantánea.
+  const rechazo = await deleteOwnedVideo({ videoId: VIDEO_A, ...scope })
+  assert.equal(rechazo.status, 'referenced')
+  assert.deepEqual(await snapshotRows(placed.placementId), [VIDEO_A, VIDEO_B])
+
+  const result = await deleteOwnedVideo({ videoId: VIDEO_A, ...scope, detachCollections: true })
+  assert.equal(result.status, 'deleted')
+  assert.deepEqual(await snapshotRows(placed.placementId), [VIDEO_B])
+  // La actividad de Moodle sigue viva y enseña lo que queda.
+  const { rows } = await query('SELECT revoked_at FROM resource_placement WHERE id=$1', [placed.placementId])
+  assert.equal(rows[0].revoked_at, null)
+  assert.deepEqual(
+    (await loadPlacementCollectionItems(placed.placementId, COLLECTION_ID)).map((item) => item.id),
+    [VIDEO_B]
+  )
+})
+
+test('ADR-035: un material que sólo queda en la instantánea se borra sin error', async () => {
+  // Antes era un 23503 de `resource_placement_item` que llegaba como 500: el
+  // material ya no estaba en la colección, pero la foto de la inserción sí.
+  const placed = await place({ id: COLLECTION_ID, kind: 'collection', owner_sub: OWNER })
+  await query('DELETE FROM content_collection_item WHERE collection_id=$1 AND video_id=$2', [COLLECTION_ID, VIDEO_A])
+
+  const result = await deleteOwnedVideo({ videoId: VIDEO_A, platformId: PLATFORM_ID, ownerSub: OWNER })
+  assert.equal(result.status, 'deleted')
+  assert.deepEqual(result.detachedFrom, [])
+  assert.deepEqual(await snapshotRows(placed.placementId), [])
 })
 
 test('F-11: revocar el placement corta también los tokens hijos del grant', async () => {

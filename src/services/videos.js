@@ -1,7 +1,13 @@
 import { many, one, query, transaction } from '../db/index.js'
 import logger from '../logger.js'
 import { assertFolderInTransaction } from './folders.js'
-import { listMaterials, listCollectionsUsing, VIEWERS_LIMIT } from './materials.js'
+import {
+  collectionUsage,
+  detachMaterial,
+  listMaterials,
+  listCollectionsUsing,
+  VIEWERS_LIMIT
+} from './materials.js'
 import { insertRevision, syncMaterialStatus } from './revisions.js'
 import { normalizeName } from './folders.js'
 import { visibleClause } from './sharing.js'
@@ -270,11 +276,12 @@ export function requestVideoCancellation ({ videoId, platformId, ownerSub }) {
 /**
  * Borrado físico del vídeo y todas sus revisiones.
  *
- * Se niega si alguna colección lo referencia: `ON DELETE RESTRICT` lo impediría
- * de todas formas, pero un 409 con la lista de colecciones es accionable y un
- * error de integridad no lo es.
+ * Si alguna colección lo contiene, sólo sigue con `detachCollections`: quien
+ * borra ha visto antes la lista en el diálogo (ADR-035). Sin ese permiso
+ * responde `referenced`, como siempre, y un catálogo viejo en caché no puede
+ * vaciar colecciones sin haberlas enseñado.
  */
-export function deleteOwnedVideo ({ videoId, platformId, ownerSub }) {
+export function deleteOwnedVideo ({ videoId, platformId, ownerSub, detachCollections = false }) {
   return transaction(async (client) => {
     const { rows } = await client.query(
       `SELECT id, status FROM video
@@ -291,13 +298,10 @@ export function deleteOwnedVideo ({ videoId, platformId, ownerSub }) {
     )
     if (active[0].total > 0) return { status: 'active', sourcePaths: [], revisions: [] }
 
-    const { rows: used } = await client.query(
-      `SELECT c.id, c.title FROM content_collection_item i
-         JOIN content_collection c ON c.id = i.collection_id
-        WHERE i.video_id = $1`,
-      [videoId]
-    )
-    if (used.length > 0) return { status: 'referenced', collections: used, sourcePaths: [], revisions: [] }
+    const usage = await collectionUsage(client, { kind: 'video', id: videoId, ownerSub })
+    if (usage.total > 0 && !detachCollections) {
+      return { status: 'referenced', ...usage, sourcePaths: [], revisions: [] }
+    }
 
     const { rows: jobs } = await client.query(
       'SELECT source_path FROM transcode_job WHERE video_id = $1 FOR UPDATE',
@@ -307,9 +311,13 @@ export function deleteOwnedVideo ({ videoId, platformId, ownerSub }) {
       'SELECT id, storage_layout FROM video_revision WHERE video_id = $1',
       [videoId]
     )
+    const detachedFrom = await detachMaterial(client, {
+      kind: 'video', id: videoId, fromCollections: detachCollections
+    })
     await client.query('DELETE FROM video WHERE id = $1', [videoId])
     return {
       status: 'deleted',
+      detachedFrom,
       sourcePaths: jobs.map((job) => job.source_path).filter(Boolean),
       revisions
     }

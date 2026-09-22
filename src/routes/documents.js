@@ -17,6 +17,7 @@ import {
 } from '../services/documents.js'
 import { requirePlaybackAudit } from '../services/playback-audit.js'
 import { listMaterials, toMaterialDto } from '../services/materials.js'
+import { referencedBody } from './materials.js'
 import { authorizeResource } from '../services/authorization.js'
 import { getActiveRevision, getCandidateRevision, publicRevision } from '../services/revisions.js'
 import {
@@ -228,7 +229,8 @@ documentsRouter.delete('/:id', requireCatalogInstructor, async (req, res, next) 
     const result = await deleteOwnedDocument({
       documentId: id,
       platformId: req.session.platformId,
-      ownerSub: req.session.sub
+      ownerSub: req.session.sub,
+      detachCollections: req.query.detachCollections === '1'
     })
     if (result.status === 'not_found') return res.status(404).json({ error: 'Documento no encontrado' })
     if (result.status === 'active') {
@@ -238,12 +240,7 @@ documentsRouter.delete('/:id', requireCatalogInstructor, async (req, res, next) 
       })
     }
     if (result.status === 'referenced') {
-      return res.status(409).json({
-        error: `Este documento forma parte de ${result.collections.length} colección(es). ` +
-          'Quítalo de ellas o archívalo en vez de borrarlo.',
-        code: 'material_referenced',
-        collections: result.collections.map((row) => ({ id: row.id, title: row.title }))
-      })
+      return res.status(409).json(referencedBody('Este documento', result))
     }
     await removeMaterialFiles('pdf', id).catch((err) => {
       logger.warn({ err, documentId: id }, 'Documento borrado de DB; quedan ficheros para reconciliar')

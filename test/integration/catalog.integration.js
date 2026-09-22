@@ -20,7 +20,11 @@ import {
   platformOwners,
   platformTotals
 } from '../../src/services/platform-content.js'
-import { listMaterials, listCollectionsUsing } from '../../src/services/materials.js'
+import {
+  getOwnedMaterialUsage,
+  listMaterials,
+  listCollectionsUsing
+} from '../../src/services/materials.js'
 import {
   createVideoAndJob,
   createVideoRevisionAndJob,
@@ -32,6 +36,7 @@ import {
 import {
   createDocumentAndJob,
   createDocumentRevisionAndJob,
+  deleteOwnedDocument,
   recordDocumentView,
   updateDocumentMetadata
 } from '../../src/services/documents.js'
@@ -700,6 +705,104 @@ test('T18: borrar un material referenciado devuelve un error accionable', async 
   assert.deepEqual(result.collections.map((c) => c.id), [collection.id])
   // Y el vídeo sigue ahí: la colección no se ha roto en silencio.
   assert.ok(await one('SELECT id FROM video WHERE id = $1', [videoId]))
+})
+
+/** Ana comparte una carpeta y Luis mete su vídeo en una colección privada suya. */
+async function videoInForeignCollection ({ title = 'Compartido' } = {}) {
+  const carpeta = await createFolder({ ...scopeA, ownerName: 'Ana', name: `Compartida ${randomUUID()}` })
+  const videoId = await readyVideo({ title, folderId: carpeta.id })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+  const deLuis = await createCollection({
+    ...scopeLuis, ownerName: 'Luis', title: 'Privada de Luis', items: [{ kind: 'video', id: videoId }]
+  })
+  return { videoId, deLuis }
+}
+
+test('ADR-035: la vista previa del borrado enseña lo propio y sólo cuenta lo ajeno', async () => {
+  const { videoId } = await videoInForeignCollection()
+  const otro = await readyVideo({ title: 'Otro' })
+  const acompanada = await createCollection({
+    ...scopeA,
+    title: 'B · con más cosas',
+    items: [{ kind: 'video', id: videoId }, { kind: 'video', id: otro }]
+  })
+  const sola = await createCollection({ ...scopeA, title: 'A · sólo él', items: [{ kind: 'video', id: videoId }] })
+  await archiveCollection({ id: sola.id, ...scopeA })
+
+  const usage = await getOwnedMaterialUsage({ kind: 'video', id: videoId, ...scopeA })
+  assert.equal(usage.total, 3)
+  assert.deepEqual(usage.collections, [
+    { id: sola.id, title: 'A · sólo él', archived: true, emptied: true },
+    { id: acompanada.id, title: 'B · con más cosas', archived: false, emptied: false }
+  ])
+  assert.equal(usage.foreignCollections, 1)
+
+  // El 409 de siempre trae lo mismo, y tampoco el título privado de Luis.
+  const rechazo = await deleteOwnedVideo({ videoId, ...scopeA })
+  assert.equal(rechazo.status, 'referenced')
+  assert.equal(rechazo.foreignCollections, 1)
+  assert.ok(!JSON.stringify(rechazo.collections).includes('Privada de Luis'))
+
+  // Borrar es del autor, y la vista previa también: a Luis no le existe.
+  assert.equal(await getOwnedMaterialUsage({ kind: 'video', id: videoId, ...scopeLuis }), null)
+  assert.equal(await getOwnedMaterialUsage({ kind: 'video', id: videoId, ...scopeB }), null)
+  assert.equal(await getOwnedMaterialUsage({ kind: 'pdf', id: videoId, ...scopeA }), null)
+})
+
+test('ADR-035: con permiso explícito, borrar quita el material de todas sus colecciones', async () => {
+  const { videoId, deLuis } = await videoInForeignCollection()
+  const otro = await readyVideo({ title: 'Se queda' })
+  const acompanada = await createCollection({
+    ...scopeA,
+    title: 'Con más cosas',
+    items: [{ kind: 'video', id: videoId }, { kind: 'video', id: otro }]
+  })
+  const sola = await createCollection({ ...scopeA, title: 'Sólo él', items: [{ kind: 'video', id: videoId }] })
+
+  const result = await deleteOwnedVideo({ videoId, ...scopeA, detachCollections: true })
+  assert.equal(result.status, 'deleted')
+  assert.deepEqual(
+    [...result.detachedFrom].sort(),
+    [acompanada.id, sola.id, deLuis.id].sort()
+  )
+  assert.equal(await one('SELECT id FROM video WHERE id = $1', [videoId]), null)
+
+  // Las colecciones siguen ahí, con el resto de su contenido.
+  assert.deepEqual((await loadItems(acompanada.id)).map((item) => item.id), [otro])
+  assert.deepEqual(await loadItems(sola.id), [])
+  assert.deepEqual(await loadItems(deLuis.id), [])
+  const quedan = await many(
+    'SELECT id, archived_at, updated_at FROM content_collection WHERE id = ANY($1::uuid[])',
+    [[acompanada.id, sola.id, deLuis.id]]
+  )
+  assert.equal(quedan.length, 3)
+  assert.ok(quedan.every((row) => row.archived_at === null), 'quedarse vacía no la archiva')
+
+  // Un editor abierto con la lista vieja recibe `stale` en vez de resucitarla.
+  const antes = await updateCollection({
+    id: acompanada.id,
+    ...scopeA,
+    items: [{ kind: 'video', id: otro }],
+    expectedUpdatedAt: acompanada.updated_at
+  })
+  assert.equal(antes.status, 'stale')
+})
+
+test('ADR-035: borrar un PDF quita también sus colecciones, y sin permiso se niega', async () => {
+  const documentId = await readyDocument({ title: 'Apuntes en colección' })
+  const coleccion = await createCollection({
+    ...scopeA, title: 'Con PDF', items: [{ kind: 'pdf', id: documentId }]
+  })
+
+  const rechazo = await deleteOwnedDocument({ documentId, ...scopeA })
+  assert.equal(rechazo.status, 'referenced')
+  assert.deepEqual(rechazo.collections.map((c) => c.id), [coleccion.id])
+  assert.ok(await one('SELECT id FROM pdf_document WHERE id = $1', [documentId]))
+
+  const result = await deleteOwnedDocument({ documentId, ...scopeA, detachCollections: true })
+  assert.equal(result.status, 'deleted')
+  assert.equal(await one('SELECT id FROM pdf_document WHERE id = $1', [documentId]), null)
+  assert.deepEqual(await loadItems(coleccion.id), [])
 })
 
 test('T18: archivar oculta la colección del catálogo sin romper el launch', async () => {
