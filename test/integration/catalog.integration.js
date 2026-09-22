@@ -49,6 +49,7 @@ import {
   CollectionError
 } from '../../src/services/collections.js'
 import { authorizeResource, authorizeCollection } from '../../src/services/authorization.js'
+import { getVisibleCollection } from '../../src/services/sharing.js'
 import {
   activateRevision,
   archiveMaterial,
@@ -1592,6 +1593,116 @@ test('una colección compartida la ve, la edita y la duplica el otro profesor', 
   // Archivarla y despublicarla siguen siendo de Ana.
   assert.equal((await archiveCollection({ id: collection.id, ...scopeLuis })).status, 'not_found')
   assert.equal(await setCollectionVisibility({ id: collection.id, ...scopeLuis, isPublic: false }), null)
+})
+
+// ADR-034 · Una colección nueva en la carpeta compartida de otro profesor
+// ---------------------------------------------------------------------------
+
+test('ADR-034: la colección creada en la carpeta compartida de otro profesor nace suya y se queda ahí', async () => {
+  const carpeta = await createFolder({ ...scopeA, ownerName: 'Ana', name: `Temario ${randomUUID()}` })
+  const deAna = await readyVideo({ title: 'Tema de Ana', folderId: carpeta.id })
+  const deLuis = await readyVideo({ scope: scopeLuis, title: 'Apunte privado de Luis' })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  const creada = await createCollection({
+    ...scopeLuis,
+    ownerName: 'Luis',
+    title: `Repaso ${randomUUID()}`,
+    folderId: carpeta.id,
+    items: [{ kind: 'video', id: deAna }, { kind: 'video', id: deLuis }]
+  })
+  // La FK compuesta no se relaja: en la carpeta de Ana sólo hay cosas de Ana.
+  assert.equal(creada.owner_sub, ANA)
+  assert.equal(creada.owner_name, 'Ana')
+  assert.equal(creada.folder_id, carpeta.id)
+  assert.equal(creada.shared, true, 'para quien la crea es de otro, y la interfaz lo dice')
+  assert.equal(creada.is_public, false, 'se ve por la carpeta, no por una bandera propia')
+
+  // Luis la ve en esa carpeta, la puede insertar (Deep Linking) y la edita.
+  const vista = (await listCollectionPage({ ...scopeLuis, folderId: carpeta.id })).collections
+    .find((c) => c.id === creada.id)
+  assert.ok(vista, 'quien la crea la sigue viendo donde la dejó')
+  assert.equal(vista.shared, true)
+  assert.ok(await getVisibleCollection({ id: creada.id, ...scopeLuis }), 'Luis puede insertarla')
+  const editada = await updateCollection({ id: creada.id, ...scopeLuis, title: 'Repaso corregido' })
+  assert.equal(editada.status, 'updated')
+
+  // Moverla o archivarla, no: eso es del dueño (ADR-029).
+  await assert.rejects(
+    updateCollection({ id: creada.id, ...scopeLuis, folderId: null }),
+    (err) => err instanceof CollectionError && err.code === 'collection_not_owned'
+  )
+  assert.equal((await archiveCollection({ id: creada.id, ...scopeLuis })).status, 'not_found')
+
+  // Para Ana es suya, en su carpeta, y puede archivarla.
+  const deSuBiblioteca = (await listCollectionPage({ ...scopeA, folderId: carpeta.id })).collections
+    .find((c) => c.id === creada.id)
+  assert.equal(deSuBiblioteca.shared, false)
+  assert.equal((await archiveCollection({ id: creada.id, ...scopeA })).status, 'archived')
+})
+
+test('ADR-034: los elementos se comprueban contra lo que ve quien crea, no contra el dueño', async () => {
+  // Una colección a nombre de Ana no puede servir para colar su material
+  // privado en la biblioteca de Luis: Luis sólo compone con lo que ve.
+  const carpeta = await createFolder({ ...scopeA, ownerName: 'Ana', name: `Pública ${randomUUID()}` })
+  const privadoDeAna = await readyVideo({ title: 'Privado de Ana' })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+
+  await assert.rejects(
+    createCollection({
+      ...scopeLuis, title: 'Intento', folderId: carpeta.id,
+      items: [{ kind: 'video', id: privadoDeAna }]
+    }),
+    (err) => err instanceof CollectionError && err.code === 'items_unavailable'
+  )
+  assert.equal((await listCollections({ ...scopeA, folderId: carpeta.id })).length, 0)
+})
+
+test('ADR-034: la carpeta privada de otro profesor sigue sin existir para los demás', async () => {
+  const privada = await createFolder({ ...scopeA, name: `Privada ${randomUUID()}` })
+  const deLuis = await readyVideo({ scope: scopeLuis, title: 'De Luis' })
+  await assert.rejects(
+    createCollection({
+      ...scopeLuis, title: 'Intento', folderId: privada.id,
+      items: [{ kind: 'video', id: deLuis }]
+    }),
+    (err) => err instanceof FolderError && err.status === 404 && err.code === 'folder_not_found'
+  )
+})
+
+test('ADR-034: la biblioteca del centro no admite colecciones de los profesores', async () => {
+  const centro = { platformId: PLATFORM_A, ownerSub: config.admin.libraryOwnerSub }
+  const carpeta = await createFolder({ ...centro, ownerName: 'Biblioteca del centro', name: `Centro ${randomUUID()}` })
+  const delCentro = await readyVideo({ scope: centro, title: 'Del centro', folderId: carpeta.id })
+  await setFolderVisibility({ id: carpeta.id, ...centro, isPublic: true })
+
+  await assert.rejects(
+    createCollection({
+      ...scopeLuis, title: 'Intento', folderId: carpeta.id,
+      items: [{ kind: 'video', id: delCentro }]
+    }),
+    (err) => err instanceof FolderError && err.status === 409 && err.code === 'folder_not_owned'
+  )
+  // En su biblioteca, con el material del centro dentro, sí.
+  const propia = await createCollection({
+    ...scopeLuis, title: 'Con material del centro', items: [{ kind: 'video', id: delCentro }]
+  })
+  assert.equal(propia.owner_sub, LUIS)
+  assert.equal(propia.folder_id, null)
+})
+
+test('ADR-034: una colección propia no se muda a la carpeta de otro profesor', async () => {
+  // Mudarla le cambiaría el dueño, y `owner_sub` no se mueve nunca.
+  const carpeta = await createFolder({ ...scopeA, name: `Destino ${randomUUID()}` })
+  await setFolderVisibility({ id: carpeta.id, ...scopeA, isPublic: true })
+  const deLuis = await readyVideo({ scope: scopeLuis, title: 'De Luis' })
+  const propia = await createCollection({
+    ...scopeLuis, title: 'Mía', items: [{ kind: 'video', id: deLuis }]
+  })
+  await assert.rejects(
+    updateCollection({ id: propia.id, ...scopeLuis, folderId: carpeta.id }),
+    (err) => err instanceof FolderError && err.code === 'folder_not_owned'
+  )
 })
 
 test('el alcance de sesión del catálogo alcanza lo compartido y nada más', async () => {
