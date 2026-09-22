@@ -564,3 +564,49 @@ export async function assertFolderInTransaction (client, { folderId, platformId,
   }
   return rows[0].id
 }
+
+/**
+ * Dónde cae una colección NUEVA y, por tanto, de quién es (ADR-034).
+ *
+ * En una carpeta propia o en la raíz, del profesor que la crea: lo de siempre.
+ * En la carpeta compartida de otro profesor, **de ese otro**: la FK compuesta
+ * `(folder_id, platform_id, owner_sub)` sigue exigiendo que una carpeta sólo
+ * contenga cosas de su dueño, y no se relaja. Quien la crea conserva el acceso
+ * de trabajo que ya le da la carpeta —editarla, componerla, insertarla—; lo
+ * irreversible, archivarla, es del dueño (ADR-029).
+ *
+ * Sólo al crear: mover una colección propia a una carpeta ajena le cambiaría el
+ * dueño, y `owner_sub` no se mueve nunca. Y la biblioteca del centro (ADR-026)
+ * sigue cerrada: su dueño es sintético y nadie podría archivar lo creado dentro.
+ */
+export async function resolveNewCollectionHome (client, { folderId, platformId, ownerSub, ownerName }) {
+  try {
+    const own = await assertFolderInTransaction(client, { folderId, platformId, ownerSub })
+    return { folderId: own, ownerSub, ownerName }
+  } catch (err) {
+    if (err?.code !== 'folder_not_owned') throw err
+  }
+  // Mismo cerrojo que la carpeta propia: nadie la borra ni la mueve mientras
+  // la colección se inserta dentro.
+  const { rows } = await client.query(
+    `SELECT f.id, f.owner_sub, f.owner_name FROM catalog_folder f
+      WHERE f.id = $1 AND f.platform_id = $2
+        AND f.id IN (SELECT sh.id FROM catalog_folder_shared sh
+                      WHERE sh.platform_id = $2 AND sh.shared)
+      FOR SHARE`,
+    [folderId, platformId]
+  )
+  const folder = rows[0]
+  if (!folder) {
+    // Se dejó de compartir entre la comprobación de arriba y el cerrojo.
+    throw new FolderError('La carpeta indicada no existe', { status: 404, code: 'folder_not_found' })
+  }
+  if (folder.owner_sub === config.admin.libraryOwnerSub) {
+    throw new FolderError(
+      'La biblioteca del centro sólo la gestiona el administrador: la colección tiene que ' +
+        'guardarse en una carpeta tuya o en la de otro profesor.',
+      { status: 409, code: 'folder_not_owned' }
+    )
+  }
+  return { folderId: folder.id, ownerSub: folder.owner_sub, ownerName: folder.owner_name }
+}

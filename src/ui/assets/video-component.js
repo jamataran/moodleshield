@@ -76,6 +76,30 @@ export function mediaShortcut (rawKey, { onButton = false } = {}) {
   })[key] ?? null
 }
 
+/** Velocidades del selector: de 0,5× a 2,5× en cuartos. */
+export const PLAYBACK_RATES = Object.freeze([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5])
+
+/**
+ * La velocidad del selector más cercana a `raw`, o 1× si no es un número
+ * positivo. El <video> puede traer otra —la cambian los controles nativos de
+ * iOS a pantalla completa— y el selector tiene que enseñar algo que exista.
+ */
+export function nearestPlaybackRate (raw) {
+  const rate = Number(raw)
+  if (!Number.isFinite(rate) || rate <= 0) return 1
+  return PLAYBACK_RATES.reduce((best, candidate) =>
+    Math.abs(candidate - rate) < Math.abs(best - rate) ? candidate : best, 1)
+}
+
+/** «1,25×»: coma decimal, como el resto de la interfaz. */
+export function formatPlaybackRate (rate) {
+  return `${String(rate).replace('.', ',')}×`
+}
+
+// Sobrevive al cambio de material dentro de una colección —cada vídeo monta su
+// propio reproductor— pero no a recargar: otra actividad empieza a 1×.
+let preferredRate = 1
+
 /**
  * Auto-ocultado de la barra de controles (ADR-033). Pura a propósito: no sabe
  * qué hora es ni toca el DOM; recibe `schedule`/`cancel` y avisa por `onChange`
@@ -330,13 +354,26 @@ export function createVideoView ({
   pip.setAttribute('aria-pressed', 'false')
   const fullscreen = iconButton(doc, ICONS.fullscreen, 'Pantalla completa (F)')
 
+  // Un <select> nativo y no un menú propio: en móvil abre la rueda del sistema
+  // y con teclado funciona sin una línea de código.
+  const speed = doc.createElement('select')
+  speed.className = 'video-speed'
+  speed.setAttribute('aria-label', 'Velocidad de reproducción')
+  speed.title = 'Velocidad de reproducción'
+  for (const rate of PLAYBACK_RATES) {
+    const option = doc.createElement('option')
+    option.value = String(rate)
+    option.textContent = formatPlaybackRate(rate)
+    speed.append(option)
+  }
+
   rewind.disabled = true
   forward.disabled = true
   capture.disabled = true
   pip.disabled = true
 
   primaryControls.append(playPause, rewind, forward, volumeGroup, time)
-  secondaryControls.append(capture, pip, fullscreen)
+  secondaryControls.append(speed, capture, pip, fullscreen)
   controlRow.append(primaryControls, secondaryControls)
   controls.append(timeline, controlRow)
   stage.append(element, watermark, loader, centerPlay, controls)
@@ -478,6 +515,27 @@ export function createVideoView ({
       element.muted = true
     }
     updateVolume()
+  }
+
+  const syncSpeed = () => {
+    const current = nearestPlaybackRate(element.playbackRate)
+    speed.value = String(current)
+    speed.classList.toggle('is-changed', current !== 1)
+  }
+
+  const setPlaybackRate = (raw) => {
+    const rate = nearestPlaybackRate(raw)
+    try {
+      // `defaultPlaybackRate` es la que el <video> restaura cada vez que se le
+      // asigna fuente: hls.js lo hace al adjuntarse y el HLS nativo al re-pedir
+      // ticket. Sin ella, la velocidad volvería a 1× a mitad del vídeo.
+      element.defaultPlaybackRate = rate
+      element.playbackRate = rate
+      preferredRate = rate
+    } catch {
+      status('Este navegador no admite esa velocidad de reproducción.', true)
+    }
+    syncSpeed()
   }
 
   const standardPipAvailable = () =>
@@ -737,6 +795,22 @@ export function createVideoView ({
   listen(forward, 'click', () => seekBy(10))
   listen(mute, 'click', toggleMuted)
   listen(volume, 'input', onVolumeInput)
+  // Elegida con ratón o dedo, el foco vuelve al reproductor: quedándose en el
+  // <select>, Espacio abriría el desplegable en vez de pausar. Con teclado se
+  // queda donde está, porque las flechas cambian la velocidad paso a paso.
+  let speedByPointer = false
+  listen(speed, 'pointerdown', () => { speedByPointer = true })
+  listen(speed, 'keydown', () => { speedByPointer = false })
+  // Con el desplegable abierto el puntero sale del reproductor: sin este pin la
+  // barra se retiraría con la lista a medio elegir.
+  listen(speed, 'focus', () => autohide.pin('speed'))
+  listen(speed, 'blur', () => autohide.unpin('speed'))
+  listen(speed, 'change', () => {
+    setPlaybackRate(speed.value)
+    autohide.activity()
+    if (speedByPointer) root.focus({ preventScroll: true })
+  })
+  listen(element, 'ratechange', syncSpeed)
   listen(capture, 'click', () => { void captureFrame() })
   listen(pip, 'click', () => { void togglePip() })
   listen(fullscreen, 'click', () => { void toggleFullscreen() })
@@ -822,6 +896,8 @@ export function createVideoView ({
   updateVolume()
   updatePip()
   updateFullscreen()
+  // Antes de dar fuente al <video>: así la carga ya arranca con la velocidad.
+  setPlaybackRate(preferredRate)
 
   // Pide un ticket corto (POST /hls/<id>/ticket con Authorization) y arranca el
   // HLS NATIVO con `?pt=`. Es el único camino que no puede poner cabeceras.
@@ -953,6 +1029,7 @@ export function createVideoView ({
     element,
     get currentTime () { return element.currentTime },
     get duration () { return duration() },
+    get playbackRate () { return element.playbackRate },
     focus () { root.focus({ preventScroll: true }) },
     destroy () {
       if (destroyed) return

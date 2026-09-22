@@ -5,9 +5,12 @@ import {
   classifyNativeError,
   createControlsAutohide,
   formatMediaTime,
+  formatPlaybackRate,
   mediaProgress,
   mediaShortcut,
   mediaTimeAfterSeek,
+  nearestPlaybackRate,
+  PLAYBACK_RATES,
   visibleVideoIdentity
 } from '../src/ui/assets/video-component.js'
 
@@ -50,6 +53,34 @@ test('los atajos siguen activos sin robar espacio o enter a un botón', () => {
   assert.equal(mediaShortcut(' ', { onButton: true }), null)
   assert.equal(mediaShortcut('Enter', { onButton: true }), null)
   assert.equal(mediaShortcut('Escape'), null)
+})
+
+test('el selector de velocidad va de 0,5× a 2,5× y pasa por 1× y 2×', () => {
+  assert.equal(PLAYBACK_RATES[0], 0.5)
+  assert.equal(PLAYBACK_RATES.at(-1), 2.5)
+  assert.ok(PLAYBACK_RATES.includes(1))
+  assert.ok(PLAYBACK_RATES.includes(2))
+  assert.deepEqual([...PLAYBACK_RATES].sort((a, b) => a - b), [...PLAYBACK_RATES])
+  assert.ok(Object.isFrozen(PLAYBACK_RATES))
+})
+
+test('la velocidad se presenta con coma decimal', () => {
+  assert.equal(formatPlaybackRate(1), '1×')
+  assert.equal(formatPlaybackRate(0.5), '0,5×')
+  assert.equal(formatPlaybackRate(1.25), '1,25×')
+  assert.equal(formatPlaybackRate(2.5), '2,5×')
+})
+
+test('una velocidad ajena al selector se enseña como la más cercana; basura, como 1×', () => {
+  assert.equal(nearestPlaybackRate(2), 2)
+  assert.equal(nearestPlaybackRate('1.5'), 1.5)
+  // Los controles nativos de iOS a pantalla completa pueden dejar otras.
+  assert.equal(nearestPlaybackRate(1.1), 1)
+  assert.equal(nearestPlaybackRate(4), 2.5)
+  assert.equal(nearestPlaybackRate(0.25), 0.5)
+  for (const raw of [0, -1, NaN, Infinity, undefined, null, 'rápido']) {
+    assert.equal(nearestPlaybackRate(raw), 1, `valor ${String(raw)}`)
+  }
 })
 
 // Los ErrorTypes de hls.js son cadenas ('networkError'/'mediaError'): los

@@ -410,6 +410,7 @@ tocar: separa lo que se puede deshacer de lo que no ([ADR-029](decisiones.md)).
 | **Publicar una versión y volver a una anterior** | Mover de carpeta y borrar la carpeta |
 | Descartar la candidata que subió él | Descartar cualquier candidata |
 | Componer, reordenar y duplicar una colección compartida | |
+| Crear una colección nueva en la carpeta (nace del autor, [ADR-034](decisiones.md)) | |
 | Renombrar la carpeta | |
 
 Corregir el fichero de otro es reversible y queda firmado: la versión anterior se
@@ -422,7 +423,11 @@ con el autor, y `owner_sub` no se mueve nunca.
 Las FK compuestas `(folder_id, platform_id, owner_sub)` siguen exigiendo que una
 carpeta contenga sólo material de su autor: se ve la biblioteca del otro, no se
 escribe dentro. Subir o mover algo a una carpeta ajena responde 409 explicando
-por qué, no un 404 que despistaría.
+por qué, no un 404 que despistaría. La única excepción es una colección
+**nueva** ([ADR-034](decisiones.md)): creada en la carpeta compartida de otro
+profesor, nace de ese profesor —así la FK se cumple—, quien la crea la sigue
+editando e insertando, y archivarla es del dueño. Los elementos se comprueban
+contra lo que ve quien la crea. La biblioteca del centro no la admite.
 
 ## Con qué nombre responde la herramienta
 
@@ -573,6 +578,15 @@ coincide con la del hueco. Una grabación de iPad (1,43:1) no se recorta.
 Los controles se retiran solos mientras reproduce y vuelven con cualquier
 actividad (ADR-033); la marca de agua y el chip de sesión monitorizada siguen en
 pantalla el 100 % del tiempo.
+
+La velocidad se elige de 0,5× a 2,5× con un `<select>` nativo en la barra (en
+móvil abre la rueda del sistema); en un reproductor de 36rem o menos sube sobre
+la línea de tiempo, porque en la fila echaría fuera la pantalla completa. Se
+fija también como `defaultPlaybackRate`, que es la que el `<video>` restaura al
+recibir fuente, y dentro de una colección pasa de un vídeo al siguiente. La
+telemetría docente mide segundos **de vídeo** (ADR-030), así que su umbral de
+«esto es un salto, no reproducción» crece con la velocidad: con el umbral fijo,
+a 2,5× todo contaba como salto y el informe decía que no se había visto nada.
 
 El chip abre un `<dialog>` con el aviso legal completo y los datos registrados
 de la sesión: nombre, identidad, IP, inicio y caducidad, referencia de

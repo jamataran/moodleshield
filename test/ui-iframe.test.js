@@ -590,3 +590,25 @@ test('los imports transitivos de JavaScript se revalidan tras un despliegue', as
   assert.doesNotMatch(app, /vendorOptions\s*=\s*\{[^}]*immutable/,
     'los ficheros de /vendor deben revalidarse para que un parche de seguridad llegue el mismo día')
 })
+
+/**
+ * Selector de velocidad (0,5×–2,5×). Tres cosas que se midieron en un Chrome de
+ * verdad y que se pierden sin hacer ruido.
+ */
+test('la velocidad sobrevive a la carga y no echa de la barra la pantalla completa', async () => {
+  const code = await readFile(path.join(uiDir, 'assets/video-component.js'), 'utf8')
+  assert.match(code, /element\.defaultPlaybackRate = rate/,
+    'el <video> restaura defaultPlaybackRate al recibir fuente: sin ella vuelve a 1×')
+  assert.match(code, /autohide\.pin\('speed'\)/,
+    'con el desplegable abierto la barra no puede retirarse')
+
+  const css = await readFile(path.join(uiDir, 'assets/app.css'), 'utf8')
+  assert.match(css, /\n\.video-speed \{[^}]*width: auto/,
+    'la regla global de select pone width: 100% y el selector se come la barra')
+  assert.match(css, /@container video-player \(max-width: 36rem\) \{[^@]*\.video-speed \{[^}]*position: absolute/,
+    'en un reproductor estrecho la velocidad sube sobre la línea de tiempo')
+
+  const telemetry = await readFile(path.join(uiDir, 'assets/telemetry-client.js'), 'utf8')
+  assert.match(telemetry, /tracker\.sample\(view\.currentTime, \{ rate: view\.playbackRate \}\)/,
+    'a 2,5× un segundo de reloj son 2,5 de vídeo: sin la velocidad, todo cuenta como salto')
+})

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import config from '../config.js'
 import { requireCatalogInstructor } from './auth.js'
 import { assertUuid, isUuid } from '../media/storage.js'
 import { displayOwnerName, rememberOwnerName } from '../services/sharing.js'
@@ -30,6 +31,9 @@ function publicFolder (row) {
     folderCount: Number(row.folder_count ?? 0),
     isPublic: Boolean(row.is_public),
     shared: Boolean(row.shared),
+    // La biblioteca del centro (ADR-026) no admite colecciones de profesores;
+    // la carpeta compartida de otro profesor, sí (ADR-034).
+    institutional: Boolean(row.owner_sub) && row.owner_sub === config.admin.libraryOwnerSub,
     ownerName: row.owner_name ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
