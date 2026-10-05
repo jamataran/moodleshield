@@ -45,20 +45,20 @@
     "trace": "node tools/trace.mjs"
   },
   "dependencies": {
-    "@cantoo/pdf-lib": "^2.9.1",
+    "@cantoo/pdf-lib": "^2.11.1",
     "busboy": "^1.6.0",
     "express": "^5.1.0",
-    "express-rate-limit": "^8.6.2",
-    "hls.js": "^1.7.1",
-    "jose": "^6.2.9",
-    "pdfjs-dist": "^6.2.108",
-    "pg": "^8.23.0",
+    "express-rate-limit": "^8.7.0",
+    "hls.js": "^1.7.3",
+    "jose": "^6.2.12",
+    "pdfjs-dist": "^6.3.289",
+    "pg": "^8.23.1",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.8.1",
-    "globals": "^17.9.0"
+    "eslint": "^10.11.0",
+    "globals": "^17.13.0"
   }
 }
