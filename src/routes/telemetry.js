@@ -81,3 +81,45 @@ telemetryRouter.post('/pdf/:id', requireSession, async (req, res) => {
     res.status(204).end()
   }
 })
+
+const PAGINAS_COMPAT = new Set(['video', 'pdf', 'coleccion', 'desconocida'])
+const MOTIVOS_COMPAT = new Set([
+  'sin-modulos', 'sintaxis', 'carga', 'ejecucion', 'sin-arranque', 'pdfjs', 'sin-hls', 'medio'
+])
+
+/**
+ * Lo que manda un visor que no pudo con este navegador (#110), listo para el
+ * log: enumerado y recortado, nunca tal cual. El user-agent no viene aquí: lo
+ * pone el servidor desde la cabecera.
+ */
+export function normalizarInformeCompat (cuerpo) {
+  // Sin saltos de línea ni caracteres de control: el texto acaba en el log.
+  // eslint-disable-next-line no-control-regex
+  const texto = (valor, maximo) => String(valor ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, maximo)
+  const pagina = texto(cuerpo?.pagina, 20)
+  const motivo = texto(cuerpo?.motivo, 20)
+  return {
+    pagina: PAGINAS_COMPAT.has(pagina) ? pagina : 'desconocida',
+    motivo: MOTIVOS_COMPAT.has(motivo) ? motivo : 'otro',
+    detalle: texto(cuerpo?.detalle, 300)
+  }
+}
+
+/**
+ * Un visor que no arrancó, o que no pudo con PDF.js o con el vídeo, en este
+ * navegador. Sólo deja una línea en el log —la que dice, tras desplegar, quién
+ * sigue fuera— y responde 204 pase lo que pase, como el resto de la telemetría.
+ */
+telemetryRouter.post('/compat', requireSession, (req, res) => {
+  try {
+    req.log?.warn({
+      compat: normalizarInformeCompat(req.body),
+      userAgent: String(req.get('user-agent') ?? '').slice(0, 300),
+      platformId: req.session.platformId,
+      rol: req.session.isInstructor ? 'profesor' : 'alumno'
+    }, 'Visor sin arrancar en este navegador')
+  } catch {
+    // Perder el aviso no estropea nada.
+  }
+  res.status(204).end()
+})

@@ -1,3 +1,4 @@
+import { informarCompat } from './compat-informe.js?v=compat-1'
 import { pdfMarkLabel, pdfMarkTile } from './pdf-mark.js'
 
 /**
@@ -302,6 +303,7 @@ export async function createPdfView ({
   } catch (err) {
     const titulo = sinVisor('navegador')
     status(titulo, true)
+    informarCompat({ sessionToken, pagina: 'pdf', motivo: 'pdfjs', detalle: err?.message })
     // Con texto para el alumno: la colección enseña `message` tal cual, y el
     // original sería algo como «Unexpected token '{'».
     throw new Error(titulo, { cause: err })
