@@ -15,6 +15,7 @@ import {
   ivFromKeyLine,
   measureArtifactSize,
   median,
+  probeStreamSize,
   referenceSize,
   regionBox,
   sampleRegionSeries,
@@ -339,6 +340,24 @@ test('e2e: con el tope puesto, un vertical de móvil girado queda dentro del top
       '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'json', salida
     ])).streams[0]
     assert.deepEqual({ width: tamano.width, height: tamano.height }, { width: 180, height: 320 })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('si la variante se rompe a mitad, medir falla con su error en vez de tumbar el trazador', async () => {
+  // Un segmento que falta: el stream descifrado da error con ffprobe aún
+  // leyendo. Antes salía como excepción sin capturar, el trazador moría sin
+  // llegar a usar meta.json y ffprobe se quedaba esperando entrada. No hace
+  // falta ffprobe: basta un proceso que lea la entrada hasta el final.
+  const dir = await mkdtemp(path.join(tmpdir(), 'ffprobe-falso-'))
+  try {
+    const ffprobePath = path.join(dir, 'ffprobe')
+    await writeFile(ffprobePath, '#!/bin/sh\ncat > /dev/null\n', { mode: 0o755 })
+    const stdin = new Readable({ read () {} })
+    stdin.push(Buffer.alloc(188))
+    setTimeout(() => stdin.destroy(new Error('ENOENT: seg_0001.ts')), 20)
+    await assert.rejects(probeStreamSize({ stdin, ffprobePath }), /seg_0001/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

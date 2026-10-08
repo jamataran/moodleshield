@@ -244,6 +244,7 @@ export function sampleRegionSeries ({
       stdin.pipe(child.stdin)
       // El stream puede cerrarse antes de que ffmpeg termine de leer.
       child.stdin.on('error', () => {})
+      falloDelStream(stdin, child, reject)
     }
 
     let out = ''
@@ -334,6 +335,18 @@ export async function measureReferenceSeries ({
   return refs
 }
 
+/**
+ * Un segmento que falta o no se puede leer rompe el stream descifrado a mitad.
+ * Sin esto el error salía como excepción sin capturar —el trazador moría y no
+ * llegaba a usar `meta.json`— y el proceso hijo se quedaba esperando entrada.
+ */
+function falloDelStream (stdin, child, reject) {
+  stdin.on('error', (err) => {
+    child.kill()
+    reject(err)
+  })
+}
+
 /** Ancho y alto del vídeo que llega por stdin como MPEG-TS, según ffprobe. */
 export function probeStreamSize ({ stdin, ffprobePath = config.transcode.ffprobePath, signal } = {}) {
   return new Promise((resolve, reject) => {
@@ -344,6 +357,7 @@ export function probeStreamSize ({ stdin, ffprobePath = config.transcode.ffprobe
     stdin.pipe(child.stdin)
     // ffprobe cierra su entrada en cuanto sabe el tamaño: lo que quede no se lee.
     child.stdin.on('error', () => {})
+    falloDelStream(stdin, child, reject)
     let out = ''
     child.stdout.on('data', (c) => { out += c })
     child.stderr.resume()
