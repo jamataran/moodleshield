@@ -1,5 +1,5 @@
-import { createVideoView } from './video-component.js?v=velocidad-1'
-import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
+import { createVideoView } from './video-component.js?v=compat-1'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=compat-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
 import { createVideoTelemetry } from './telemetry-client.js?v=velocidad-1'
 
@@ -28,24 +28,34 @@ const view = createVideoView({
   startAtSeconds: boot.progress?.positionSeconds ?? 0
 })
 
-// La clave `progress` sólo viene en el bootstrap de un alumno: si no está,
-// tampoco hay nada que guardar (sesión de profesor).
-const saver = 'progress' in boot
-  ? createProgressSaver({
-    sessionToken: boot.sessionToken,
-    url: `/progress/video/${boot.video.id}`,
-    read: () => {
-      const positionSeconds = videoProgressPosition(view.currentTime, view.duration)
-      return positionSeconds === null ? null : { positionSeconds }
-    }
-  })
-  : null
+// El visor ya está montado: la guardia de arranque (`compat.js`) no tiene nada
+// que explicar. Lo que sigue es marcador y telemetría, que no pueden tumbarlo.
+window.__visorArrancado = true
 
-// Misma puerta que el marcador: la telemetría docente es de alumnos, y el
-// profesor abre materiales constantemente al editar.
-const telemetry = 'progress' in boot
-  ? createVideoTelemetry({ sessionToken: boot.sessionToken, videoId: boot.video.id, view })
-  : null
+let saver = null
+let telemetry = null
+try {
+  // La clave `progress` sólo viene en el bootstrap de un alumno: si no está,
+  // tampoco hay nada que guardar (sesión de profesor).
+  saver = 'progress' in boot
+    ? createProgressSaver({
+      sessionToken: boot.sessionToken,
+      url: `/progress/video/${boot.video.id}`,
+      read: () => {
+        const positionSeconds = videoProgressPosition(view.currentTime, view.duration)
+        return positionSeconds === null ? null : { positionSeconds }
+      }
+    })
+    : null
+
+  // Misma puerta que el marcador: la telemetría docente es de alumnos, y el
+  // profesor abre materiales constantemente al editar.
+  telemetry = 'progress' in boot
+    ? createVideoTelemetry({ sessionToken: boot.sessionToken, videoId: boot.video.id, view })
+    : null
+} catch {
+  // Sin marcador ni telemetría se sigue viendo el vídeo, que es lo que importa.
+}
 
 window.addEventListener('pagehide', () => {
   saver?.destroy()
