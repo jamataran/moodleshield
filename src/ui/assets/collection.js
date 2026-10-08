@@ -1,5 +1,5 @@
 import { createVideoView } from './video-component.js?v=velocidad-1'
-import { createPdfView } from './pdf-component.js?v=resume-1'
+import { createPdfView } from './pdf-component.js?v=pdf-legacy-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
 import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
@@ -188,19 +188,21 @@ async function show (nextIndex, { focus = true } = {}) {
         downloadUrl: `/documents/${item.id}/download`
       }
       const downloadAvailable = item.downloadAvailable !== false
+      // La misma descarga sirve de salida si el navegador no puede enseñar el PDF.
+      const descargarCopia = downloadAvailable
+        ? () => downloadPdfCopy({
+            sessionToken: boot.sessionToken,
+            document: pdfDocument,
+            onStatus: currentStatus
+          })
+        : null
       shell.setDownload({
         available: downloadAvailable,
         label: downloadAvailable ? 'Descargar PDF marcado' : 'PDF no descargable',
         help: downloadAvailable
           ? 'La copia descargada incluye su identidad, IP y el aviso legal en cada página.'
           : 'Este PDF es demasiado grande para generar una copia marcada. Sigue disponible en el visor.',
-        onDownload: downloadAvailable
-          ? () => downloadPdfCopy({
-              sessionToken: boot.sessionToken,
-              document: pdfDocument,
-              onStatus: currentStatus
-            })
-          : null
+        onDownload: descargarCopia
       })
       candidate = await createPdfView({
         container: contentEl,
@@ -208,7 +210,8 @@ async function show (nextIndex, { focus = true } = {}) {
         document: pdfDocument,
         user: boot.user,
         onStatus: currentStatus,
-        initialPage: resume?.pageNumber ?? 1
+        initialPage: resume?.pageNumber ?? 1,
+        onDownload: descargarCopia
       })
     }
     if (generation !== viewGeneration) {

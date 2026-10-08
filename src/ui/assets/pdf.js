@@ -1,4 +1,4 @@
-import { createPdfView } from './pdf-component.js?v=resume-1'
+import { createPdfView } from './pdf-component.js?v=pdf-legacy-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
 import { createViewerShell } from './viewer-shell.js?v=viewer-chrome-1'
 import { createProgressSaver } from './progress-client.js?v=resume-1'
@@ -11,15 +11,19 @@ const shell = createViewerShell({
   kindLabel: 'Documento PDF',
   material: { title: boot.document.title, id: boot.document.id }
 })
+// La misma descarga sirve de salida si este navegador no puede enseñar el PDF.
+const descargarCopia = boot.downloadUrl
+  ? () => downloadPdfCopy({
+      sessionToken: boot.sessionToken,
+      document: { title: boot.document.title, downloadUrl: boot.downloadUrl },
+      onStatus: shell.setStatus
+    })
+  : null
 shell.setDownload({
   available: Boolean(boot.downloadUrl),
   label: boot.downloadUrl ? 'Descargar PDF marcado' : 'PDF no descargable',
   help: boot.downloadHelp ?? 'La copia descargada incluye su identidad, IP y el aviso legal en cada página.',
-  onDownload: () => downloadPdfCopy({
-    sessionToken: boot.sessionToken,
-    document: { title: boot.document.title, downloadUrl: boot.downloadUrl },
-    onStatus: shell.setStatus
-  })
+  onDownload: descargarCopia
 })
 
 try {
@@ -37,7 +41,8 @@ try {
     onAccessibility: ({ hasText }) => {
       document.getElementById('accessibility-note').hidden = hasText
     },
-    initialPage: boot.progress?.pageNumber ?? 1
+    initialPage: boot.progress?.pageNumber ?? 1,
+    onDownload: descargarCopia
   })
 
   // La clave `progress` sólo viene en el bootstrap de un alumno: si no está,

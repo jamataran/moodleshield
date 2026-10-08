@@ -1,9 +1,9 @@
 /**
  * Qué texto lleva la marca de fondo del visor de PDF.
  *
- * Vive fuera de `pdf-component.js` para poder probarse: aquel importa PDF.js por
- * una ruta de navegador (`/vendor/…`) y por eso no se puede cargar desde Node.
- * Aquí no hay DOM ni dependencias, sólo la decisión.
+ * Vive fuera de `pdf-component.js` porque es la decisión, no el dibujo: aquí no
+ * hay DOM ni dependencias. (`pdf-component.js` también se puede importar desde
+ * Node desde que PDF.js se carga al abrir el documento, pero dibuja con `window`.)
  */
 
 /**
