@@ -1656,8 +1656,10 @@ pantalla quedaba en blanco, sin explicación, y el servidor no se enteraba. Del
 3. **`POST /telemetry/compat`**: exige sesión, deja una línea `warn` en el log
    con el user-agent, la página y el motivo (enumerado y recortado) y responde
    204 siempre. No guarda nada propio ni el `sub` del alumno. Lo usan la
-   guardia, el visor de PDF cuando PDF.js no carga y el vídeo cuando el
-   navegador no puede reproducirlo.
+   guardia —«Visor sin arrancar»—, y el visor de PDF cuando PDF.js no carga y el
+   vídeo cuando el navegador no puede reproducirlo —«Visor sin poder con el PDF
+   o el vídeo»—: eso también pasa en un navegador al día, por un corte de red o
+   un vídeo que no se descodifica, y no debe contar como quien se queda fuera.
 4. **`<dialog>` con respaldo** en `dialog.js`: sin `showModal`, se abre como
    capa y su `form method="dialog"` se intercepta, porque si no se enviaría como
    un GET a `/lti/launch`.

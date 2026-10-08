@@ -86,6 +86,11 @@ const PAGINAS_COMPAT = new Set(['video', 'pdf', 'coleccion', 'desconocida'])
 const MOTIVOS_COMPAT = new Set([
   'sin-modulos', 'sintaxis', 'carga', 'ejecucion', 'sin-arranque', 'pdfjs', 'sin-hls', 'medio'
 ])
+// El visor arrancó y lo que falló fue PDF.js o el vídeo. También pasa en un
+// navegador al día —un corte de red al cargar PDF.js, un vídeo que no se puede
+// descodificar—, así que va con otro mensaje: «Visor sin arrancar» es sólo de
+// quien se queda fuera por el navegador.
+const MOTIVOS_DE_CONTENIDO = new Set(['pdfjs', 'sin-hls', 'medio'])
 
 /**
  * Lo que manda un visor que no pudo con este navegador (#110), listo para el
@@ -112,12 +117,15 @@ export function normalizarInformeCompat (cuerpo) {
  */
 telemetryRouter.post('/compat', requireSession, (req, res) => {
   try {
+    const compat = normalizarInformeCompat(req.body)
     req.log?.warn({
-      compat: normalizarInformeCompat(req.body),
+      compat,
       userAgent: String(req.get('user-agent') ?? '').slice(0, 300),
       platformId: req.session.platformId,
       rol: req.session.isInstructor ? 'profesor' : 'alumno'
-    }, 'Visor sin arrancar en este navegador')
+    }, MOTIVOS_DE_CONTENIDO.has(compat.motivo)
+      ? 'Visor sin poder con el PDF o el vídeo en este navegador'
+      : 'Visor sin arrancar en este navegador')
   } catch {
     // Perder el aviso no estropea nada.
   }

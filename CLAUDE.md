@@ -303,7 +303,8 @@ npm run test:integration:local
   en `eslint.config.js` (asignación lógica, lookbehind, grupos con nombre…); lo
   vigila `test/ui-compat.test.js`. `assets/compat.js` es ES5 y, si el visor no
   deja `window.__visorArrancado`, explica qué hacer y lo cuenta a
-  `POST /telemetry/compat`: una línea `Visor sin arrancar` en el log.
+  `POST /telemetry/compat`: una línea `Visor sin arrancar` en el log. Si arrancó
+  y falló PDF.js o el vídeo, la línea es `Visor sin poder con el PDF o el vídeo`.
 - **PDF.js va en su build legacy, con el worker envuelto y sin `import`
   estático** (ADR-035, #110). La moderna revienta al importarse en Chrome < 122,
   Firefox < 131 e iOS < 18.4, y un `import` estático tumbaba la colección entera.
