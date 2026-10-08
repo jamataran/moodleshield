@@ -32,11 +32,12 @@
  */
 
 import { existsSync } from 'node:fs'
+import path from 'node:path'
 
 const DIRECTORIOS_DE_DATOS = /(^|[\s'"=/])(data|media|uploads|pgdata|\.staging|originals)([/\s'"]|$)/i
 
 /** Rutas cuyo borrado es siempre pérdida de material, estén donde estén. */
-const RUTAS_VIVAS = [
+export const RUTAS_VIVAS = [
   /infra\/(local|test|prod)\/data/i,
   /docker-apps\/moodleshield/i,
   /\/(media|uploads|pgdata)(\/|$)/i
@@ -52,8 +53,13 @@ const RUTAS_VIVAS = [
 const CODIGO_FUENTE = /(^|\/)src\/(media|uploads|pgdata)\/[^/]+\.m?js$/i
 
 function escribeEnDatosVivos (ruta) {
-  if (RUTAS_VIVAS.slice(0, 2).some((r) => r.test(ruta))) return true
-  return RUTAS_VIVAS[2].test(ruta.replace(CODIGO_FUENTE, ''))
+  // Absoluta y normalizada antes de mirarla: ni `x/../`, ni `//`, ni una ruta
+  // relativa esquivan las expresiones.
+  const absoluta = path.posix.resolve(process.cwd().replaceAll('\\', '/'), String(ruta).replaceAll('\\', '/'))
+  // Sólo se descuenta el fichero de código; el resto pasa por TODAS las reglas,
+  // también por las que se añadan a RUTAS_VIVAS.
+  const sinCodigo = absoluta.replace(CODIGO_FUENTE, '')
+  return RUTAS_VIVAS.some((r) => r.test(sinCodigo))
 }
 
 const SQL_DESTRUCTIVO = [
