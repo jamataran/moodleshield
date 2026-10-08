@@ -5,6 +5,7 @@ import {
   classifyNativeError,
   createControlsAutohide,
   createPlaybackIntent,
+  cupoNativoRecuperado,
   formatMediaTime,
   formatPlaybackRate,
   mediaProgress,
@@ -12,6 +13,7 @@ import {
   mediaTimeAfterSeek,
   nearestPlaybackRate,
   PLAYBACK_RATES,
+  pedirOtroPlay,
   visibleVideoIdentity
 } from '../src/ui/assets/video-component.js'
 
@@ -350,4 +352,34 @@ test('HLS nativo: una pausa del alumno, o el final, no se deshace al renovar el 
   intencion.alReproducir()
   intencion.alTerminar()
   assert.equal(intencion.quiereReproducir, false)
+})
+
+test('HLS nativo: el play que falla por el billete no pide volver a pulsar, aunque el error llegue después', () => {
+  // WebKit rechaza la promesa de play() al fallar la carga y deja el `error` en
+  // la cola: el catch corre antes que onNativeError, sin recuperación empezada.
+  assert.equal(pedirOtroPlay({ hlsNativo: true, recuperando: false, errorDelVideo: { code: 4 } }), false)
+  assert.equal(pedirOtroPlay({ hlsNativo: true, recuperando: true, errorDelVideo: null }), false)
+  assert.equal(pedirOtroPlay({ hlsNativo: true, recuperando: false, errorDelVideo: null }), true,
+    'un play bloqueado sin error del medio (sin gesto, por ejemplo) sí se avisa')
+  assert.equal(pedirOtroPlay({ hlsNativo: false, recuperando: false, errorDelVideo: { code: 4 } }), true,
+    'con hls.js nada atiende el error del elemento por su cuenta: se conserva el aviso de siempre')
+})
+
+test('HLS nativo: la pausa que pide el alumno cuenta aunque llegue a mitad de la recuperación', () => {
+  const intencion = createPlaybackIntent()
+  intencion.alReproducir()
+  intencion.empiezaRecuperacion()
+  intencion.pausaDelAlumno()
+  assert.equal(intencion.quiereReproducir, false, 'el billete nuevo no debe reanudar contra su voluntad')
+})
+
+test('HLS nativo: el cupo de billetes vuelve al pasar del fallo, no con canplay', () => {
+  // Un segmento que falla siempre en el mismo sitio: tras cada billete hay
+  // canplay y se reanuda solo, pero el vídeo no pasa de ahí. Sin esta regla,
+  // billete y play() se repetían sin fin.
+  assert.equal(cupoNativoRecuperado({ falloEn: null, posicion: 500 }), false, 'sin fallo no hay nada que devolver')
+  assert.equal(cupoNativoRecuperado({ falloEn: 120, posicion: 120 }), false, 'el seek de la reanudación no cuenta')
+  assert.equal(cupoNativoRecuperado({ falloEn: 120, posicion: 126 }), false, 'menos de un segmento no demuestra nada')
+  assert.equal(cupoNativoRecuperado({ falloEn: 120, posicion: 130.5 }), true)
+  assert.equal(cupoNativoRecuperado({ falloEn: 120, posicion: Number.NaN }), false)
 })

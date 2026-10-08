@@ -235,7 +235,8 @@ export function classifyHlsError (data, {
  * Si el alumno tarda más de lo que dura el billete `?pt=`, ese play falla, el
  * componente pide otro billete y le da al <video> la fuente nueva… que lo deja
  * en pausa. Sin recordar la intención, había que volver a pulsar (#110). La
- * pausa que provoca la propia recuperación no cuenta como del alumno.
+ * pausa que provoca la propia recuperación no cuenta como del alumno; la que
+ * pide él con el botón, sí, aunque llegue a mitad de la recuperación.
  */
 export function createPlaybackIntent () {
   let quiere = false
@@ -245,10 +246,38 @@ export function createPlaybackIntent () {
     get recuperando () { return recuperando },
     alReproducir () { quiere = true },
     alPausar () { if (!recuperando) quiere = false },
+    pausaDelAlumno () { quiere = false },
     alTerminar () { quiere = false },
     empiezaRecuperacion () { recuperando = true },
     terminaRecuperacion () { recuperando = false }
   }
+}
+
+/**
+ * Si el play() del alumno falla, ¿se le pide que vuelva a pulsar?
+ *
+ * En HLS nativo, no cuando el <video> ya tiene `error`: ese error lo atiende
+ * `onNativeError`, que renueva el billete y reanuda, o dice lo que toca. Y no
+ * basta con mirar si la recuperación empezó: WebKit rechaza la promesa de
+ * play() en cuanto falla la carga y deja el evento `error` en la cola, así que
+ * el `catch` del play corre ANTES que `onNativeError`.
+ */
+export function pedirOtroPlay ({ hlsNativo, recuperando, errorDelVideo }) {
+  if (recuperando) return false
+  return !(hlsNativo && errorDelVideo)
+}
+
+/**
+ * ¿Ha superado el HLS nativo el punto donde falló?
+ *
+ * Con `canplay` no basta para devolver el cupo de billetes desde que el
+ * componente reanuda solo: un segmento que falla siempre en el mismo sitio
+ * vuelve a dar `canplay` tras cada billete, y se repetirían billete y play()
+ * sin que nadie pulse. Lo demuestra avanzar más que un segmento pasado el
+ * fallo.
+ */
+export function cupoNativoRecuperado ({ falloEn, posicion, margen = 10 }) {
+  return falloEn !== null && Number.isFinite(posicion) && posicion > falloEn + margen
 }
 
 /**
@@ -515,6 +544,7 @@ export function createVideoView ({
   }
 
   const intencion = createPlaybackIntent()
+  let hlsNativo = false
 
   const togglePlayback = async () => {
     try {
@@ -522,12 +552,15 @@ export function createVideoView ({
         if (element.ended) element.currentTime = 0
         await element.play()
       } else {
+        intencion.pausaDelAlumno()
         element.pause()
       }
     } catch {
       // En HLS nativo, el play que falla porque caducó el billete se recupera
       // solo (más abajo): decir «vuelve a pulsar» sería mentir.
-      if (!intencion.recuperando) status('No se pudo iniciar la reproducción. Vuelve a pulsar Reproducir.', true)
+      if (pedirOtroPlay({ hlsNativo, recuperando: intencion.recuperando, errorDelVideo: element.error })) {
+        status('No se pudo iniciar la reproducción. Vuelve a pulsar Reproducir.', true)
+      }
     }
   }
 
@@ -946,6 +979,7 @@ export function createVideoView ({
   // un `{ once: true }` por reintento: aquéllos apilaban su limpieza en
   // `cleanups` para siempre y podían encolar seeks duplicados.
   let nativeAttempts = 0
+  let nativeFailedAt = null
   let pendingResumeAt = 0
   const NATIVE_MAX_ATTEMPTS = 3
   listen(element, 'loadedmetadata', () => {
@@ -996,9 +1030,18 @@ export function createVideoView ({
       return status(decision.message, true)
     }
     const resumeAt = Number.isFinite(element.currentTime) ? element.currentTime : 0
+    nativeFailedAt = resumeAt
     intencion.empiezaRecuperacion()
     void loadNativeHls({ resumeAt })
   }
+  // El cupo del HLS nativo vuelve cuando el vídeo pasa del punto del fallo, no
+  // con `canplay` (ver `cupoNativoRecuperado`).
+  listen(element, 'timeupdate', () => {
+    if (cupoNativoRecuperado({ falloEn: nativeFailedAt, posicion: element.currentTime })) {
+      nativeAttempts = 0
+      nativeFailedAt = null
+    }
+  })
 
   // Un tropiezo superado devuelve el cupo de reintentos: la reproducción que se
   // recupera a mitad de vídeo no debe agotar el presupuesto para el siguiente.
@@ -1009,7 +1052,6 @@ export function createVideoView ({
   listen(element, 'canplay', () => {
     networkRetries = 0
     mediaRecoveries = 0
-    nativeAttempts = 0
   })
   listen(element, 'play', () => intencion.alReproducir())
   listen(element, 'pause', () => intencion.alPausar())
@@ -1072,6 +1114,7 @@ export function createVideoView ({
       }
     })
   } else if (element.canPlayType('application/vnd.apple.mpegurl')) {
+    hlsNativo = true
     listen(element, 'error', onNativeError)
     void loadNativeHls()
   } else {
