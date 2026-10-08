@@ -101,9 +101,11 @@ function navegadorFalso ({ bootstrap, conModulos = true, ua = 'Mozilla/5.0 (Wind
     get firstChild () { return this.hijos[0] ?? null },
     get lastChild () { return this.hijos[this.hijos.length - 1] ?? null },
     get textContent () { return this.hijos.map((h) => h.textContent ?? h.texto).join('') },
+    set textContent (texto) { this.hijos = [{ texto: String(texto) }] },
     appendChild (hijo) { this.hijos.push(hijo); return hijo },
     removeChild (hijo) { this.hijos.splice(this.hijos.indexOf(hijo), 1); return hijo },
-    setAttribute (n, v) { this.atributos[n] = v }
+    setAttribute (n, v) { this.atributos[n] = v },
+    getAttribute (n) { return this.atributos[n] ?? null }
   })
   const contenido = nodo('div')
   const documento = {
@@ -116,7 +118,7 @@ function navegadorFalso ({ bootstrap, conModulos = true, ua = 'Mozilla/5.0 (Wind
   class Peticion {
     open (metodo, url) { this.metodo = metodo; this.url = url; this.cabeceras = {} }
     setRequestHeader (n, v) { this.cabeceras[n] = v }
-    send (cuerpo) { peticiones.push({ metodo: this.metodo, url: this.url, cabeceras: this.cabeceras, cuerpo }) }
+    send (cuerpo) { peticiones.push({ metodo: this.metodo, url: this.url, cabeceras: this.cabeceras, cuerpo, xhr: this }) }
   }
   const ventana = {
     document: documento,
@@ -207,4 +209,38 @@ test('el error de un <video> no se confunde con el de un script', async () => {
   const informe = JSON.parse(nav.peticiones[0].cuerpo)
   assert.equal(informe.motivo, 'carga')
   assert.match(informe.detalle, /assets\/pdf\.js/)
+})
+
+function buscar (nodo, condicion) {
+  if (condicion(nodo)) return nodo
+  for (const hijo of nodo.hijos ?? []) {
+    const encontrado = buscar(hijo, condicion)
+    if (encontrado) return encontrado
+  }
+  return null
+}
+
+test('un reintento de descarga que sale bien devuelve el rótulo, no el error anterior', async () => {
+  const nav = navegadorFalso({ bootstrap: BOOT_PDF })
+  // El camino más corto hasta «descargado» (Edge antiguo); el rótulo se repone en todos.
+  nav.ventana.navigator.msSaveOrOpenBlob = () => {}
+  await ejecutarGuardia(nav)
+  nav.disparar('load')
+  const boton = buscar(nav.contenido, (n) => n.tagName === 'BUTTON')
+  const rotulo = boton.textContent
+  assert.match(rotulo, /Descargar «Tema 1»/)
+
+  boton.onclick()
+  const fallo = nav.peticiones.at(-1).xhr
+  assert.equal(nav.peticiones.at(-1).url, '/documents/d1/download')
+  fallo.status = 500
+  fallo.onload()
+  assert.match(boton.textContent, /No se pudo descargar \(500\)/)
+
+  boton.onclick()
+  const exito = nav.peticiones.at(-1).xhr
+  exito.status = 200
+  exito.response = {}
+  exito.onload()
+  assert.equal(boton.textContent, rotulo)
 })
