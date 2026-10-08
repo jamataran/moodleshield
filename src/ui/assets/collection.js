@@ -1,7 +1,7 @@
-import { createVideoView } from './video-component.js?v=velocidad-1'
-import { createPdfView } from './pdf-component.js?v=pdf-legacy-1'
+import { createVideoView } from './video-component.js?v=compat-1'
+import { createPdfView } from './pdf-component.js?v=compat-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
-import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=viewer-chrome-1'
+import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=compat-1'
 import { createProgressSaver, videoProgressPosition } from './progress-client.js?v=resume-1'
 import { createPdfTelemetry, createVideoTelemetry } from './telemetry-client.js?v=velocidad-1'
 
@@ -351,6 +351,14 @@ function initialIndex () {
   return firstUsable()
 }
 
-await refreshManifest()
-await show(initialIndex(), { focus: false })
-scheduleManifestPoll()
+// Armazón, índice y botones listos: la guardia de arranque (`compat.js`) no
+// tiene nada que explicar. Lo que falta es pedir el índice y abrir el material.
+window.__visorArrancado = true
+
+// Sin `await` en el nivel superior del módulo: Safari 14 y Chrome < 89 no lo
+// entienden, y no ejecutarían ni una línea de la página.
+void (async () => {
+  await refreshManifest()
+  await show(initialIndex(), { focus: false })
+  scheduleManifestPoll()
+})()

@@ -358,6 +358,7 @@ Detalle y motivos en las fichas de cierre archivadas como issues:
 | PUT | `/progress/:kind/:id` | sesión con alcance | Marcador de reanudación del alumno (la lectura viaja en el bootstrap del launch, ADR-021) |
 | POST | `/telemetry/video/:id` | sesión con alcance | Beat de visionado: tramos vistos y tiempo (**fail-open**: cualquier fallo responde 204, ADR-030) |
 | POST | `/telemetry/pdf/:id` | sesión con alcance | Beat de lectura: páginas distintas y tiempo, con el mismo contrato |
+| POST | `/telemetry/compat` | sesión | Un visor que no pudo con este navegador (no arrancó, PDF.js no cargó, vídeo sin HLS o sin códec): una línea `warn` en el log con user-agent y motivo —«Visor sin arrancar» o, si arrancó, «Visor sin poder con el PDF o el vídeo»—, 204 siempre (ADR-036) |
 | GET | `/reports/course` | catálogo + curso | **Informe de seguimiento** del curso de la sesión: actividades, alumnos y avance |
 | GET | `/reports/course/students/:sub` | catálogo + curso | Detalle de un alumno de ESE curso (404 si no aparece en él) |
 | GET | `/api/v1/reports/courses` | `REPORTS_API_TOKEN` | Cursos conocidos de una plataforma |
@@ -602,6 +603,21 @@ historial de accesos previos no están ni en la sesión del alumno ni en ningún
 endpoint que él pueda pedir, y por eso no aparecen. El título del curso sí se
 guarda desde la migración 018, pero para el informe del profesor: no viaja al
 visor.
+
+### En qué navegadores arranca el visor
+
+El visor del alumno está escrito para arrancar en navegadores de 2020 (Chrome 80,
+Firefox 74, Safari/iOS 13.4): ES2021 sin `await` de nivel superior ni campos de
+clase, y lo vigila `test/ui-compat.test.js` (ADR-036). El visor de PDF exige algo
+más —PDF.js necesita Chrome 94, Firefox 93 o Safari 16.4— y, por debajo, ofrece
+en su sitio la copia sellada (ADR-035).
+
+Por debajo de todo eso no hay pantalla en blanco. Cada visor carga primero
+`assets/compat.js`, un script clásico en ES5 que se ejecuta en cualquier
+navegador: pone `replaceChildren` si falta y, si al terminar de cargar la página el
+visor no ha dejado su marca (`window.__visorArrancado`), explica qué hacer,
+ofrece la copia sellada de los PDF y lo cuenta a `POST /telemetry/compat`. Esa
+línea del log es la forma de saber, tras desplegar, qué navegadores siguen fuera.
 
 ## Modelo de seguridad
 

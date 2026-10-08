@@ -1,3 +1,5 @@
+import { informarCompat } from './compat-informe.js?v=compat-1'
+
 const WATERMARK_POSITIONS = [
   ['7%', '9%'],
   ['61%', '12%'],
@@ -216,7 +218,12 @@ export function classifyHlsError (data, {
   if (data.type === 'mediaError') {
     if (mediaRecoveries === 0) return { action: 'recover', message: 'Recuperando la reproducción…' }
     if (mediaRecoveries < maxMediaRecoveries) return { action: 'swap', message: 'Recuperando la reproducción…' }
-    return { action: 'fatal', message: 'No se pudo reproducir el vídeo. Vuelve a abrir la actividad.' }
+    // Suele ser el navegador, no la red: Firefox en Windows 7, por ejemplo, no
+    // descodifica por encima de 1920×1088 (#108).
+    return {
+      action: 'fatal',
+      message: 'No se pudo reproducir el vídeo en este navegador. Vuelve a abrir la actividad o prueba con Chrome o Edge actualizados.'
+    }
   }
   return { action: 'fatal', message: 'No se pudo reproducir el vídeo. Vuelve a abrir la actividad.' }
 }
@@ -232,7 +239,7 @@ export function classifyNativeError (mediaErrorCode, { attempts = 0, maxAttempts
   if (mediaErrorCode === 3) {
     return {
       action: 'fatal',
-      message: 'No se pudo descodificar el vídeo en este navegador. Vuelve a abrir la actividad.'
+      message: 'No se pudo descodificar el vídeo en este navegador. Actualiza el dispositivo o prueba con otro navegador, y vuelve a abrir la actividad.'
     }
   }
   if (attempts < maxAttempts) return { action: 'reticket', message: null }
@@ -949,7 +956,12 @@ export function createVideoView ({
       maxAttempts: NATIVE_MAX_ATTEMPTS
     })
     if (decision.action === 'ignore') return
-    if (decision.action === 'fatal') return status(decision.message, true)
+    if (decision.action === 'fatal') {
+      if (element.error?.code === 3) {
+        informarCompat({ sessionToken, pagina: 'video', motivo: 'medio', detalle: 'MEDIA_ERR_DECODE (HLS nativo)' })
+      }
+      return status(decision.message, true)
+    }
     const resumeAt = Number.isFinite(element.currentTime) ? element.currentTime : 0
     void loadNativeHls({ resumeAt })
   }
@@ -1014,6 +1026,9 @@ export function createVideoView ({
         hls.recoverMediaError()
       } else {
         // auth | fatal: no hay nada que reintentar con esta sesión.
+        if (decision.action === 'fatal' && data.type === 'mediaError') {
+          informarCompat({ sessionToken, pagina: 'video', motivo: 'medio', detalle: data.details })
+        }
         hls.destroy()
         hls = null
       }
@@ -1022,7 +1037,9 @@ export function createVideoView ({
     listen(element, 'error', onNativeError)
     void loadNativeHls()
   } else {
-    status('Este navegador no puede reproducir HLS.', true)
+    // Ni Media Source ni HLS nativo, o un códec que no sabe descodificar.
+    status('Este navegador no puede reproducir el vídeo. Usa Chrome, Edge, Firefox o Safari en una versión reciente; en iPhone o iPad, actualiza iOS.', true)
+    informarCompat({ sessionToken, pagina: 'video', motivo: 'sin-hls', detalle: win.Hls ? 'hls.js sin Media Source' : 'sin hls.js' })
   }
 
   return {

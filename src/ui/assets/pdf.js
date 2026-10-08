@@ -1,6 +1,6 @@
-import { createPdfView } from './pdf-component.js?v=pdf-legacy-1'
+import { createPdfView } from './pdf-component.js?v=compat-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
-import { createViewerShell } from './viewer-shell.js?v=viewer-chrome-1'
+import { createViewerShell } from './viewer-shell.js?v=compat-1'
 import { createProgressSaver } from './progress-client.js?v=resume-1'
 import { createPdfTelemetry } from './telemetry-client.js?v=velocidad-1'
 
@@ -26,46 +26,56 @@ shell.setDownload({
   onDownload: descargarCopia
 })
 
-try {
-  const view = await createPdfView({
-    container: document.getElementById('content'),
-    sessionToken: boot.sessionToken,
-    document: {
-      id: boot.document.id,
-      title: boot.document.title,
-      contentUrl: boot.contentUrl,
-      downloadUrl: boot.downloadUrl
-    },
-    user: boot.user,
-    onStatus: shell.setStatus,
-    onAccessibility: ({ hasText }) => {
-      document.getElementById('accessibility-note').hidden = hasText
-    },
-    initialPage: boot.progress?.pageNumber ?? 1,
-    onDownload: descargarCopia
-  })
+// El armazón ya está: si el documento no abre, el propio visor lo explica y
+// ofrece la copia. La guardia de arranque (`compat.js`) no tiene nada que hacer.
+window.__visorArrancado = true
 
-  // La clave `progress` sólo viene en el bootstrap de un alumno: si no está,
-  // tampoco hay nada que guardar (sesión de profesor). La página se guarda
-  // siempre: volver a la primera también es una posición intencional.
-  if ('progress' in boot) {
-    createProgressSaver({
+// Sin `await` en el nivel superior del módulo: Safari 14 y Chrome < 89 no lo
+// entienden, y no ejecutarían ni una línea de la página.
+async function abrir () {
+  try {
+    const view = await createPdfView({
+      container: document.getElementById('content'),
       sessionToken: boot.sessionToken,
-      url: `/progress/pdf/${boot.document.id}`,
-      read: () => {
-        const pageNumber = view.currentPage
-        return Number.isInteger(pageNumber) && pageNumber >= 1 ? { pageNumber } : null
-      }
+      document: {
+        id: boot.document.id,
+        title: boot.document.title,
+        contentUrl: boot.contentUrl,
+        downloadUrl: boot.downloadUrl
+      },
+      user: boot.user,
+      onStatus: shell.setStatus,
+      onAccessibility: ({ hasText }) => {
+        document.getElementById('accessibility-note').hidden = hasText
+      },
+      initialPage: boot.progress?.pageNumber ?? 1,
+      onDownload: descargarCopia
     })
-    // El marcador guarda la última página; esto, cuántas distintas se abrieron.
-    const telemetry = createPdfTelemetry({
-      sessionToken: boot.sessionToken,
-      documentId: boot.document.id,
-      view
-    })
-    window.addEventListener('pagehide', () => telemetry.destroy())
+
+    // La clave `progress` sólo viene en el bootstrap de un alumno: si no está,
+    // tampoco hay nada que guardar (sesión de profesor). La página se guarda
+    // siempre: volver a la primera también es una posición intencional.
+    if ('progress' in boot) {
+      createProgressSaver({
+        sessionToken: boot.sessionToken,
+        url: `/progress/pdf/${boot.document.id}`,
+        read: () => {
+          const pageNumber = view.currentPage
+          return Number.isInteger(pageNumber) && pageNumber >= 1 ? { pageNumber } : null
+        }
+      })
+      // El marcador guarda la última página; esto, cuántas distintas se abrieron.
+      const telemetry = createPdfTelemetry({
+        sessionToken: boot.sessionToken,
+        documentId: boot.document.id,
+        view
+      })
+      window.addEventListener('pagehide', () => telemetry.destroy())
+    }
+  } catch {
+    // createPdfView ya dejó el motivo en el estado; aquí sólo se evita que el
+    // rechazo llegue sin capturar a la consola del iframe de Moodle.
   }
-} catch {
-  // createPdfView ya dejó el motivo en el estado; aquí sólo se evita que el
-  // rechazo llegue sin capturar a la consola del iframe de Moodle.
 }
+
+void abrir()
