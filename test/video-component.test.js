@@ -4,6 +4,7 @@ import {
   classifyHlsError,
   classifyNativeError,
   createControlsAutohide,
+  createPlaybackIntent,
   formatMediaTime,
   formatPlaybackRate,
   mediaProgress,
@@ -325,4 +326,28 @@ test('setPlaying acepta valores no booleanos', () => {
   assert.equal(timers.pending(), 1)
   autohide.setPlaying(undefined)
   assert.equal(timers.pending(), 0)
+})
+
+test('HLS nativo: tras renovar el billete se reanuda si el alumno ya había pulsado play', () => {
+  // iPhone hasta iOS 17.0 (#110): el play falla por el billete caducado, llega
+  // la fuente nueva y el <video> la deja en pausa. Esa pausa no es del alumno.
+  const intencion = createPlaybackIntent()
+  assert.equal(intencion.quiereReproducir, false, 'sin pulsar nada no se reproduce solo')
+  intencion.alReproducir()
+  intencion.empiezaRecuperacion()
+  intencion.alPausar()
+  assert.equal(intencion.quiereReproducir, true)
+  assert.equal(intencion.recuperando, true, 'mientras tanto no se le pide que vuelva a pulsar')
+  intencion.terminaRecuperacion()
+  assert.equal(intencion.recuperando, false)
+})
+
+test('HLS nativo: una pausa del alumno, o el final, no se deshace al renovar el billete', () => {
+  const intencion = createPlaybackIntent()
+  intencion.alReproducir()
+  intencion.alPausar()
+  assert.equal(intencion.quiereReproducir, false)
+  intencion.alReproducir()
+  intencion.alTerminar()
+  assert.equal(intencion.quiereReproducir, false)
 })
