@@ -324,6 +324,33 @@ porque lee el elemento, no el layout. `.video-stage` es `display: block` a prop�
 mide de verdad `test/video-stage-layout.test.js` con Chrome headless (se salta si no hay
 Chrome; en el runner de CI lo hay).
 
+**PDF.js: build legacy, worker envuelto y nunca un `import` estático** (ADR-035, #110). La
+build moderna de `pdfjs-dist` está escrita para el navegador del día: al importarse ya revienta
+en Chrome < 122, Firefox < 131 e iOS < 18.4, y con un `import` estático se llevaba por delante
+la colección entera. La legacy tampoco lo cubre todo: no repone
+`ArrayBuffer.prototype.transferToFixedLength`, y sin `src/ui/assets/pdfjs-worker.js` las
+páginas salen **sin texto** en Windows 7, sin error en ninguna consola de la página. Ese
+envoltorio **reexporta `WorkerMessageHandler`**: si un worker no arranca, PDF.js lo importa en
+la página y lo busca ahí; sin la reexportación ningún PDF de la página vuelve a abrir. Al subir
+`pdfjs-dist`, `test/pdf-legacy.test.js` abre un PDF real en un proceso sin esas APIs; y antes
+de promocionar, pasa el PDF por un navegador antiguo de verdad (abajo).
+
+**Probar con un navegador antiguo de verdad.** Lo que más se usa por debajo de lo último:
+Chromium 109 (el último de Windows 7) y Firefox 115 ESR. Los dos corren en un Mac ARM sin
+instalar nada:
+
+- Chromium 109: `https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1070065/chrome-mac.zip`.
+  En macOS reciente revienta con `--headless=new`: usa `--headless` (el modo antiguo) con
+  `--remote-debugging-port=0` para que no se cierre solo. No trae H.264: sirve para PDF y
+  colecciones, no para el vídeo. `--enable-logging=stderr --v=0` saca también la consola del
+  worker de PDF.js, que es donde aparecen estos fallos.
+- Firefox 115 ESR: el DMG de `https://ftp.mozilla.org/pub/firefox/releases/115.20.0esr/mac/es-ES/`,
+  montado con `hdiutil attach -readonly`; `-headless -no-remote -profile <dir>` con un perfil
+  propio (`media.autoplay.default` a 0 para el vídeo). Reproduce H.264 con el decodificador del
+  sistema.
+
+Sírvelos con la CSP de producción y dentro de un iframe de otro origen, como los abre Moodle.
+
 ---
 
 ## Depurar

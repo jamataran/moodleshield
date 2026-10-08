@@ -177,10 +177,31 @@ export async function createApp () {
     index: false,
     setHeaders: (res) => res.set('Cache-Control', 'no-cache')
   }
-  app.use(
-    '/vendor/pdfjs',
-    express.static(path.join(rootDir, 'node_modules/pdfjs-dist/build'), vendorOptions)
-  )
+  // Lo que PDF.js pide mientras dibuja. Los CMaps, para las fuentes CID; las
+  // fuentes estándar, para un documento que no incrusta las suyas.
+  const pdfjsDir = path.join(rootDir, 'node_modules/pdfjs-dist')
+  app.use('/vendor/pdfjs/cmaps', express.static(path.join(pdfjsDir, 'cmaps'), vendorOptions))
+  app.use('/vendor/pdfjs/standard_fonts', express.static(path.join(pdfjsDir, 'standard_fonts'), vendorOptions))
+  // Y los decodificadores de imagen en JavaScript. PDF.js 6 sólo lee CCITT,
+  // JBIG2 y JPEG2000 con ellos o con su WebAssembly, que la CSP no deja
+  // compilar; sin ninguno de los dos, un escaneado en blanco y negro —Ghostscript
+  // lo guarda en CCITT al normalizar— sale en blanco (#110). De `wasm/` se sirven
+  // sólo estos dos ficheros: nada de `quickjs-eval.js`.
+  const decodificadoresPdfjs = new Set(['openjpeg_nowasm_fallback.js', 'jbig2_nowasm_fallback.js'])
+  app.get('/vendor/pdfjs/wasm/:fichero', (req, res, next) => {
+    if (!decodificadoresPdfjs.has(req.params.fichero)) return next()
+    res.sendFile(req.params.fichero, {
+      root: path.join(pdfjsDir, 'wasm'),
+      headers: { 'Cache-Control': 'no-cache' }
+    })
+  })
+  // La build `legacy`, no la moderna. La moderna está escrita para el navegador
+  // del día: al importarse ya toca `Iterator.prototype` y después usa
+  // `Promise.try`, `URL.parse`… sin polyfill. En Chrome < 122, Firefox < 131
+  // (las ESR 115 y 128 incluidas) e iOS < 18.4 el módulo revienta al cargar, y
+  // con él el visor de PDF y cualquier colección (#110). La legacy es la misma
+  // versión con core-js, que repone lo que falta: dibuja exactamente igual.
+  app.use('/vendor/pdfjs', express.static(path.join(pdfjsDir, 'legacy/build'), vendorOptions))
   app.use(
     '/vendor',
     express.static(path.join(rootDir, 'node_modules/hls.js/dist'), vendorOptions)

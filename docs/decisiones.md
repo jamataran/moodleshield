@@ -1539,3 +1539,87 @@ la carpeta y en su carpeta, un estado válido también con la regla anterior. Lo
 vigilan las pruebas «ADR-034» de `test/integration/catalog.integration.js` y «la
 colección nueva admite la carpeta de otro profesor; la edición, no» de
 `test/ui-catalogo.test.js`.
+
+## ADR-035 · El visor de PDF sirve la build legacy de PDF.js, la carga al abrir el documento y, si no puede, ofrece la copia sellada
+
+**Estado**: aceptada · **Fecha**: 2026-10 · Issue #110 · Complementa a ADR-014 y ADR-017
+
+**Contexto.** En octubre de 2026, en producción, en torno al 10 % de los alumnos
+no podía estudiar desde Windows 7, móviles y aparatos sin actualizar. La causa
+principal estaba en `/vendor/pdfjs`, que servía la build **moderna** de PDF.js
+6.2.108, escrita para el navegador del día:
+
+- Al importarse ejecuta `Iterator.prototype.join`: `ReferenceError` en Chrome <
+  122, Firefox < 131 (las ESR 115 y 128 incluidas) e iOS < 18.4. Como el visor
+  de colección la importaba de forma estática a través de `pdf-component.js`,
+  en esos navegadores salían en blanco el PDF **y la colección entera**,
+  vídeos incluidos.
+- Más arriba usa sin polyfill `Promise.try`, `URL.parse`, `Response.bytes`…
+- Y, en todos los navegadores, PDF.js 6 sólo decodifica CCITT, JBIG2 y
+  JPEG2000 si recibe `wasmUrl`, que no se le pasaba: un escaneado en blanco y
+  negro —Ghostscript lo guarda en CCITT al normalizar (ADR-014)— salía en blanco.
+
+Se midió con motores reales, no sólo con la tabla de compatibilidad: Chromium
+109 (el último de Windows 7) y Firefox 115 ESR, antes y después, con la CSP de
+producción y dentro de un iframe de otro origen.
+
+**Decisión.**
+
+1. `/vendor/pdfjs` sirve `pdfjs-dist/legacy/build`: la misma versión, con
+   core-js reponiendo lo que falta.
+2. El worker va envuelto (`src/ui/assets/pdfjs-worker.js`): primero
+   `pdfjs-polyfills.js`, después el de PDF.js. La build legacy no repone
+   `ArrayBuffer.prototype.transferToFixedLength` (Chrome 114, Firefox 122,
+   Safari 17.4), con el que PDF.js serializa **cada fuente**; sin él, en
+   Chromium 109 y Firefox 115 la página se dibujaba sin texto y PDF.js se
+   tragaba el error. El envoltorio reexporta `WorkerMessageHandler`: cuando un
+   worker no arranca —Firefox < 114 no los tiene de módulo, o falla la red—
+   PDF.js lo busca ahí para ejecutarlo en la página, y sin él ningún PDF de
+   esa página volvía a abrir. La página carga también los polyfills, que
+   reponen además el `for await` sobre `ReadableStream` (Chrome 124, Safari no
+   lo tiene) con el que `getTextContent` detecta los escaneados.
+3. Se sirven los CMaps, las fuentes estándar y, de `wasm/`, sólo los dos
+   decodificadores en JavaScript (lista blanca en `src/app.js`), y
+   `pdf-component.js` pasa sus URLs con `useWasm: false`.
+4. PDF.js se importa al abrir el documento, no al cargar el módulo. Si no carga,
+   o el documento no abre, el visor ofrece en su sitio la copia sellada de
+   ADR-017; con la sesión caducada, sólo dice que hay que volver a Moodle.
+5. Ningún lienzo de página pasa de 2²⁴ píxeles, el máximo que dibuja Safari en
+   iOS.
+
+**Razones.**
+
+- La build legacy es la misma API y los mismos parches de seguridad. Dibuja
+  exactamente igual: medido en Chrome 154 con la CSP de producción, mismos
+  píxeles con una build y con otra.
+- Servir la moderna a los navegadores capaces y la legacy al resto se descartó:
+  la lista de «capaces» cambiaría con cada subida de `pdfjs-dist` y un error en
+  ella reproduciría justo este fallo.
+- No se abre la CSP a `'wasm-unsafe-eval'`: los decodificadores JavaScript
+  bastan para un visor y la CSP sigue sin compilar código.
+- La copia sellada ya es la salida oficial para estudiar fuera del visor
+  (ADR-017): ofrecerla cuando el visor no puede no expone nada nuevo.
+
+**Consecuencias.**
+
+- Unos 58 KB más en el módulo y 50 KB en el worker, comprimidos en el borde y
+  revalidados con 304.
+- En un navegador antiguo, core-js sustituye alguna función nativa (envuelve
+  `JSON.stringify` donde falta `JSON.rawJSON`, por ejemplo). El resultado es el
+  mismo, y en uno al día no toca nada.
+- Cada subida de `pdfjs-dist` puede añadir otra API sin reponer. Lo vigila
+  `test/pdf-legacy.test.js`, que abre un PDF real en un proceso sin esas APIs, y
+  merece una pasada del arnés con Chromium 109 y Firefox 115 (`docs/desarrollo.md`).
+  Cuando PDF.js reponga `transferToFixedLength`, la prueba lo dirá y el
+  polyfill sobra.
+- Un navegador anterior al suelo de la build legacy (Chrome 94, Firefox 93,
+  Safari 16.4: usa bloques `static {}`) ya no deja la colección en blanco:
+  enseña los vídeos y ofrece la copia del PDF.
+- Los decodificadores JavaScript de JPEG2000 y JBIG2 son más lentos que el
+  WebAssembly. Para el tamaño de un apunte no se nota.
+
+**Cómo revertirlo.** Volver a montar `pdfjs-dist/build` en `src/app.js`, fijar
+`workerSrc` a `/vendor/pdfjs/pdf.worker.min.mjs` y recuperar el `import`
+estático de `pdf-component.js`. Revertirlo devuelve el fallo de #110 en
+Windows 7, en las ESR de Firefox y en los iPhone sin la última actualización.
+Lo vigilan `test/pdf-legacy.test.js` y `test/integration/vendor-pdfjs.integration.js`.
