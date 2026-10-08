@@ -16,12 +16,16 @@ import { ltiErrorHandler, ltiRouter, paginaDeErrorLti } from '../src/lti/routes.
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 test('un launch ya usado o caducado explica que hay que volver a abrir la actividad', () => {
-  for (const code of ['invalid_state', 'invalid_token_age']) {
+  for (const code of ['invalid_state', 'expired_id_token']) {
     const pagina = paginaDeErrorLti(new LtiError('State desconocido, caducado o ya usado', { status: 401, code }))
     assert.equal(pagina.titulo, 'Esta página ya no es válida')
     assert.match(pagina.parrafos.join(' '), /Vuelve a Moodle y abre la actividad de nuevo/)
     assert.doesNotMatch(pagina.parrafos.join(' '), /State desconocido/)
   }
+  // Un `iat` en el futuro no se arregla volviendo a abrir: es el reloj de algún
+  // servidor, y el mensaje técnico es lo que hay que leer.
+  const reloj = paginaDeErrorLti(new LtiError('El id_token es demasiado antiguo o está fechado en el futuro', { code: 'invalid_token_age' }))
+  assert.deepEqual(reloj.parrafos, ['El id_token es demasiado antiguo o está fechado en el futuro'])
   const configuracion = paginaDeErrorLti(new LtiError('Falta deployment_id', { code: 'missing_deployment_id' }))
   assert.deepEqual(configuracion.parrafos, ['Falta deployment_id'],
     'un error de configuración conserva su mensaje: es para quien da de alta Moodle')
@@ -78,12 +82,22 @@ test('«preparando material» no se recarga sola hacia un error', async () => {
   assert.match(html, /Vuelve a abrir la actividad desde Moodle/)
 })
 
-test('Node mantiene las conexiones más que el upstream de nginx', async () => {
-  // nginx reutiliza conexiones del upstream hasta 60 s (keepalive_timeout por
-  // defecto). Si Node las cierra antes, algún launch responde 502.
+test('Node mantiene las conexiones más que el upstream de nginx, y el apagado no las espera', async () => {
+  // nginx reutiliza las conexiones del upstream hasta su `keepalive_timeout`
+  // (60 s si la plantilla no lo fija). Si Node las cierra antes, algún launch
+  // responde 502.
+  const plantilla = await readFile(path.join(raiz, 'infra/nginx/templates/default.conf.template'), 'utf8')
+  const upstream = /upstream moodleshield_app \{([^}]*)\}/.exec(plantilla)?.[1]
+  assert.ok(upstream, 'la plantilla de nginx declara el upstream de la app')
+  const fijado = /keepalive_timeout\s+(\d+)(ms|s|m)?\s*;/.exec(upstream)
+  const nginx = fijado ? Number(fijado[1]) * { ms: 1, s: 1000, m: 60_000 }[fijado[2] ?? 's'] : 60_000
   const fuente = await readFile(path.join(raiz, 'src/server.js'), 'utf8')
   const keepAlive = Number(/server\.keepAliveTimeout = ([\d_]+)/.exec(fuente)?.[1].replaceAll('_', ''))
   const cabeceras = Number(/server\.headersTimeout = ([\d_]+)/.exec(fuente)?.[1].replaceAll('_', ''))
-  assert.ok(keepAlive > 60_000, `keepAliveTimeout ${keepAlive} tiene que pasar de 60 s`)
+  assert.ok(keepAlive > nginx, `keepAliveTimeout ${keepAlive} tiene que pasar de los ${nginx} ms de nginx`)
   assert.ok(cabeceras > keepAlive, 'headersTimeout por encima de keepAliveTimeout')
+  // Con un keep-alive tan largo, `server.close()` no basta para apagar antes de
+  // que Docker mate el proceso (10 s): la conexión que atendía una petición
+  // seguiría abierta 65 s.
+  assert.match(fuente, /closeIdleConnections\(\)/, 'el apagado cierra las conexiones en cuanto quedan ociosas')
 })

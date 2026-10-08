@@ -54,6 +54,11 @@ async function shutdown (signal) {
     await closeDatabase().catch(() => {})
     process.exit(0)
   })
+  // `close()` sólo cierra las conexiones ociosas en ese instante. Con el
+  // keep-alive de 65 s, la que estaba atendiendo una petición seguía abierta
+  // 65 s más tras responder, y Docker nos mataba a los 10 sin cerrar la base:
+  // se cierran en cuanto quedan ociosas.
+  setInterval(() => server.closeIdleConnections(), 500).unref()
   setTimeout(() => process.exit(1), 15_000).unref()
 }
 
