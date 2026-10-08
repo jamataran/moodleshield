@@ -9,7 +9,7 @@ import { diagnosePlatformMiss, findPlatform, listPlatforms } from './platform.js
 import { assertLaunchTargetAllowed, saveOidcState, validateLaunch, LtiError } from './validate.js'
 import { MESSAGE_TYPE } from './claims.js'
 import { issueSession, issueToken, verifySession, verifyToken } from '../session.js'
-import { renderPage } from '../ui/render.js'
+import { escapeHtml, renderPage } from '../ui/render.js'
 import { buildDeepLinkingResponse, deepLinkingForm } from './deeplink.js'
 import { checkResourceSignature } from './resource-signature.js'
 import { recordDeepLinkGrants } from '../services/deep-link-grants.js'
@@ -179,6 +179,21 @@ ltiRouter.get('/keys', async (_req, res, next) => {
   } catch (err) {
     next(err)
   }
+})
+
+/**
+ * La actividad sólo se abre con el POST de Moodle. Un GET aquí es una pestaña
+ * que se recargó sola —la vieja «preparando material» lo hacía cada 15 s— o un
+ * formulario que un navegador sin `<dialog>` mandó por GET: se explica qué hacer
+ * en vez de responder un 404 en JSON (#110).
+ */
+ltiRouter.get('/launch', (_req, res) => {
+  res.set('Cache-Control', 'no-store')
+  res.status(400).type('html').send(htmlDeError({
+    titulo: 'La actividad se abre desde Moodle',
+    parrafos: ['Vuelve al curso en Moodle y abre la actividad de nuevo.'],
+    codigo: 'launch_sin_moodle'
+  }))
 })
 
 /** Endpoint del launch: aquí aterriza el id_token firmado por Moodle. */
@@ -844,21 +859,47 @@ ltiRouter.get('/config', (_req, res) => {
   })
 })
 
+/**
+ * Lo que dice la página de un launch que no vale.
+ *
+ * Recargar la pestaña del visor, o volver a ella al cabo de un rato —en el
+ * móvil el sistema la descarta y la recarga sola—, reenvía el formulario de
+ * Moodle con un `state` ya gastado o un id_token caducado. Al alumno no le sirve
+ * «State desconocido»: le sirve saber que tiene que volver a abrir la actividad
+ * (#110). El resto son errores de configuración y conservan su mensaje técnico,
+ * que es lo que necesita quien da de alta la plataforma.
+ */
+const LAUNCH_YA_USADO = new Set(['invalid_state', 'invalid_token_age'])
+
+export function paginaDeErrorLti (err) {
+  if (LAUNCH_YA_USADO.has(err.code)) {
+    return {
+      titulo: 'Esta página ya no es válida',
+      parrafos: [
+        'Pasa al recargarla o al volver a ella al cabo de un rato, sobre todo en el móvil: ' +
+          'por seguridad, cada apertura desde Moodle sirve una sola vez.',
+        'Vuelve a Moodle y abre la actividad de nuevo.'
+      ]
+    }
+  }
+  return { titulo: 'No se pudo abrir la actividad', parrafos: [err.message] }
+}
+
+function htmlDeError ({ titulo, parrafos, codigo }) {
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(titulo)}</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;margin:3rem auto;max-width:40rem;padding:0 1rem}
+code{background:#f4f4f5;padding:.15rem .35rem;border-radius:.25rem}</style></head>
+<body><h1>${escapeHtml(titulo)}</h1>${parrafos.map((p) => `<p>${escapeHtml(p)}</p>`).join('')}
+<p><code>${escapeHtml(codigo)}</code> · id de traza <code>${randomUUID().slice(0, 8)}</code></p></body></html>`
+}
+
 export function ltiErrorHandler (err, req, res, next) {
   if (!(err instanceof LtiError)) return next(err)
   logger.warn({ code: err.code, msg: err.message, path: req.path, detail: err.detail ?? undefined }, 'Error LTI')
+  // La respuesta a un POST de launch no se guarda: «Atrás» no puede servirla.
+  res.set('Cache-Control', 'no-store')
   const wantsJson = req.accepts(['html', 'json']) === 'json'
   if (wantsJson) return res.status(err.status).json({ error: err.message, code: err.code })
-  res
-    .status(err.status)
-    .type('html')
-    .send(
-      `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Error LTI</title>
-       <style>body{font:15px/1.5 system-ui,sans-serif;margin:3rem auto;max-width:40rem;padding:0 1rem}
-       code{background:#f4f4f5;padding:.15rem .35rem;border-radius:.25rem}</style></head>
-       <body><h1>No se pudo abrir la actividad</h1><p>${err.message
-         .replace(/&/g, '&amp;')
-         .replace(/</g, '&lt;')}</p>
-       <p><code>${err.code}</code> · id de traza <code>${randomUUID().slice(0, 8)}</code></p></body></html>`
-    )
+  res.status(err.status).type('html').send(htmlDeError({ ...paginaDeErrorLti(err), codigo: err.code }))
 }

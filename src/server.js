@@ -32,6 +32,13 @@ const server = app.listen(config.http.port, config.http.host, () => {
   )
 })
 
+// El `upstream` del nginx del stack reutiliza conexiones hasta 60 s (el
+// `keepalive_timeout` por defecto) y Node las cerraba a los 5. Si nginx reusaba
+// una justo cuando Node la cerraba, el launch —un POST, que nginx no reintenta—
+// respondía 502 de vez en cuando (#110). Node tiene que aguantar más que nginx.
+server.keepAliveTimeout = 65_000
+server.headersTimeout = 66_000
+
 const purgeTimer = setInterval(() => {
   purgeExpiredStates().catch((err) => logger.warn({ err }, 'Fallo purgando states OIDC'))
   if (config.admin.enabled) {
