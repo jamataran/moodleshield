@@ -17,6 +17,9 @@ const PDFJS = '/vendor/pdfjs/pdf.min.mjs'
 // El worker de PDF.js va envuelto: antes de cargarlo se pone lo que su build
 // legacy no repone y sin lo cual la página sale sin texto (`pdfjs-worker.js`).
 const PDFJS_WORKER = '/assets/pdfjs-worker.js?v=pdf-legacy-1'
+// La página también los necesita (`getTextContent`). Si no llegan, se sigue:
+// sin ellos PDF.js dibuja igual en casi todos los navegadores.
+const PDFJS_POLYFILLS = './pdfjs-polyfills.js?v=pdf-legacy-1'
 
 /**
  * Dónde encuentra PDF.js lo que no lleva dentro (los sirve `src/app.js`).
@@ -67,7 +70,7 @@ export function crearCargadorPdfjs (importar = (url) => import(url)) {
   }
 }
 
-const cargarPdfjs = crearCargadorPdfjs()
+const cargarPdfjs = crearCargadorPdfjs((url) => import(PDFJS_POLYFILLS).catch(() => {}).then(() => import(url)))
 
 /** Cuántas páginas alrededor de la visible se mantienen dibujadas. */
 const RENDER_MARGIN = 2
@@ -325,10 +328,16 @@ export async function createPdfView ({
     })
     pdf = await task.promise
   } catch (err) {
+    // Un documento que no abre no se libera solo: sin esto, su worker seguía
+    // vivo hasta salir de la página, uno por cada PDF que se pulsara.
+    task?.destroy().catch(() => {})
     // PDF.js expone el código HTTP en `status`.
     if (err?.status === 401 || err?.status === 403) {
-      status(sinVisor('sesion'), true)
-      throw err
+      const titulo = sinVisor('sesion')
+      status(titulo, true)
+      // Como con el navegador: la colección enseña `message` tal cual, y el
+      // original es «Unexpected server response (401) while retrieving PDF…».
+      throw new Error(titulo, { cause: err })
     }
     const detalle = `No se pudo abrir el documento: ${err?.message ?? 'error desconocido'}`
     sinVisor('documento', detalle)
