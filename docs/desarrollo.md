@@ -345,6 +345,15 @@ es lo que se ejecuta cuando todo lo demás falla. Cada entrada del visor pone
 `window.__visorArrancado = true` al terminar su arranque síncrono; sin esa línea, la guardia
 pinta su aviso encima de un visor que funciona.
 
+**Node tiene que mantener las conexiones más que nginx.** El `upstream` del nginx del stack las
+reutiliza hasta 60 s (`keepalive_timeout` por defecto) y Node, por defecto, las cierra a los 5:
+cuando nginx reusaba una que Node estaba cerrando, el launch —un POST, que nginx no reintenta—
+respondía 502 de vez en cuando (#110). `src/server.js` fija `keepAliveTimeout` en 65 s; si
+cambias el upstream, que siga por encima. La contrapartida está en el apagado: `server.close()`
+sólo cierra las conexiones ociosas en ese instante, así que `shutdown()` cierra cada una en cuanto
+queda ociosa; si no, Docker mata el proceso a los 10 s sin cerrar la base. Lo vigila
+`test/lti-recarga.test.js`, que lee el `upstream` de la plantilla de nginx.
+
 **Probar con un navegador antiguo de verdad.** Lo que más se usa por debajo de lo último:
 Chromium 109 (el último de Windows 7) y Firefox 115 ESR. Los dos corren en un Mac ARM sin
 instalar nada:

@@ -199,9 +199,11 @@ export async function validateLaunch ({ idToken, state }) {
     })
     claims = result.payload
   } catch (err) {
+    // Caducado tiene código propio: es el reenvío tardío de un launch cuyo
+    // primer POST no llegó (un 502, una pestaña que se cayó), no una firma mala.
     throw new LtiError(`Firma o claims del id_token inválidos: ${err.message}`, {
       status: 401,
-      code: 'invalid_id_token'
+      code: err?.code === 'ERR_JWT_EXPIRED' ? 'expired_id_token' : 'invalid_id_token'
     })
   }
 

@@ -1,4 +1,4 @@
-import { createVideoView } from './video-component.js?v=compat-1'
+import { createVideoView } from './video-component.js?v=movil-1'
 import { createPdfView } from './pdf-component.js?v=compat-1'
 import { downloadPdfCopy } from './pdf-download.js?v=viewer-ux-1'
 import { createViewerShell, VIDEO_DOWNLOAD_HELP } from './viewer-shell.js?v=compat-1'
