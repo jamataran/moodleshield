@@ -42,6 +42,20 @@ const RUTAS_VIVAS = [
   /\/(media|uploads|pgdata)(\/|$)/i
 ]
 
+/**
+ * Un fichero de código de `src/media/` no es material: es el programa que lo
+ * procesa, y se llama igual que el árbol de datos por casualidad. Sin esta
+ * excepción no se podía editar `src/media/transcode.js` (#108). Sólo el
+ * fichero de código directamente en esa carpeta, y sólo si el resto de la ruta
+ * no está a su vez dentro de un árbol de datos.
+ */
+const CODIGO_FUENTE = /(^|\/)src\/(media|uploads|pgdata)\/[^/]+\.m?js$/i
+
+function escribeEnDatosVivos (ruta) {
+  if (RUTAS_VIVAS.slice(0, 2).some((r) => r.test(ruta))) return true
+  return RUTAS_VIVAS[2].test(ruta.replace(CODIGO_FUENTE, ''))
+}
+
 const SQL_DESTRUCTIVO = [
   { patron: /\bdrop\s+(table|column|schema|database|type)\b/i, que: 'DROP de una tabla, columna, esquema o base' },
   { patron: /\btruncate\b/i, que: 'TRUNCATE' },
@@ -121,7 +135,7 @@ function motivoPorRuta (ruta) {
       alternativa: 'Di qué clave hay que añadir y con qué valor; la añade quien opera el entorno.'
     }
   }
-  if (RUTAS_VIVAS.some((r) => r.test(ruta))) {
+  if (escribeEnDatosVivos(ruta)) {
     return {
       nombre: 'datos-vivos',
       motivo: 'escribe dentro del árbol de datos de un entorno, donde vive el material y no el código',

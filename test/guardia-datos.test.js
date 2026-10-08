@@ -47,6 +47,35 @@ test('deja pasar el trabajo normal', () => {
   }
 })
 
+test('el código de src/media no es material; lo que hay en un árbol de datos, sí', () => {
+  // src/media/ se llama como el árbol de datos, pero es el programa que lo
+  // procesa: bloquearlo impedía arreglar el tope de resolución (#108).
+  const codigo = [
+    'src/media/transcode.js',
+    '/Users/alguien/moodleshield/src/media/trace-reader.js',
+    '/Users/alguien/moodleshield/.claude/worktrees/rama/src/media/playlist.js'
+  ]
+  for (const ruta of codigo) {
+    assert.equal(escribir(ruta).bloqueado, false, `es código, no material: ${ruta}`)
+  }
+  const material = [
+    'infra/local/data/media/videos/v1/meta.json',
+    '/srv/docker-apps/moodleshield/media/videos/v1/A/seg_0000.ts',
+    '/data/media/videos/v1/meta.json',
+    '/data/uploads/subida.bin',
+    'infra/prod/data/pgdata/PG_VERSION',
+    // Lo que se llame src/media pero viva dentro de los datos sigue siendo dato.
+    '/data/media/src/media/x.js',
+    '/srv/docker-apps/moodleshield/src/media/x.js',
+    'src/media/../../infra/local/data/media/x.js',
+    // Y en src/media, sólo los ficheros de código.
+    'src/media/videos/v1/meta.json'
+  ]
+  for (const ruta of material) {
+    assert.equal(escribir(ruta).bloqueado, true, `es material: ${ruta}`)
+  }
+})
+
 test('una migración ya aplicada es inmutable; una nueva no', () => {
   assert.equal(escribir('migrations/014_resource_placement.sql').bloqueado, true)
   assert.equal(
