@@ -71,15 +71,16 @@ test('los fps de salida siguen a la fuente y mantienen el GOP entero', () => {
 test('el lado largo se recorta sólo si se ha configurado y sólo si sobra', () => {
   const vertical = { width: 1440, height: 1920 }
   const apaisado = { width: 3840, height: 2160 }
+  const encaja = (lado) => [`scale=${lado}:${lado}:force_original_aspect_ratio=decrease:force_divisible_by=2`]
 
   assert.deepEqual(outputScaleFilter(vertical, 0), [], 'sin límite, no se toca nada')
-  assert.deepEqual(outputScaleFilter(vertical, 1080), ['scale=-2:1080'],
-    'en vertical el lado largo es el alto')
-  assert.deepEqual(outputScaleFilter(apaisado, 1080), ['scale=1080:-2'],
-    'en apaisado, el ancho')
+  // El mismo filtro en las dos orientaciones: ffmpeg gira el fotograma antes de
+  // escalarlo, y las dimensiones de ffprobe son las codificadas (#108).
+  assert.deepEqual(outputScaleFilter(vertical, 1080), encaja(1080), 'en vertical')
+  assert.deepEqual(outputScaleFilter(apaisado, 1080), encaja(1080), 'en apaisado')
   assert.deepEqual(outputScaleFilter({ width: 960, height: 540 }, 1080), [],
     'lo que ya cabe no se reescala hacia arriba')
-  assert.deepEqual(outputScaleFilter({ width: 1280, height: 720 }, 1080), ['scale=1080:-2'],
+  assert.deepEqual(outputScaleFilter({ width: 1280, height: 720 }, 1080), encaja(1080),
     'y 1280 de lado largo sí pasa del límite, aunque «720p» suene a menos')
   assert.deepEqual(outputScaleFilter({ width: 0, height: 0 }, 1080), [],
     'sin dimensiones fiables, no se inventa un filtro')

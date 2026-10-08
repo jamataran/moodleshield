@@ -333,3 +333,54 @@ export async function measureReferenceSeries ({
   }
   return refs
 }
+
+/** Ancho y alto del vídeo que llega por stdin como MPEG-TS, según ffprobe. */
+export function probeStreamSize ({ stdin, ffprobePath = config.transcode.ffprobePath, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffprobePath, [
+      '-v', 'error', '-f', 'mpegts', '-i', 'pipe:0',
+      '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'json'
+    ], { signal })
+    stdin.pipe(child.stdin)
+    // ffprobe cierra su entrada en cuanto sabe el tamaño: lo que quede no se lee.
+    child.stdin.on('error', () => {})
+    let out = ''
+    child.stdout.on('data', (c) => { out += c })
+    child.stderr.resume()
+    child.on('error', reject)
+    child.on('close', () => {
+      stdin.destroy?.()
+      const stream = (() => { try { return JSON.parse(out).streams?.[0] } catch { return null } })()
+      if (!stream?.width || !stream?.height) return reject(new Error('No se pudo leer el tamaño del artefacto'))
+      resolve({ width: stream.width, height: stream.height })
+    })
+  })
+}
+
+/**
+ * Tamaño real de una revisión publicada, medido sobre su variante descifrada.
+ *
+ * `meta.json` guarda el de la FUENTE (#108). ffmpeg gira el fotograma antes de
+ * escalarlo y el tope de resolución lo reduce, así que con un vertical de
+ * móvil, o con `VIDEO_MAX_OUTPUT_LONG_SIDE` puesto, no es el de los segmentos:
+ * situar las cajas de la marca con él es medir en los píxeles equivocados.
+ */
+export async function measureArtifactSize ({ dir, variant = 'A', ffprobePath, signal } = {}) {
+  const { stream } = await decryptedVariantStream({ dir, variant })
+  return probeStreamSize({ stdin: stream, ffprobePath, signal })
+}
+
+/**
+ * Con qué tamaño se sitúan las cajas de referencia: el medido en el artefacto
+ * y, sólo si no se pudo medir, el de `meta.json`. `difiere` avisa de que el
+ * meta no habría servido, que es la pista de un vídeo girado o con tope.
+ */
+export function referenceSize ({ artefacto, meta } = {}) {
+  if (artefacto?.width && artefacto?.height) {
+    const difiere = Boolean(meta?.width && meta?.height) &&
+      (artefacto.width !== meta.width || artefacto.height !== meta.height)
+    return { width: artefacto.width, height: artefacto.height, origen: 'artefacto', difiere }
+  }
+  if (meta?.width && meta?.height) return { width: meta.width, height: meta.height, origen: 'meta', difiere: false }
+  return null
+}
