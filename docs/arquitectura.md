@@ -303,7 +303,8 @@ Detalle y motivos en las fichas de cierre archivadas como issues:
 | Método | Ruta | Auth | Qué hace |
 |---|---|---|---|
 | GET/POST | `/lti/login` | — | Initiation login OIDC |
-| POST | `/lti/launch` | `state` + `id_token` | Launch validado |
+| POST | `/lti/launch` | `state` + `id_token` | Launch validado. Un `state` gastado o un id_token caducado —recargar la pestaña, volver a ella en el móvil— explica que hay que volver a abrir la actividad |
+| GET | `/lti/launch` | — | HTML 400 «la actividad se abre desde Moodle»: lo que ve una pestaña que se recargó sola |
 | GET | `/lti/keys` | — | JWKS público |
 | GET | `/lti/config` | — | Datos de alta en Moodle |
 | POST | `/lti/deeplink/response` | token de Deep Linking | Devuelve la selección a Moodle |
