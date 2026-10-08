@@ -116,7 +116,10 @@
   }
 
   function descargar (copia, token, boton) {
-    var texto = boton.textContent
+    // El rótulo de verdad se guarda la primera vez: tras un fallo el botón
+    // enseña el error, y un reintento que sale bien tiene que devolver éste.
+    var texto = boton.getAttribute('data-rotulo') || boton.textContent
+    boton.setAttribute('data-rotulo', texto)
     var xhr = new win.XMLHttpRequest()
     xhr.open('GET', copia.url, true)
     xhr.responseType = 'blob'
@@ -128,6 +131,7 @@
         boton.textContent = 'No se pudo descargar (' + xhr.status + '). Vuelve a abrir la actividad.'
         return
       }
+      boton.textContent = texto
       var nombre = nombreDeFichero(copia.titulo)
       if (win.navigator.msSaveOrOpenBlob) {
         win.navigator.msSaveOrOpenBlob(xhr.response, nombre)
@@ -146,7 +150,6 @@
         // Sin atributo download (iOS < 13): el propio navegador abre el PDF.
         win.location.href = enlace
       }
-      boton.textContent = texto
       win.setTimeout(function () { urls.revokeObjectURL(enlace) }, 60000)
     }
     xhr.onerror = function () {

@@ -43,10 +43,18 @@ function abrirSinSoporte (dialog) {
   }
   dialog.classList.add('dialogo-sin-soporte')
   dialog.setAttribute('open', '')
+  // Como el nativo, el foco entra en el diálogo y vuelve adonde estaba al
+  // cerrarlo: con teclado o lector de pantalla, si no, no se nota que se abrió.
+  focoAnterior.set(dialog, document.activeElement)
+  dialog.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')?.focus?.()
 }
+
+const focoAnterior = new WeakMap()
 
 function cerrarSinSoporte (dialog, valor) {
   dialog.returnValue = valor
   dialog.removeAttribute('open')
+  focoAnterior.get(dialog)?.focus?.()
+  focoAnterior.delete(dialog)
   dialog.dispatchEvent(new Event('close'))
 }

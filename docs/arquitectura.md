@@ -359,7 +359,7 @@ Detalle y motivos en las fichas de cierre archivadas como issues:
 | PUT | `/progress/:kind/:id` | sesión con alcance | Marcador de reanudación del alumno (la lectura viaja en el bootstrap del launch, ADR-021) |
 | POST | `/telemetry/video/:id` | sesión con alcance | Beat de visionado: tramos vistos y tiempo (**fail-open**: cualquier fallo responde 204, ADR-030) |
 | POST | `/telemetry/pdf/:id` | sesión con alcance | Beat de lectura: páginas distintas y tiempo, con el mismo contrato |
-| POST | `/telemetry/compat` | sesión | Un visor que no pudo con este navegador (no arrancó, PDF.js no cargó, vídeo sin HLS o sin códec): una línea `warn` en el log con user-agent y motivo, 204 siempre (ADR-036) |
+| POST | `/telemetry/compat` | sesión | Un visor que no pudo con este navegador (no arrancó, PDF.js no cargó, vídeo sin HLS o sin códec): una línea `warn` en el log con user-agent y motivo —«Visor sin arrancar» o, si arrancó, «Visor sin poder con el PDF o el vídeo»—, 204 siempre (ADR-036) |
 | GET | `/reports/course` | catálogo + curso | **Informe de seguimiento** del curso de la sesión: actividades, alumnos y avance |
 | GET | `/reports/course/students/:sub` | catálogo + curso | Detalle de un alumno de ESE curso (404 si no aparece en él) |
 | GET | `/api/v1/reports/courses` | `REPORTS_API_TOKEN` | Cursos conocidos de una plataforma |

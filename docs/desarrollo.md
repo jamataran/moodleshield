@@ -329,13 +329,16 @@ build moderna de `pdfjs-dist` está escrita para el navegador del día: al impor
 en Chrome < 122, Firefox < 131 e iOS < 18.4, y con un `import` estático se llevaba por delante
 la colección entera. La legacy tampoco lo cubre todo: no repone
 `ArrayBuffer.prototype.transferToFixedLength`, y sin `src/ui/assets/pdfjs-worker.js` las
-páginas salen **sin texto** en Windows 7, sin error en ninguna consola de la página. Al subir
+páginas salen **sin texto** en Windows 7, sin error en ninguna consola de la página. Ese
+envoltorio **reexporta `WorkerMessageHandler`**: si un worker no arranca, PDF.js lo importa en
+la página y lo busca ahí; sin la reexportación ningún PDF de la página vuelve a abrir. Al subir
 `pdfjs-dist`, `test/pdf-legacy.test.js` abre un PDF real en un proceso sin esas APIs; y antes
 de promocionar, pasa el PDF por un navegador antiguo de verdad (abajo).
 
 **El visor del alumno arranca en navegadores de 2020** (ADR-036): ES2021, sin `await` de
-nivel superior, sin campos de clase, sin `??=`/`||=`/`&&=` y sin *lookbehind* en una
-expresión regular. Una sola línea fuera de eso y el navegador no ejecuta **nada** de la página.
+nivel superior, sin campos de clase, sin `??=`/`||=`/`&&=`, sin *lookbehind* ni grupos con
+nombre en una expresión regular, y el resto de `SUELO_DEL_VISOR` (`eslint.config.js`). Una sola
+línea fuera de eso y el navegador no ejecuta **nada** de la página.
 Lo vigila `test/ui-compat.test.js` recorriendo los `import` desde cada entrada; un módulo nuevo
 del visor va también en la lista de `eslint.config.js`. Y `assets/compat.js` es ES5 a propósito:
 es lo que se ejecuta cuando todo lo demás falla. Cada entrada del visor pone

@@ -1572,7 +1572,12 @@ producción y dentro de un iframe de otro origen.
    `ArrayBuffer.prototype.transferToFixedLength` (Chrome 114, Firefox 122,
    Safari 17.4), con el que PDF.js serializa **cada fuente**; sin él, en
    Chromium 109 y Firefox 115 la página se dibujaba sin texto y PDF.js se
-   tragaba el error.
+   tragaba el error. El envoltorio reexporta `WorkerMessageHandler`: cuando un
+   worker no arranca —Firefox < 114 no los tiene de módulo, o falla la red—
+   PDF.js lo busca ahí para ejecutarlo en la página, y sin él ningún PDF de
+   esa página volvía a abrir. La página carga también los polyfills, que
+   reponen además el `for await` sobre `ReadableStream` (Chrome 124, Safari no
+   lo tiene) con el que `getTextContent` detecta los escaneados.
 3. Se sirven los CMaps, las fuentes estándar y, de `wasm/`, sólo los dos
    decodificadores en JavaScript (lista blanca en `src/app.js`), y
    `pdf-component.js` pasa sus URLs con `useWasm: false`.
@@ -1637,9 +1642,11 @@ pantalla quedaba en blanco, sin explicación, y el servidor no se enteraba. Del
 1. **Suelo del visor: navegadores de 2020** (Chrome 80, Firefox 74, Safari/iOS
    13.4). ES2021 sin `await` de nivel superior ni campos de clase, sin
    asignación lógica (Safari 14) ni *lookbehind* en expresiones regulares (Safari
-   16.4: no compila el módulo entero). Lo vigila `test/ui-compat.test.js`
-   recorriendo los `import` desde cada entrada, y `eslint.config.js` lo repite
-   para que lo marque el editor.
+   16.4: no compila el módulo entero), y sin lo que no entiende Firefox 74–79
+   (grupos con nombre, `\p{…}`, flag `s`, `export * as`) ni Safari 13 (BigInt).
+   La lista es `SUELO_DEL_VISOR` en `eslint.config.js`, que lo marca en el
+   editor; `test/ui-compat.test.js` la aplica a todo lo que piden las entradas
+   y comprueba que caza cada caso.
 2. **Guardia de arranque** (`src/ui/assets/compat.js`): ES5 y script clásico,
    antes que `hls.min.js` y que el módulo. Pone `replaceChildren` si falta; anota
    el primer fallo de un script; y en `load`, si el visor no dejó su marca
@@ -1649,8 +1656,10 @@ pantalla quedaba en blanco, sin explicación, y el servidor no se enteraba. Del
 3. **`POST /telemetry/compat`**: exige sesión, deja una línea `warn` en el log
    con el user-agent, la página y el motivo (enumerado y recortado) y responde
    204 siempre. No guarda nada propio ni el `sub` del alumno. Lo usan la
-   guardia, el visor de PDF cuando PDF.js no carga y el vídeo cuando el
-   navegador no puede reproducirlo.
+   guardia —«Visor sin arrancar»—, y el visor de PDF cuando PDF.js no carga y el
+   vídeo cuando el navegador no puede reproducirlo —«Visor sin poder con el PDF
+   o el vídeo»—: eso también pasa en un navegador al día, por un corte de red o
+   un vídeo que no se descodifica, y no debe contar como quien se queda fuera.
 4. **`<dialog>` con respaldo** en `dialog.js`: sin `showModal`, se abre como
    capa y su `form method="dialog"` se intercepta, porque si no se enviaría como
    un GET a `/lti/launch`.

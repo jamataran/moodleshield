@@ -56,7 +56,8 @@ test('con sesión deja una línea en el log, con el navegador, y responde 204', 
     assert.equal(respuesta.status, 204)
     assert.equal(srv.avisos.length, 1)
     const [{ datos, mensaje }] = srv.avisos
-    assert.equal(mensaje, 'Visor sin arrancar en este navegador')
+    assert.equal(mensaje, 'Visor sin poder con el PDF o el vídeo en este navegador',
+      'PDF.js o el vídeo también fallan en un navegador al día: no es «sin arrancar»')
     assert.deepEqual(datos.compat, { pagina: 'pdf', motivo: 'pdfjs', detalle: 'Iterator is not defined' })
     assert.match(datos.userAgent, /Firefox\/115/)
     assert.equal(datos.platformId, 'p1')
@@ -77,6 +78,27 @@ test('sin sesión no se escribe nada', async () => {
     })
     assert.equal(respuesta.status, 401)
     assert.equal(srv.avisos.length, 0, 'un endpoint que escribe en el log no puede quedar abierto a cualquiera')
+  } finally {
+    await srv.cerrar()
+  }
+})
+
+test('«Visor sin arrancar» es sólo de quien se queda fuera por el navegador', async () => {
+  const srv = await servidor()
+  try {
+    const token = issueSession({ sub: 'alumno', platformId: 'p1', isInstructor: false, mode: 'launch' })
+    for (const motivo of ['sin-modulos', 'sintaxis', 'medio']) {
+      await fetch(`${srv.url}/telemetry/compat`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pagina: 'video', motivo })
+      })
+    }
+    assert.deepEqual(srv.avisos.map((a) => a.mensaje), [
+      'Visor sin arrancar en este navegador',
+      'Visor sin arrancar en este navegador',
+      'Visor sin poder con el PDF o el vídeo en este navegador'
+    ])
   } finally {
     await srv.cerrar()
   }

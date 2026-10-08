@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   PDFJS_RECURSOS,
   crearCargadorPdfjs,
@@ -104,10 +105,55 @@ test('PDF.js se carga al abrir el documento y fija su worker', async () => {
 
 test('el worker envuelto pone los polyfills antes de cargar el de PDF.js', async () => {
   const envoltorio = await readFile(path.join(raiz, 'src/ui/assets/pdfjs-worker.js'), 'utf8')
-  const imports = [...envoltorio.matchAll(/^import '([^']+)'/gm)].map((m) => m[1])
-  assert.equal(imports.length, 2)
-  assert.match(imports[0], /^\.\/pdfjs-polyfills\.js\?v=/, 'primero los polyfills: los import se evalúan en orden')
-  assert.equal(imports[1], '/vendor/pdfjs/pdf.worker.min.mjs')
+  const modulos = [...envoltorio.matchAll(/^(?:import|export \{ WorkerMessageHandler \} from) '([^']+)'/gm)].map((m) => m[1])
+  assert.equal(modulos.length, 2)
+  assert.match(modulos[0], /^\.\/pdfjs-polyfills\.js\?v=/, 'primero los polyfills: los módulos se evalúan en orden')
+  assert.equal(modulos[1], '/vendor/pdfjs/pdf.worker.min.mjs')
+  assert.match(envoltorio, /^export \{ WorkerMessageHandler \} from '\/vendor\/pdfjs\/pdf\.worker\.min\.mjs'$/m,
+    'PDF.js lo busca aquí cuando no puede arrancar un worker')
+})
+
+// El envoltorio, con sus dos módulos resueltos a disco: es lo único que cambia
+// respecto al navegador, donde los sirve la aplicación.
+async function envoltorioEnDisco () {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'pdfjs-worker-'))
+  const fuente = (await readFile(path.join(raiz, 'src/ui/assets/pdfjs-worker.js'), 'utf8'))
+    .replace(/'\.\/pdfjs-polyfills\.js[^']*'/, `'${pathToFileURL(path.join(raiz, 'src/ui/assets/pdfjs-polyfills.js'))}'`)
+    .replace("'/vendor/pdfjs/pdf.worker.min.mjs'",
+      `'${pathToFileURL(path.join(raiz, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs'))}'`)
+  const fichero = path.join(dir, 'pdfjs-worker.mjs')
+  await writeFile(fichero, fuente)
+  return { dir, url: pathToFileURL(fichero).href }
+}
+
+test('si no arranca un worker, PDF.js ejecuta el envoltorio en la página y abre igual', async () => {
+  // Firefox < 114 no tiene workers de módulo, y a cualquiera le puede fallar la
+  // red al pedir el worker. PDF.js importa entonces `workerSrc` en la página y
+  // usa su `WorkerMessageHandler`; si no lo encuentra, ningún PDF de la página
+  // vuelve a abrir. En Node PDF.js va siempre por ese camino.
+  const { dir, url } = await envoltorioEnDisco()
+  try {
+    const codigo = `
+      const { PDFDocument, StandardFonts } = await import('@cantoo/pdf-lib')
+      const doc = await PDFDocument.create()
+      const fuente = await doc.embedFont(StandardFonts.Helvetica)
+      doc.addPage([300, 200]).drawText('Sin worker', { x: 20, y: 150, size: 14, font: fuente })
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.min.mjs')
+      pdfjs.GlobalWorkerOptions.workerSrc = ${JSON.stringify(url)}
+      const pdf = await pdfjs.getDocument({ data: await doc.save(), verbosity: 0 }).promise
+      const texto = (await (await pdf.getPage(1)).getTextContent()).items.map((item) => item.str).join('')
+      console.log(JSON.stringify({ texto }))
+    `
+    const salida = spawnSync(process.execPath, ['--input-type=module', '-e', codigo], {
+      cwd: raiz,
+      encoding: 'utf8',
+      timeout: 60_000
+    })
+    assert.equal(salida.status, 0, salida.stderr)
+    assert.equal(JSON.parse(salida.stdout.trim().split('\n').pop()).texto, 'Sin worker')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('sin transferToFixedLength el worker no compila ninguna fuente; con el polyfill, sí', () => {
@@ -150,6 +196,57 @@ test('el polyfill copia, recorta y rellena con ceros como el nativo', async () =
   assert.notEqual(transferToFixedLength.call(origen), origen, 'devuelve un búfer nuevo')
   assert.equal(Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'transferToFixedLength').enumerable, false,
     'el nativo no se toca: aquí existe y sigue sin ser enumerable')
+})
+
+test('sin streams iterables, getTextContent falla; con el polyfill, devuelve el texto', () => {
+  // Chrome < 124 y Safari no saben recorrer un ReadableStream con `for await`,
+  // y PDF.js lo hace en getTextContent: en Windows 7 un escaneado nunca
+  // enseñaba el aviso de accesibilidad.
+  const texto = (conPolyfill) => {
+    const codigo = `
+      delete ReadableStream.prototype[Symbol.asyncIterator]
+      delete ReadableStream.prototype.values
+      if (${conPolyfill}) await import('./src/ui/assets/pdfjs-polyfills.js')
+      const { PDFDocument, StandardFonts } = await import('@cantoo/pdf-lib')
+      const doc = await PDFDocument.create()
+      const fuente = await doc.embedFont(StandardFonts.Helvetica)
+      doc.addPage([300, 200]).drawText('Accesible', { x: 20, y: 150, size: 14, font: fuente })
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.min.mjs')
+      pdfjs.GlobalWorkerOptions.workerSrc = import.meta.resolve('pdfjs-dist/legacy/build/pdf.worker.min.mjs')
+      const pdf = await pdfjs.getDocument({ data: await doc.save(), verbosity: 0 }).promise
+      try {
+        const items = (await (await pdf.getPage(1)).getTextContent()).items
+        console.log(JSON.stringify({ texto: items.map((item) => item.str).join('') }))
+      } catch (err) {
+        console.log(JSON.stringify({ error: err.message }))
+      }
+    `
+    const salida = spawnSync(process.execPath, ['--input-type=module', '-e', codigo], {
+      cwd: raiz,
+      encoding: 'utf8',
+      timeout: 60_000
+    })
+    assert.equal(salida.status, 0, salida.stderr)
+    return JSON.parse(salida.stdout.trim().split('\n').pop())
+  }
+  assert.match(texto(false).error ?? '', /async iterable/,
+    'si esto cambia, PDF.js ya no recorre el stream con for await y el polyfill puede irse')
+  assert.equal(texto(true).texto, 'Accesible')
+})
+
+test('el polyfill de streams entrega cada trozo y, si se sale antes, cancela', async () => {
+  const { iterarStream } = await import('../src/ui/assets/pdfjs-polyfills.js')
+  const trozos = []
+  for await (const trozo of iterarStream.call(new ReadableStream({
+    start (c) { c.enqueue('a'); c.enqueue('b'); c.close() }
+  }))) trozos.push(trozo)
+  assert.deepEqual(trozos, ['a', 'b'])
+
+  let cancelado = false
+  const infinito = new ReadableStream({ pull (c) { c.enqueue('x') }, cancel () { cancelado = true } })
+  for await (const trozo of iterarStream.call(infinito)) { assert.equal(trozo, 'x'); break }
+  assert.equal(cancelado, true, 'como el nativo: un break cancela el stream')
+  assert.equal(infinito.locked, false, 'y lo suelta')
 })
 
 test('un fallo de carga se reintenta una vez, con otra URL, y después se da por perdido', async () => {

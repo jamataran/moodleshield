@@ -25,3 +25,43 @@ if (typeof ArrayBuffer.prototype.transferToFixedLength !== 'function') {
     value: transferToFixedLength
   })
 }
+
+/**
+ * PDF.js recorre los `ReadableStream` con `for await`: `getTextContent` en la
+ * página y la descompresión nativa en el worker. Chrome lo admite desde la 124 y
+ * Safari todavía no. En Windows 7 `getTextContent` lanzaba «is not async
+ * iterable» y un escaneado nunca enseñaba el aviso de accesibilidad; el worker
+ * sí se recupera solo, volviendo al descompresor en JS.
+ *
+ * Como el nativo, salir antes de tiempo (un `break`) cancela el stream.
+ */
+export async function * iterarStream (opciones) {
+  const lector = this.getReader()
+  let terminado = false
+  try {
+    for (;;) {
+      const { done, value } = await lector.read()
+      if (done) {
+        terminado = true
+        return
+      }
+      yield value
+    }
+  } finally {
+    if (!terminado && !opciones?.preventCancel) {
+      try { await lector.cancel() } catch { /* ya estaba cerrado o con error */ }
+    }
+    lector.releaseLock()
+  }
+}
+
+if (typeof ReadableStream === 'function' && typeof Symbol === 'function' && Symbol.asyncIterator &&
+    typeof ReadableStream.prototype[Symbol.asyncIterator] !== 'function') {
+  for (const nombre of [Symbol.asyncIterator, 'values']) {
+    Object.defineProperty(ReadableStream.prototype, nombre, {
+      configurable: true,
+      writable: true,
+      value: iterarStream
+    })
+  }
+}

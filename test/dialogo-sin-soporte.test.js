@@ -10,13 +10,22 @@ import { abrirDialogo } from '../src/ui/assets/dialog.js'
 
 const oyentesDocumento = {}
 globalThis.document = {
+  activeElement: null,
   addEventListener: (tipo, fn) => { (oyentesDocumento[tipo] ??= []).push(fn) }
+}
+
+function enfocable (nombre) {
+  const el = { nombre, focus: () => { globalThis.document.activeElement = el } }
+  return el
 }
 
 function dialogoFalso ({ nativo = false } = {}) {
   const oyentes = {}
   const atributos = new Set()
+  const boton = enfocable('Entendido')
   const dialogo = {
+    boton,
+    querySelector: () => boton,
     dataset: {},
     returnValue: 'ok-de-la-vez-anterior',
     clases: new Set(),
@@ -74,4 +83,14 @@ test('sin <dialog>, Escape cierra sin valor y reabrir no duplica los oyentes', (
   abrirDialogo(dialogo)
   assert.ok(dialogo.hasAttribute('open'))
   assert.equal(dialogo.oyentes.submit.length, submits)
+})
+
+test('sin <dialog>, el foco entra en el diálogo y vuelve adonde estaba al cerrarlo', () => {
+  const dialogo = dialogoFalso()
+  const enlace = enfocable('Aviso legal')
+  enlace.focus()
+  abrirDialogo(dialogo)
+  assert.equal(globalThis.document.activeElement, dialogo.boton, 'como showModal: el foco pasa al diálogo')
+  oyentesDocumento.keydown.at(-1)({ key: 'Escape' })
+  assert.equal(globalThis.document.activeElement, enlace, 'y al cerrar vuelve a lo que lo abrió')
 })

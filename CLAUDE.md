@@ -299,14 +299,17 @@ npm run test:integration:local
   porque qpdf también «repara» un fichero truncado y lo cuenta como avisos. Un
   aviso nuevo se rechaza con su texto en el log: léelo antes de ampliar la lista.
 - **El visor del alumno arranca en navegadores de 2020** (ADR-036): ES2021 sin
-  `await` de nivel superior, campos de clase, asignación lógica ni lookbehind; lo
+  `await` de nivel superior, campos de clase ni lo que lista `SUELO_DEL_VISOR`
+  en `eslint.config.js` (asignación lógica, lookbehind, grupos con nombre…); lo
   vigila `test/ui-compat.test.js`. `assets/compat.js` es ES5 y, si el visor no
   deja `window.__visorArrancado`, explica qué hacer y lo cuenta a
-  `POST /telemetry/compat`: una línea `Visor sin arrancar` en el log.
+  `POST /telemetry/compat`: una línea `Visor sin arrancar` en el log. Si arrancó
+  y falló PDF.js o el vídeo, la línea es `Visor sin poder con el PDF o el vídeo`.
 - **PDF.js va en su build legacy, con el worker envuelto y sin `import`
   estático** (ADR-035, #110). La moderna revienta al importarse en Chrome < 122,
   Firefox < 131 e iOS < 18.4, y un `import` estático tumbaba la colección entera.
   La legacy no repone `transferToFixedLength`: sin `assets/pdfjs-worker.js` las
-  páginas salen sin texto en Windows 7. Al subir `pdfjs-dist`, pasa
-  `test/pdf-legacy.test.js` y prueba un PDF en Chromium 109 y Firefox 115 reales
-  (receta en `docs/desarrollo.md`).
+  páginas salen sin texto en Windows 7, y ese envoltorio tiene que reexportar
+  `WorkerMessageHandler`, que es lo que PDF.js usa si el worker no arranca. Al
+  subir `pdfjs-dist`, pasa `test/pdf-legacy.test.js` y prueba un PDF en
+  Chromium 109 y Firefox 115 reales (receta en `docs/desarrollo.md`).
