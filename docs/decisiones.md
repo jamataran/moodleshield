@@ -1618,3 +1618,71 @@ producción y dentro de un iframe de otro origen.
 estático de `pdf-component.js`. Revertirlo devuelve el fallo de #110 en
 Windows 7, en las ESR de Firefox y en los iPhone sin la última actualización.
 Lo vigilan `test/pdf-legacy.test.js` y `test/integration/vendor-pdfjs.integration.js`.
+
+## ADR-036 · El visor arranca en navegadores de 2020 y, por debajo, nunca deja la pantalla en blanco
+
+**Estado**: aceptada · **Fecha**: 2026-10 · Issue #110 · Complementa a ADR-035
+
+**Contexto.** El visor del alumno son módulos ES servidos tal cual, sin
+compilar. Hasta octubre de 2026 nadie fijaba qué navegadores tenían que
+entenderlos, y el código fue usando lo último a mano: `await` en el nivel
+superior de `pdf.js` y `collection.js` (Safari 15, Chrome 89),
+`replaceChildren` al arrancar (Safari 14), `<dialog>` sin respaldo (Safari
+15.4). Un navegador que no entendía una línea no ejecutaba **ninguna**: la
+pantalla quedaba en blanco, sin explicación, y el servidor no se enteraba. Del
+10 % que no podía estudiar sólo se sabía lo que contaban los alumnos.
+
+**Decisión.**
+
+1. **Suelo del visor: navegadores de 2020** (Chrome 80, Firefox 74, Safari/iOS
+   13.4). ES2021 sin `await` de nivel superior ni campos de clase, sin
+   asignación lógica (Safari 14) ni *lookbehind* en expresiones regulares (Safari
+   16.4: no compila el módulo entero). Lo vigila `test/ui-compat.test.js`
+   recorriendo los `import` desde cada entrada, y `eslint.config.js` lo repite
+   para que lo marque el editor.
+2. **Guardia de arranque** (`src/ui/assets/compat.js`): ES5 y script clásico,
+   antes que `hls.min.js` y que el módulo. Pone `replaceChildren` si falta; anota
+   el primer fallo de un script; y en `load`, si el visor no dejó su marca
+   (`window.__visorArrancado`, que cada entrada pone al terminar su arranque
+   síncrono), explica qué hacer, ofrece la copia sellada de los PDF y lo cuenta
+   al servidor. Sin JavaScript, un `<noscript>` lo explica.
+3. **`POST /telemetry/compat`**: exige sesión, deja una línea `warn` en el log
+   con el user-agent, la página y el motivo (enumerado y recortado) y responde
+   204 siempre. No guarda nada propio ni el `sub` del alumno. Lo usan la
+   guardia, el visor de PDF cuando PDF.js no carga y el vídeo cuando el
+   navegador no puede reproducirlo.
+4. **`<dialog>` con respaldo** en `dialog.js`: sin `showModal`, se abre como
+   capa y su `form method="dialog"` se intercepta, porque si no se enviaría como
+   un GET a `/lti/launch`.
+
+**Razones.**
+
+- Transpilar con un empaquetador habría llegado más abajo, pero cambia lo que
+  recibe el 90 % que hoy funciona y añade una dependencia y un paso de build a la
+  imagen. Fijar el suelo y vigilarlo con pruebas es un cambio de unas líneas.
+- La marca y la guardia no dependen de temporizadores. Los módulos son
+  diferidos y su parte síncrona se ejecuta antes de `load`. Comprobado en
+  Chromium 109, Firefox 115 y Chrome 154: con el visor sano la marca está, y con
+  un módulo roto —la entrada o una dependencia— aparece el aviso y llega el
+  informe.
+- Medir antes de construir: un reproductor de respaldo para navegadores aún
+  más viejos (iOS 12, televisores anteriores a 2021) sólo se justifica si el log
+  demuestra que hay alumnos ahí.
+
+**Consecuencias.**
+
+- Un navegador por debajo del suelo ve qué hacer y, en los PDF, su copia
+  sellada; no ve el vídeo. Queda escrito en el log para decidir con datos.
+- Quien añada sintaxis nueva al visor lo sabrá en la CI, con el porqué en el
+  mensaje. Un módulo nuevo que entre en el visor tiene que figurar también en la
+  lista de `eslint.config.js`; la prueba lo exige.
+- El catálogo del profesor queda fuera de la guardia: tiene su propio `await`
+  de nivel superior y sus diálogos dependen de `close`. Si hace falta, será otra
+  tarea.
+
+**Cómo revertirlo.** Quitar `compat.js` de `player.html`, `pdf.html` y
+`collection.html` y la ruta `/compat` de `src/routes/telemetry.js`; volver a
+`dialog.showModal()` directo en `dialog.js`. Revertirlo vuelve a dejar en blanco,
+y sin rastro en el servidor, a quien no pueda arrancar el visor. Lo vigilan
+`test/ui-compat.test.js`, `test/telemetry-compat.test.js` y
+`test/dialogo-sin-soporte.test.js`.

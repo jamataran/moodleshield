@@ -298,6 +298,11 @@ npm run test:integration:local
   dañado (#97). `checkStructure` sólo acepta los avisos de una lista corta,
   porque qpdf también «repara» un fichero truncado y lo cuenta como avisos. Un
   aviso nuevo se rechaza con su texto en el log: léelo antes de ampliar la lista.
+- **El visor del alumno arranca en navegadores de 2020** (ADR-036): ES2021 sin
+  `await` de nivel superior, campos de clase, asignación lógica ni lookbehind; lo
+  vigila `test/ui-compat.test.js`. `assets/compat.js` es ES5 y, si el visor no
+  deja `window.__visorArrancado`, explica qué hacer y lo cuenta a
+  `POST /telemetry/compat`: una línea `Visor sin arrancar` en el log.
 - **PDF.js va en su build legacy, con el worker envuelto y sin `import`
   estático** (ADR-035, #110). La moderna revienta al importarse en Chrome < 122,
   Firefox < 131 e iOS < 18.4, y un `import` estático tumbaba la colección entera.

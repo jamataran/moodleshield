@@ -333,6 +333,15 @@ páginas salen **sin texto** en Windows 7, sin error en ninguna consola de la p�
 `pdfjs-dist`, `test/pdf-legacy.test.js` abre un PDF real en un proceso sin esas APIs; y antes
 de promocionar, pasa el PDF por un navegador antiguo de verdad (abajo).
 
+**El visor del alumno arranca en navegadores de 2020** (ADR-036): ES2021, sin `await` de
+nivel superior, sin campos de clase, sin `??=`/`||=`/`&&=` y sin *lookbehind* en una
+expresión regular. Una sola línea fuera de eso y el navegador no ejecuta **nada** de la página.
+Lo vigila `test/ui-compat.test.js` recorriendo los `import` desde cada entrada; un módulo nuevo
+del visor va también en la lista de `eslint.config.js`. Y `assets/compat.js` es ES5 a propósito:
+es lo que se ejecuta cuando todo lo demás falla. Cada entrada del visor pone
+`window.__visorArrancado = true` al terminar su arranque síncrono; sin esa línea, la guardia
+pinta su aviso encima de un visor que funciona.
+
 **Probar con un navegador antiguo de verdad.** Lo que más se usa por debajo de lo último:
 Chromium 109 (el último de Windows 7) y Firefox 115 ESR. Los dos corren en un Mac ARM sin
 instalar nada:
