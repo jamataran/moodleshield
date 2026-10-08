@@ -299,7 +299,8 @@ npm run test:integration:local
   porque qpdf también «repara» un fichero truncado y lo cuenta como avisos. Un
   aviso nuevo se rechaza con su texto en el log: léelo antes de ampliar la lista.
 - **El visor del alumno arranca en navegadores de 2020** (ADR-036): ES2021 sin
-  `await` de nivel superior, campos de clase, asignación lógica ni lookbehind; lo
+  `await` de nivel superior, campos de clase ni lo que lista `SUELO_DEL_VISOR`
+  en `eslint.config.js` (asignación lógica, lookbehind, grupos con nombre…); lo
   vigila `test/ui-compat.test.js`. `assets/compat.js` es ES5 y, si el visor no
   deja `window.__visorArrancado`, explica qué hacer y lo cuenta a
   `POST /telemetry/compat`: una línea `Visor sin arrancar` en el log.

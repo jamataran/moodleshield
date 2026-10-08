@@ -1642,9 +1642,11 @@ pantalla quedaba en blanco, sin explicación, y el servidor no se enteraba. Del
 1. **Suelo del visor: navegadores de 2020** (Chrome 80, Firefox 74, Safari/iOS
    13.4). ES2021 sin `await` de nivel superior ni campos de clase, sin
    asignación lógica (Safari 14) ni *lookbehind* en expresiones regulares (Safari
-   16.4: no compila el módulo entero). Lo vigila `test/ui-compat.test.js`
-   recorriendo los `import` desde cada entrada, y `eslint.config.js` lo repite
-   para que lo marque el editor.
+   16.4: no compila el módulo entero), y sin lo que no entiende Firefox 74–79
+   (grupos con nombre, `\p{…}`, flag `s`, `export * as`) ni Safari 13 (BigInt).
+   La lista es `SUELO_DEL_VISOR` en `eslint.config.js`, que lo marca en el
+   editor; `test/ui-compat.test.js` la aplica a todo lo que piden las entradas
+   y comprueba que caza cada caso.
 2. **Guardia de arranque** (`src/ui/assets/compat.js`): ES5 y script clásico,
    antes que `hls.min.js` y que el módulo. Pone `replaceChildren` si falta; anota
    el primer fallo de un script; y en `load`, si el visor no dejó su marca

@@ -20,7 +20,40 @@ const ui = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/ui
 const ENTRADAS = ['player.js', 'pdf.js', 'collection.js', 'pdfjs-worker.js']
 const PAGINAS = ['player.html', 'pdf.html', 'collection.html']
 
-/** Todos los módulos propios que carga el visor, siguiendo sus `import`. */
+/**
+ * Los módulos propios que pide `fuente`: `import`, `export … from` e `import()`
+ * con literal. Se leen del árbol sintáctico, no con una expresión regular, para
+ * no dejarse ninguna forma de pedir un módulo.
+ */
+function modulosPedidos (fuente, fichero) {
+  const rutas = []
+  const anotar = (nodo) => {
+    const ruta = nodo.source?.value
+    if (typeof ruta === 'string' && ruta.startsWith('./')) rutas.push(ruta.slice(2).replace(/\?.*$/, ''))
+  }
+  new Linter().verify(fuente, [{
+    files: ['**/*.js'],
+    languageOptions: { ecmaVersion: 'latest', sourceType: 'module' },
+    plugins: {
+      grafo: {
+        rules: {
+          modulos: {
+            create: () => ({
+              ImportDeclaration: anotar,
+              ExportNamedDeclaration: anotar,
+              ExportAllDeclaration: anotar,
+              ImportExpression: anotar
+            })
+          }
+        }
+      }
+    },
+    rules: { 'grafo/modulos': 'error' }
+  }], { filename: fichero })
+  return rutas
+}
+
+/** Todos los módulos propios que carga el visor, siguiendo lo que piden. */
 async function grafoDelVisor () {
   const vistos = new Set()
   const pendientes = [...ENTRADAS]
@@ -29,9 +62,7 @@ async function grafoDelVisor () {
     if (vistos.has(fichero)) continue
     vistos.add(fichero)
     const fuente = await readFile(path.join(ui, 'assets', fichero), 'utf8')
-    for (const [, ruta] of fuente.matchAll(/^import\s[^'"]*['"](\.\/[^'"?]+)/gm)) {
-      pendientes.push(ruta.slice(2))
-    }
+    pendientes.push(...modulosPedidos(fuente, fichero))
   }
   return [...vistos].sort()
 }
@@ -46,8 +77,44 @@ test('el visor del alumno no usa sintaxis que no entiendan los navegadores de 20
       rules: { 'no-restricted-syntax': ['error', ...SUELO_DEL_VISOR] }
     }], { filename: fichero })
     assert.deepEqual(problemas.map((p) => `${p.line}: ${p.message}`), [],
-      `${fichero}: nada de await de nivel superior, campos de clase, asignación lógica ni lookbehind`)
+      `${fichero}: sintaxis por encima de Chrome 80, Firefox 74 y Safari 13.4`)
   }
+})
+
+test('el suelo caza lo que dice cazar', () => {
+  // Cada línea compila en ES2021 y rompe el módulo entero en algún navegador
+  // del suelo. Si una deja de cazarse, el visor puede volver a quedar en blanco.
+  const casos = {
+    'let a; a ??= 1': 'Asignación lógica',
+    'export const r = /(?<=a)b/': 'Lookbehind',
+    'export const r = /(?<anio>\\d{4})/': 'Grupo con nombre',
+    'export const r = /\\p{L}/u': 'Grupo con nombre o \\p',
+    'export const r = /a.b/s': 'Flag s',
+    'export const n = 1n': 'BigInt',
+    "export * as todo from './dialog.js'": '`export * as`'
+  }
+  const linter = new Linter()
+  for (const [codigo, aviso] of Object.entries(casos)) {
+    const problemas = linter.verify(codigo, [{
+      files: ['**/*.js'],
+      languageOptions: { ecmaVersion: 2021, sourceType: 'module' },
+      rules: { 'no-restricted-syntax': ['error', ...SUELO_DEL_VISOR] }
+    }], { filename: 'caso.js' })
+    assert.equal(problemas.length, 1, `${codigo} → ${JSON.stringify(problemas.map((p) => p.message))}`)
+    assert.ok(problemas[0].message.startsWith(aviso), `${codigo} → ${problemas[0].message}`)
+  }
+  assert.deepEqual(linter.verify("export * from './dialog.js'; export const r = /(?:a)b/g", [{
+    files: ['**/*.js'],
+    languageOptions: { ecmaVersion: 2021, sourceType: 'module' },
+    rules: { 'no-restricted-syntax': ['error', ...SUELO_DEL_VISOR] }
+  }], { filename: 'caso.js' }), [], 'lo que sí entienden no se marca')
+})
+
+test('el grafo del visor sigue también los `export … from`', () => {
+  assert.deepEqual(
+    modulosPedidos("import a from './a.js?v=1'\nexport { b } from './b.js'\nexport * from './c.js'\nconst d = import('./d.js')\nexport * from '/vendor/x.mjs'", 'x.js'),
+    ['a.js', 'b.js', 'c.js', 'd.js']
+  )
 })
 
 test('eslint vigila el mismo suelo, para que lo marque el editor', async () => {

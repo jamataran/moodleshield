@@ -14,6 +14,22 @@ export const SUELO_DEL_VISOR = [
   {
     selector: 'Literal[regex.pattern=/\\(\\?<[=!]/]',
     message: 'Lookbehind en una expresión regular: Safari < 16.4 no compila el módulo entero.'
+  },
+  {
+    selector: 'Literal[regex.pattern=/\\(\\?<[^=!]|\\\\[pP]\\{/]',
+    message: 'Grupo con nombre o \\p{…} en una expresión regular: Firefox < 78 no compila el módulo entero.'
+  },
+  {
+    selector: 'Literal[regex.flags=/s/]',
+    message: 'Flag s (dotAll) en una expresión regular: Firefox < 78 no compila el módulo entero.'
+  },
+  {
+    selector: 'Literal[bigint]',
+    message: 'BigInt: Safari < 14 no lo entiende.'
+  },
+  {
+    selector: 'ExportAllDeclaration[exported]',
+    message: '`export * as`: Firefox < 80 y Safari < 14.1 no lo entienden.'
   }
 ]
 
