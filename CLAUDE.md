@@ -307,6 +307,7 @@ npm run test:integration:local
   estático** (ADR-035, #110). La moderna revienta al importarse en Chrome < 122,
   Firefox < 131 e iOS < 18.4, y un `import` estático tumbaba la colección entera.
   La legacy no repone `transferToFixedLength`: sin `assets/pdfjs-worker.js` las
-  páginas salen sin texto en Windows 7. Al subir `pdfjs-dist`, pasa
-  `test/pdf-legacy.test.js` y prueba un PDF en Chromium 109 y Firefox 115 reales
-  (receta en `docs/desarrollo.md`).
+  páginas salen sin texto en Windows 7, y ese envoltorio tiene que reexportar
+  `WorkerMessageHandler`, que es lo que PDF.js usa si el worker no arranca. Al
+  subir `pdfjs-dist`, pasa `test/pdf-legacy.test.js` y prueba un PDF en
+  Chromium 109 y Firefox 115 reales (receta en `docs/desarrollo.md`).

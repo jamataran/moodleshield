@@ -329,7 +329,9 @@ build moderna de `pdfjs-dist` está escrita para el navegador del día: al impor
 en Chrome < 122, Firefox < 131 e iOS < 18.4, y con un `import` estático se llevaba por delante
 la colección entera. La legacy tampoco lo cubre todo: no repone
 `ArrayBuffer.prototype.transferToFixedLength`, y sin `src/ui/assets/pdfjs-worker.js` las
-páginas salen **sin texto** en Windows 7, sin error en ninguna consola de la página. Al subir
+páginas salen **sin texto** en Windows 7, sin error en ninguna consola de la página. Ese
+envoltorio **reexporta `WorkerMessageHandler`**: si un worker no arranca, PDF.js lo importa en
+la página y lo busca ahí; sin la reexportación ningún PDF de la página vuelve a abrir. Al subir
 `pdfjs-dist`, `test/pdf-legacy.test.js` abre un PDF real en un proceso sin esas APIs; y antes
 de promocionar, pasa el PDF por un navegador antiguo de verdad (abajo).
 

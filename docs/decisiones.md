@@ -1572,7 +1572,12 @@ producción y dentro de un iframe de otro origen.
    `ArrayBuffer.prototype.transferToFixedLength` (Chrome 114, Firefox 122,
    Safari 17.4), con el que PDF.js serializa **cada fuente**; sin él, en
    Chromium 109 y Firefox 115 la página se dibujaba sin texto y PDF.js se
-   tragaba el error.
+   tragaba el error. El envoltorio reexporta `WorkerMessageHandler`: cuando un
+   worker no arranca —Firefox < 114 no los tiene de módulo, o falla la red—
+   PDF.js lo busca ahí para ejecutarlo en la página, y sin él ningún PDF de
+   esa página volvía a abrir. La página carga también los polyfills, que
+   reponen además el `for await` sobre `ReadableStream` (Chrome 124, Safari no
+   lo tiene) con el que `getTextContent` detecta los escaneados.
 3. Se sirven los CMaps, las fuentes estándar y, de `wasm/`, sólo los dos
    decodificadores en JavaScript (lista blanca en `src/app.js`), y
    `pdf-component.js` pasa sus URLs con `useWasm: false`.
