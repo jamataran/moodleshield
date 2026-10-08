@@ -599,10 +599,11 @@ async function renderCollectionLaunch ({ res, context, platform, identity, resou
   }
 
   // Una colección puede insertarse con material aún en cola. Si NADA está
-  // publicado todavía, no hay visor que enseñar: la página de espera se
-  // recarga sola, igual que el material suelto sin revisión activa. En cuanto
-  // haya al menos un ítem disponible se entra al visor, que enseña el resto
-  // como «preparándose» y los abre al publicarse.
+  // publicado todavía, no hay visor que enseñar: se responde la página de
+  // espera, igual que el material suelto sin revisión activa, que pide volver a
+  // abrir la actividad en unos minutos. En cuanto haya al menos un ítem
+  // disponible se entra al visor, que enseña el resto como «preparándose» y los
+  // abre al publicarse.
   const publicItems = items.map(publicItem)
   if (!publicItems.some((item) => item.available)) {
     if (publicItems.some((item) => item.processing)) {
@@ -864,12 +865,14 @@ ltiRouter.get('/config', (_req, res) => {
  *
  * Recargar la pestaña del visor, o volver a ella al cabo de un rato —en el
  * móvil el sistema la descarta y la recarga sola—, reenvía el formulario de
- * Moodle con un `state` ya gastado o un id_token caducado. Al alumno no le sirve
- * «State desconocido»: le sirve saber que tiene que volver a abrir la actividad
- * (#110). El resto son errores de configuración y conservan su mensaje técnico,
- * que es lo que necesita quien da de alta la plataforma.
+ * Moodle con un `state` ya gastado. Si el primer POST nunca llegó (un 502), el
+ * reenvío lleva el `state` sin gastar pero el id_token caducado: Moodle lo firma
+ * para 60 s. Al alumno no le sirve «State desconocido»: le sirve saber que tiene
+ * que volver a abrir la actividad (#110). El resto son errores de configuración
+ * —un `iat` en el futuro es un reloj desajustado— y conservan su mensaje
+ * técnico, que es lo que necesita quien da de alta la plataforma.
  */
-const LAUNCH_YA_USADO = new Set(['invalid_state', 'invalid_token_age'])
+const LAUNCH_YA_USADO = new Set(['invalid_state', 'expired_id_token'])
 
 export function paginaDeErrorLti (err) {
   if (LAUNCH_YA_USADO.has(err.code)) {
