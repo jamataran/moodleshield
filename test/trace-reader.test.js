@@ -7,13 +7,16 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import config from '../src/config.js'
-import { markFilter } from '../src/media/transcode.js'
+import { markFilter, outputScaleFilter } from '../src/media/transcode.js'
 import {
   classifySelf,
   classifyWithReference,
   decryptedVariantStream,
   ivFromKeyLine,
+  measureArtifactSize,
   median,
+  probeStreamSize,
+  referenceSize,
   regionBox,
   sampleRegionSeries,
   splitBimodal
@@ -272,5 +275,90 @@ test('e2e: el lector recupera el patrón exacto de una filtración sintética', 
       'el modo referencia debe recuperar el patrón pese al cambio de brillo')
   } finally {
     await rm(work, { recursive: true, force: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// El tamaño con el que se miden las referencias (#108).
+// ---------------------------------------------------------------------------
+
+test('las referencias se miden con el tamaño del artefacto, no con el de meta.json', () => {
+  // Un vertical de móvil: ffmpeg lo gira antes de codificar y meta.json se queda
+  // con las dimensiones codificadas de la fuente.
+  const girado = referenceSize({ artefacto: { width: 1080, height: 1920 }, meta: { width: 1920, height: 1080 } })
+  assert.deepEqual(girado, { width: 1080, height: 1920, origen: 'artefacto', difiere: true })
+  const igual = referenceSize({ artefacto: { width: 1280, height: 720 }, meta: { width: 1280, height: 720 } })
+  assert.equal(igual.difiere, false)
+  assert.deepEqual(referenceSize({ artefacto: null, meta: { width: 640, height: 360 } }),
+    { width: 640, height: 360, origen: 'meta', difiere: false }, 'sin poder medir, meta.json es el respaldo')
+  assert.equal(referenceSize({ artefacto: null, meta: {} }), null)
+})
+
+test('e2e: el tamaño del artefacto se mide sobre la variante descifrada', { skip, timeout: 60_000 }, async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'trace-size-'))
+  try {
+    // Un artefacto vertical, cifrado como lo publica el worker.
+    const claro = path.join(dir, 'claro.ts')
+    ffmpeg([
+      '-f', 'lavfi', '-i', 'testsrc=size=180x320:rate=24:duration=2',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-f', 'mpegts', claro
+    ])
+    const key = randomBytes(16)
+    const iv = randomBytes(16)
+    const cipher = createCipheriv('aes-128-cbc', key, iv)
+    await mkdir(path.join(dir, 'A'), { recursive: true })
+    await writeFile(path.join(dir, 'key.bin'), key)
+    await writeFile(path.join(dir, 'A', 'seg_0000.ts'), Buffer.concat([cipher.update(await readFile(claro)), cipher.final()]))
+    await writeFile(path.join(dir, 'A', 'index.m3u8'), [
+      '#EXTM3U',
+      `#EXT-X-KEY:METHOD=AES-128,URI="key",IV=0x${iv.toString('hex')}`,
+      '#EXTINF:2.0,', 'seg_0000.ts',
+      '#EXT-X-ENDLIST'
+    ].join('\n'))
+
+    assert.deepEqual(await measureArtifactSize({ dir }), { width: 180, height: 320 })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('e2e: con el tope puesto, un vertical de móvil girado queda dentro del tope', { skip, timeout: 60_000 }, async () => {
+  // El móvil graba 640×360 y apunta «gíralo 90°». ffprobe da las dimensiones
+  // codificadas —lo que ve outputScaleFilter y guarda meta.json— y ffmpeg gira
+  // el fotograma antes del -vf. Con el filtro antiguo salía 320×568.
+  const dir = await mkdtemp(path.join(tmpdir(), 'trace-giro-'))
+  try {
+    const fuente = path.join(dir, 'fuente.mp4')
+    const girado = path.join(dir, 'girado.mp4')
+    const salida = path.join(dir, 'salida.ts')
+    ffmpeg(['-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=24:duration=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', fuente])
+    ffmpeg(['-display_rotation', '90', '-i', fuente, '-c', 'copy', girado])
+    const filtro = outputScaleFilter({ width: 640, height: 360 }, 320)
+    ffmpeg(['-i', girado, '-vf', [...filtro, markFilter('A', 0.5)].join(','), '-c:v', 'libx264',
+      '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-f', 'mpegts', salida])
+    const tamano = JSON.parse(execFileSync(config.transcode.ffprobePath, [
+      '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'json', salida
+    ])).streams[0]
+    assert.deepEqual({ width: tamano.width, height: tamano.height }, { width: 180, height: 320 })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('si la variante se rompe a mitad, medir falla con su error en vez de tumbar el trazador', async () => {
+  // Un segmento que falta: el stream descifrado da error con ffprobe aún
+  // leyendo. Antes salía como excepción sin capturar, el trazador moría sin
+  // llegar a usar meta.json y ffprobe se quedaba esperando entrada. No hace
+  // falta ffprobe: basta un proceso que lea la entrada hasta el final.
+  const dir = await mkdtemp(path.join(tmpdir(), 'ffprobe-falso-'))
+  try {
+    const ffprobePath = path.join(dir, 'ffprobe')
+    await writeFile(ffprobePath, '#!/bin/sh\ncat > /dev/null\n', { mode: 0o755 })
+    const stdin = new Readable({ read () {} })
+    stdin.push(Buffer.alloc(188))
+    setTimeout(() => stdin.destroy(new Error('ENOENT: seg_0001.ts')), 20)
+    await assert.rejects(probeStreamSize({ stdin, ffprobePath }), /seg_0001/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
   }
 })

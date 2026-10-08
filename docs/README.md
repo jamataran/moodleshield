@@ -83,8 +83,8 @@ El manual completo, con los errores que verás y qué significan, está en
 ## Estado del proyecto
 
 **Producción: `v1.0.10`** (31 de agosto de 2026) · 21 migraciones en `test` ·
-**489 pruebas unitarias** (479 pasan, 10 se saltan sin las herramientas de la imagen del
-worker) y **182 de integración** contra PostgreSQL real · `npm audit` en 0.
+**539 pruebas unitarias** (527 pasan, 12 se saltan sin las herramientas de la imagen del
+worker) y **187 de integración** contra PostgreSQL real · `npm audit` en 0.
 
 El sistema está **en uso, sirviendo material real**. Lo que sigue no es una lista de
 funcionalidad por construir, sino el mapa de lo que hay:

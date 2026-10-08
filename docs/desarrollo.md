@@ -168,18 +168,19 @@ npm run test:integration
 npm run test:integration:local
 ```
 
-### Las 10 pruebas que se saltan solas
+### Las 12 pruebas que se saltan solas
 
-Nueve son de la cadena de PDF y una del lector forense con vídeo real. Necesitan `qpdf`,
+Nueve son de la cadena de PDF y tres del lector forense con vídeo real (una de ellas, la del vertical
+girado con el tope de resolución, #108). Necesitan `qpdf`,
 `pdfinfo`, `ghostscript` o `ffmpeg`, que viven en la imagen del worker y no necesariamente
-en tu Mac. Para ejecutar las de PDF de verdad:
+en tu Mac. Para ejecutarlas de verdad:
 
 ```bash
 docker run --rm -v "$PWD":/src:ro -w /work node:22-alpine sh -c '
-  apk add --no-cache -q qpdf poppler-utils ghostscript
+  apk add --no-cache -q ffmpeg qpdf poppler-utils ghostscript
   cp -r /src/src /src/test /src/package.json /work/
   mkdir -p /work/node_modules && cp -r /src/node_modules/. /work/node_modules/
-  node --test --test-reporter=spec test/pdf-processing.test.js'
+  node --test --test-reporter=spec test/pdf-processing.test.js test/trace-reader.test.js'
 ```
 
 Es exactamente el paso que ejecuta [`ci.yml`](../.github/workflows/ci.yml), así que si pasa

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 // tenerlo: parece que protege. Estas pruebas fijan lo que tiene que cortar y,
 // sobre todo, lo que NO puede cortar, porque un guardia que bloquea el trabajo
 // normal acaba desactivado.
-const { revisar } = await import('../.claude/hooks/guardia-datos.mjs')
+const { revisar, RUTAS_VIVAS } = await import('../.claude/hooks/guardia-datos.mjs')
 
 const bash = (command, env = {}) => revisar({ tool: 'Bash', input: { command }, env })
 const escribir = (file_path, env = {}, existe = () => true) =>
@@ -44,6 +44,54 @@ test('deja pasar el trabajo normal', () => {
   ]
   for (const comando of inocentes) {
     assert.equal(bash(comando).bloqueado, false, `no debería cortar: ${comando}`)
+  }
+})
+
+test('el código de src/media no es material; lo que hay en un árbol de datos, sí', () => {
+  // src/media/ se llama como el árbol de datos, pero es el programa que lo
+  // procesa: bloquearlo impedía arreglar el tope de resolución (#108).
+  const codigo = [
+    'src/media/transcode.js',
+    '/Users/alguien/moodleshield/src/media/trace-reader.js',
+    '/Users/alguien/moodleshield/.claude/worktrees/rama/src/media/playlist.js'
+  ]
+  for (const ruta of codigo) {
+    assert.equal(escribir(ruta).bloqueado, false, `es código, no material: ${ruta}`)
+  }
+  const material = [
+    'infra/local/data/media/videos/v1/meta.json',
+    '/srv/docker-apps/moodleshield/media/videos/v1/A/seg_0000.ts',
+    '/data/media/videos/v1/meta.json',
+    '/data/uploads/subida.bin',
+    'infra/prod/data/pgdata/PG_VERSION',
+    // Lo que se llame src/media pero viva dentro de los datos sigue siendo dato.
+    '/data/media/src/media/x.js',
+    '/srv/docker-apps/moodleshield/src/media/x.js',
+    'src/media/../../infra/local/data/media/x.js',
+    // Rodeos de escritura: se normalizan antes de mirarlos.
+    'infra/local/x/../data/src/media/a.js',
+    'infra//local/data/src/media/a.js',
+    '/srv/docker-apps/x/../moodleshield/src/media/a.js',
+    'media/src/media/a.js',
+    'media/videos/v1/meta.json',
+    'infra\\local\\data\\media\\x.ts',
+    // Y en src/media, sólo los ficheros de código.
+    'src/media/videos/v1/meta.json'
+  ]
+  for (const ruta of material) {
+    assert.equal(escribir(ruta).bloqueado, true, `es material: ${ruta}`)
+  }
+})
+
+test('una regla nueva de RUTAS_VIVAS corta también las escrituras, no sólo el rm', () => {
+  // La excepción del código de src/media no puede dejar fuera a las reglas que
+  // vengan: un guardia que se queda corto sin avisar es peor que no tenerlo.
+  RUTAS_VIVAS.push(/arbol-nuevo-de-datos/i)
+  try {
+    assert.equal(escribir('/srv/arbol-nuevo-de-datos/x.bin').bloqueado, true)
+    assert.equal(escribir('/srv/arbol-nuevo-de-datos/src/media/x.js').bloqueado, true)
+  } finally {
+    RUTAS_VIVAS.pop()
   }
 })
 

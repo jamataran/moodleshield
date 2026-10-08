@@ -41,7 +41,9 @@ se corta; escribe entonces el fichero con la herramienta de edición. Autorizar 
 del usuario y **por comando**: exporta `MOODLESHIELD_PERMITIR_DESTRUCTIVO` con un
 fragmento del comando concreto antes de abrir la sesión. Un valor genérico no
 abre nada, y una asignación en la propia línea tampoco: el hook hereda el entorno
-de quien abrió la sesión. Si salta, no busques rodeo: explícalo y que lo ejecute
+de quien abrió la sesión. El código de `src/media/` se edita con normalidad: lo que
+protege es el material de cualquier carpeta `media`, `uploads` o `pgdata` (#108).
+Si salta, no busques rodeo: explícalo y que lo ejecute
 quien opera el entorno.
 
 Lo que corta y —más importante— lo que **no** puede cortar está fijado en
@@ -288,10 +290,10 @@ npm run test:integration:local
   botón que dependa de ellos no hace nada. Usa `<dialog>` y ábrelo siempre por
   el helper que limpia `returnValue`, porque ese valor sobrevive entre aperturas
   y cerrar con Escape no lo toca. Lo vigila `test/ui-iframe.test.js`.
-- Las 9 pruebas de PDF —y una del lector forense— se saltan sin
+- Las 9 pruebas de PDF —y tres del lector forense— se saltan sin
   `qpdf`/`pdfinfo`/`gs`/`ffmpeg`: viven en la imagen del worker. El comando de
   Docker para ejecutarlas de verdad está en
-  [`docs/desarrollo.md`](docs/desarrollo.md#las-10-pruebas-que-se-saltan-solas).
+  [`docs/desarrollo.md`](docs/desarrollo.md#las-12-pruebas-que-se-saltan-solas).
 - **`qpdf --check` sale con 3 cuando hay avisos sin errores**, y avisa también
   de cosas inofensivas: el Quartz de macOS deja entradas xref «en uso» a offset
   0 y así llegó a producción un PDF de 51 páginas que el worker rechazó como
