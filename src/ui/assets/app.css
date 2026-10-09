@@ -617,6 +617,20 @@ dialog {
   padding: 1rem;
 }
 dialog::backdrop { background: rgb(0 0 0 / .5); }
+/* Sin `<dialog>` nativo (Safari < 15.4, Firefox < 98): el elemento sería un
+   bloque más de la página. Cerrado no se ve y abierto lo dibuja `dialog.js` como
+   capa; sin `inset` ni `rgb()` con barra, que esos navegadores no entienden. */
+dialog:not([open]) { display: none; }
+dialog.dialogo-sin-soporte[open] {
+  display: block;
+  position: fixed;
+  z-index: 1000;
+  top: 5vh;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .5);
+}
 dialog label { display: block; font-size: .875rem; color: var(--muted); margin-bottom: .2rem; }
 .dialog-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .8rem; }
 .dialog-error {
@@ -1278,6 +1292,19 @@ body.is-panel-hidden .viewer-sidebar { display: none; }
   box-shadow: 0 1px 4px rgb(0 0 0 / .35);
 }
 .pdf-page canvas { display: block; border-radius: 4px; }
+/* El visor no puede enseñar el documento (#110): la salida ocupa su sitio. Sólo
+   CSS que entiende un navegador antiguo, que es justo donde se va a ver. */
+.pdf-sin-visor { max-width: 36rem; margin: 2rem auto; background: var(--surface); }
+.pdf-sin-visor p { margin: 0 0 .6rem; }
+.pdf-sin-visor .pdf-sin-visor-titulo { font-weight: 600; }
+
+/* Guardia de arranque (`compat.js`): sólo se ve en un navegador que no pudo
+   arrancar el visor, así que lleva CSS que también entiende ése, y cada color
+   con su respaldo antes de la variable. */
+.compat-aviso { max-width: 40rem; margin: 2rem auto; background: #fff; background: var(--surface); }
+.compat-aviso p, .compat-aviso ul { margin: 0 0 .6rem; }
+.compat-aviso .compat-aviso-titulo { font-weight: 600; }
+.compat-aviso .compat-detalle { font-size: .75rem; word-wrap: break-word; }
 /*
  * Marca de fondo con la identidad, repetida sobre toda la hoja.
  *

@@ -1,3 +1,5 @@
+import { informarCompat } from './compat-informe.js?v=compat-1'
+
 const WATERMARK_POSITIONS = [
   ['7%', '9%'],
   ['61%', '12%'],
@@ -216,9 +218,66 @@ export function classifyHlsError (data, {
   if (data.type === 'mediaError') {
     if (mediaRecoveries === 0) return { action: 'recover', message: 'Recuperando la reproducción…' }
     if (mediaRecoveries < maxMediaRecoveries) return { action: 'swap', message: 'Recuperando la reproducción…' }
-    return { action: 'fatal', message: 'No se pudo reproducir el vídeo. Vuelve a abrir la actividad.' }
+    // Suele ser el navegador, no la red: Firefox en Windows 7, por ejemplo, no
+    // descodifica por encima de 1920×1088 (#108).
+    return {
+      action: 'fatal',
+      message: 'No se pudo reproducir el vídeo en este navegador. Vuelve a abrir la actividad o prueba con Chrome o Edge actualizados.'
+    }
   }
   return { action: 'fatal', message: 'No se pudo reproducir el vídeo. Vuelve a abrir la actividad.' }
+}
+
+/**
+ * Si el alumno quiere ver el vídeo, según lo que ha hecho y no según `paused`.
+ *
+ * En HLS nativo (iPhone hasta iOS 17.0) iOS no pide la playlist hasta el play.
+ * Si el alumno tarda más de lo que dura el billete `?pt=`, ese play falla, el
+ * componente pide otro billete y le da al <video> la fuente nueva… que lo deja
+ * en pausa. Sin recordar la intención, había que volver a pulsar (#110). La
+ * pausa que provoca la propia recuperación no cuenta como del alumno; la que
+ * pide él con el botón, sí, aunque llegue a mitad de la recuperación.
+ */
+export function createPlaybackIntent () {
+  let quiere = false
+  let recuperando = false
+  return {
+    get quiereReproducir () { return quiere },
+    get recuperando () { return recuperando },
+    alReproducir () { quiere = true },
+    alPausar () { if (!recuperando) quiere = false },
+    pausaDelAlumno () { quiere = false },
+    alTerminar () { quiere = false },
+    empiezaRecuperacion () { recuperando = true },
+    terminaRecuperacion () { recuperando = false }
+  }
+}
+
+/**
+ * Si el play() del alumno falla, ¿se le pide que vuelva a pulsar?
+ *
+ * En HLS nativo, no cuando el <video> ya tiene `error`: ese error lo atiende
+ * `onNativeError`, que renueva el billete y reanuda, o dice lo que toca. Y no
+ * basta con mirar si la recuperación empezó: WebKit rechaza la promesa de
+ * play() en cuanto falla la carga y deja el evento `error` en la cola, así que
+ * el `catch` del play corre ANTES que `onNativeError`.
+ */
+export function pedirOtroPlay ({ hlsNativo, recuperando, errorDelVideo }) {
+  if (recuperando) return false
+  return !(hlsNativo && errorDelVideo)
+}
+
+/**
+ * ¿Ha superado el HLS nativo el punto donde falló?
+ *
+ * Con `canplay` no basta para devolver el cupo de billetes desde que el
+ * componente reanuda solo: un segmento que falla siempre en el mismo sitio
+ * vuelve a dar `canplay` tras cada billete, y se repetirían billete y play()
+ * sin que nadie pulse. Lo demuestra avanzar más que un segmento pasado el
+ * fallo.
+ */
+export function cupoNativoRecuperado ({ falloEn, posicion, margen = 10 }) {
+  return falloEn !== null && Number.isFinite(posicion) && posicion > falloEn + margen
 }
 
 /**
@@ -232,7 +291,7 @@ export function classifyNativeError (mediaErrorCode, { attempts = 0, maxAttempts
   if (mediaErrorCode === 3) {
     return {
       action: 'fatal',
-      message: 'No se pudo descodificar el vídeo en este navegador. Vuelve a abrir la actividad.'
+      message: 'No se pudo descodificar el vídeo en este navegador. Actualiza el dispositivo o prueba con otro navegador, y vuelve a abrir la actividad.'
     }
   }
   if (attempts < maxAttempts) return { action: 'reticket', message: null }
@@ -484,16 +543,24 @@ export function createVideoView ({
     updateTimeline({ preserveThumb: false })
   }
 
+  const intencion = createPlaybackIntent()
+  let hlsNativo = false
+
   const togglePlayback = async () => {
     try {
       if (element.paused || element.ended) {
         if (element.ended) element.currentTime = 0
         await element.play()
       } else {
+        intencion.pausaDelAlumno()
         element.pause()
       }
     } catch {
-      status('No se pudo iniciar la reproducción. Vuelve a pulsar Reproducir.', true)
+      // En HLS nativo, el play que falla porque caducó el billete se recupera
+      // solo (más abajo): decir «vuelve a pulsar» sería mentir.
+      if (pedirOtroPlay({ hlsNativo, recuperando: intencion.recuperando, errorDelVideo: element.error })) {
+        status('No se pudo iniciar la reproducción. Vuelve a pulsar Reproducir.', true)
+      }
     }
   }
 
@@ -912,6 +979,7 @@ export function createVideoView ({
   // un `{ once: true }` por reintento: aquéllos apilaban su limpieza en
   // `cleanups` para siempre y podían encolar seeks duplicados.
   let nativeAttempts = 0
+  let nativeFailedAt = null
   let pendingResumeAt = 0
   const NATIVE_MAX_ATTEMPTS = 3
   listen(element, 'loadedmetadata', () => {
@@ -923,6 +991,7 @@ export function createVideoView ({
   const loadNativeHls = async ({ resumeAt = 0 } = {}) => {
     if (destroyed) return
     if (nativeAttempts >= NATIVE_MAX_ATTEMPTS) {
+      intencion.terminaRecuperacion()
       status('No se pudo iniciar la reproducción. Vuelve a abrir la actividad.', true)
       return
     }
@@ -938,7 +1007,11 @@ export function createVideoView ({
       if (destroyed || !ticket) return
       pendingResumeAt = resumeAt
       element.src = `${playlistUrl}?pt=${encodeURIComponent(ticket)}`
+      // WebKit levanta la restricción de reproducción con el primer play del
+      // alumno: este play() ya no necesita otro gesto.
+      if (intencion.quiereReproducir) element.play().catch(() => {})
     } catch {
+      intencion.terminaRecuperacion()
       status('No se pudo iniciar la reproducción. Vuelve a abrir la actividad.', true)
     }
   }
@@ -949,10 +1022,26 @@ export function createVideoView ({
       maxAttempts: NATIVE_MAX_ATTEMPTS
     })
     if (decision.action === 'ignore') return
-    if (decision.action === 'fatal') return status(decision.message, true)
+    if (decision.action === 'fatal') {
+      intencion.terminaRecuperacion()
+      if (element.error?.code === 3) {
+        informarCompat({ sessionToken, pagina: 'video', motivo: 'medio', detalle: 'MEDIA_ERR_DECODE (HLS nativo)' })
+      }
+      return status(decision.message, true)
+    }
     const resumeAt = Number.isFinite(element.currentTime) ? element.currentTime : 0
+    nativeFailedAt = resumeAt
+    intencion.empiezaRecuperacion()
     void loadNativeHls({ resumeAt })
   }
+  // El cupo del HLS nativo vuelve cuando el vídeo pasa del punto del fallo, no
+  // con `canplay` (ver `cupoNativoRecuperado`).
+  listen(element, 'timeupdate', () => {
+    if (cupoNativoRecuperado({ falloEn: nativeFailedAt, posicion: element.currentTime })) {
+      nativeAttempts = 0
+      nativeFailedAt = null
+    }
+  })
 
   // Un tropiezo superado devuelve el cupo de reintentos: la reproducción que se
   // recupera a mitad de vídeo no debe agotar el presupuesto para el siguiente.
@@ -963,8 +1052,11 @@ export function createVideoView ({
   listen(element, 'canplay', () => {
     networkRetries = 0
     mediaRecoveries = 0
-    nativeAttempts = 0
   })
+  listen(element, 'play', () => intencion.alReproducir())
+  listen(element, 'pause', () => intencion.alPausar())
+  listen(element, 'ended', () => intencion.alTerminar())
+  listen(element, 'playing', () => intencion.terminaRecuperacion())
 
   // Se prefiere hls.js cuando existe (T23): sus peticiones llevan la cabecera
   // Authorization y NINGÚN token viaja en la URL. El HLS nativo queda de
@@ -1014,15 +1106,21 @@ export function createVideoView ({
         hls.recoverMediaError()
       } else {
         // auth | fatal: no hay nada que reintentar con esta sesión.
+        if (decision.action === 'fatal' && data.type === 'mediaError') {
+          informarCompat({ sessionToken, pagina: 'video', motivo: 'medio', detalle: data.details })
+        }
         hls.destroy()
         hls = null
       }
     })
   } else if (element.canPlayType('application/vnd.apple.mpegurl')) {
+    hlsNativo = true
     listen(element, 'error', onNativeError)
     void loadNativeHls()
   } else {
-    status('Este navegador no puede reproducir HLS.', true)
+    // Ni Media Source ni HLS nativo, o un códec que no sabe descodificar.
+    status('Este navegador no puede reproducir el vídeo. Usa Chrome, Edge, Firefox o Safari en una versión reciente; en iPhone o iPad, actualiza iOS.', true)
+    informarCompat({ sessionToken, pagina: 'video', motivo: 'sin-hls', detalle: win.Hls ? 'hls.js sin Media Source' : 'sin hls.js' })
   }
 
   return {

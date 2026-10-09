@@ -83,8 +83,8 @@ El manual completo, con los errores que verás y qué significan, está en
 ## Estado del proyecto
 
 **Producción: `v1.0.10`** (31 de agosto de 2026) · 21 migraciones en `test` ·
-**489 pruebas unitarias** (479 pasan, 10 se saltan sin las herramientas de la imagen del
-worker) y **182 de integración** contra PostgreSQL real · `npm audit` en 0.
+**539 pruebas unitarias** (527 pasan, 12 se saltan sin las herramientas de la imagen del
+worker) y **187 de integración** contra PostgreSQL real · `npm audit` en 0.
 
 El sistema está **en uso, sirviendo material real**. Lo que sigue no es una lista de
 funcionalidad por construir, sino el mapa de lo que hay:
@@ -208,6 +208,7 @@ proponérselo a nadie. El detalle, con su motivo, está en
 | **Compartir** | Sólo entre profesores de la **misma** instancia Moodle, y por carpeta, colección o curso completo. No hay compartición con un profesor concreto ni entre instancias |
 | **Transcodificación** | Un ffmpeg por software a la vez. La aceleración por hardware está documentada pero **no probada** |
 | **Escalado** | Una réplica de app y un worker. Los límites de reproducción son por proceso |
+| **Navegadores** | El visor arranca en navegadores de 2020 (Chrome 80, Firefox 74, iOS 13.4) y el de PDF desde Chrome 94, Firefox 93 o iOS 16.4; por debajo de eso se ofrece la copia sellada. Por debajo de todo, un aviso de qué hacer y una línea en el log, nunca la pantalla en blanco (ADR-035, ADR-036) |
 | **Ciclo de vida** | Moodle **nunca avisa** cuando se borra una actividad. No existe callback |
 
 ---

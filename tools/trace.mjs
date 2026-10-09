@@ -29,7 +29,9 @@ import { MARK_GEOMETRY } from '../src/media/transcode.js'
 import {
   classifySelf,
   classifyWithReference,
+  measureArtifactSize,
   measureReferenceSeries,
+  referenceSize,
   regionBox,
   sampleRegionSeries
 } from '../src/media/trace-reader.js'
@@ -278,15 +280,29 @@ const [leakBR, leakBL] = await Promise.all([
 let observed
 let regionsReport
 if (mode === 'reference') {
-  if (!meta.width || !meta.height) {
-    console.error('El meta.json no guarda el tamaño del vídeo; usa --mode self.')
+  // Las cajas van con el tamaño REAL de los segmentos, no con el de meta.json,
+  // que es el de la fuente: con un vídeo girado o con el tope de resolución no
+  // coinciden y se mediría fuera de la marca (#108).
+  const artefacto = await measureArtifactSize({ dir }).catch((err) => {
+    console.error(`No se pudo medir el artefacto (${err.message}); se usa el tamaño de meta.json.`)
+    return null
+  })
+  const tamano = referenceSize({ artefacto, meta })
+  if (!tamano) {
+    console.error('Ni el artefacto ni meta.json dicen el tamaño del vídeo; usa --mode self.')
     process.exit(1)
+  }
+  if (tamano.difiere) {
+    console.error(
+      `El artefacto mide ${tamano.width}×${tamano.height} y meta.json dice ${meta.width}×${meta.height} ` +
+      '(vídeo girado o con tope de resolución): se usa el del artefacto.'
+    )
   }
   const refs = await measureReferenceSeries({
     dir,
     boxes: {
-      BR: regionBox('A', meta.width, meta.height, geometry),
-      BL: regionBox('B', meta.width, meta.height, geometry)
+      BR: regionBox('A', tamano.width, tamano.height, geometry),
+      BL: regionBox('B', tamano.width, tamano.height, geometry)
     },
     segmentSeconds: meta.segmentSeconds,
     framesPerSegment

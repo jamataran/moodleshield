@@ -168,18 +168,19 @@ npm run test:integration
 npm run test:integration:local
 ```
 
-### Las 10 pruebas que se saltan solas
+### Las 12 pruebas que se saltan solas
 
-Nueve son de la cadena de PDF y una del lector forense con vídeo real. Necesitan `qpdf`,
+Nueve son de la cadena de PDF y tres del lector forense con vídeo real (una de ellas, la del vertical
+girado con el tope de resolución, #108). Necesitan `qpdf`,
 `pdfinfo`, `ghostscript` o `ffmpeg`, que viven en la imagen del worker y no necesariamente
-en tu Mac. Para ejecutar las de PDF de verdad:
+en tu Mac. Para ejecutarlas de verdad:
 
 ```bash
 docker run --rm -v "$PWD":/src:ro -w /work node:22-alpine sh -c '
-  apk add --no-cache -q qpdf poppler-utils ghostscript
+  apk add --no-cache -q ffmpeg qpdf poppler-utils ghostscript
   cp -r /src/src /src/test /src/package.json /work/
   mkdir -p /work/node_modules && cp -r /src/node_modules/. /work/node_modules/
-  node --test --test-reporter=spec test/pdf-processing.test.js'
+  node --test --test-reporter=spec test/pdf-processing.test.js test/trace-reader.test.js'
 ```
 
 Es exactamente el paso que ejecuta [`ci.yml`](../.github/workflows/ci.yml), así que si pasa
@@ -323,6 +324,52 @@ despista: la captura de `canvas.drawImage(video, 0, 0, videoWidth, videoHeight)`
 porque lee el elemento, no el layout. `.video-stage` es `display: block` a propósito, y lo
 mide de verdad `test/video-stage-layout.test.js` con Chrome headless (se salta si no hay
 Chrome; en el runner de CI lo hay).
+
+**PDF.js: build legacy, worker envuelto y nunca un `import` estático** (ADR-035, #110). La
+build moderna de `pdfjs-dist` está escrita para el navegador del día: al importarse ya revienta
+en Chrome < 122, Firefox < 131 e iOS < 18.4, y con un `import` estático se llevaba por delante
+la colección entera. La legacy tampoco lo cubre todo: no repone
+`ArrayBuffer.prototype.transferToFixedLength`, y sin `src/ui/assets/pdfjs-worker.js` las
+páginas salen **sin texto** en Windows 7, sin error en ninguna consola de la página. Ese
+envoltorio **reexporta `WorkerMessageHandler`**: si un worker no arranca, PDF.js lo importa en
+la página y lo busca ahí; sin la reexportación ningún PDF de la página vuelve a abrir. Al subir
+`pdfjs-dist`, `test/pdf-legacy.test.js` abre un PDF real en un proceso sin esas APIs; y antes
+de promocionar, pasa el PDF por un navegador antiguo de verdad (abajo).
+
+**El visor del alumno arranca en navegadores de 2020** (ADR-036): ES2021, sin `await` de
+nivel superior, sin campos de clase, sin `??=`/`||=`/`&&=`, sin *lookbehind* ni grupos con
+nombre en una expresión regular, y el resto de `SUELO_DEL_VISOR` (`eslint.config.js`). Una sola
+línea fuera de eso y el navegador no ejecuta **nada** de la página.
+Lo vigila `test/ui-compat.test.js` recorriendo los `import` desde cada entrada; un módulo nuevo
+del visor va también en la lista de `eslint.config.js`. Y `assets/compat.js` es ES5 a propósito:
+es lo que se ejecuta cuando todo lo demás falla. Cada entrada del visor pone
+`window.__visorArrancado = true` al terminar su arranque síncrono; sin esa línea, la guardia
+pinta su aviso encima de un visor que funciona.
+
+**Node tiene que mantener las conexiones más que nginx.** El `upstream` del nginx del stack las
+reutiliza hasta 60 s (`keepalive_timeout` por defecto) y Node, por defecto, las cierra a los 5:
+cuando nginx reusaba una que Node estaba cerrando, el launch —un POST, que nginx no reintenta—
+respondía 502 de vez en cuando (#110). `src/server.js` fija `keepAliveTimeout` en 65 s; si
+cambias el upstream, que siga por encima. La contrapartida está en el apagado: `server.close()`
+sólo cierra las conexiones ociosas en ese instante, así que `shutdown()` cierra cada una en cuanto
+queda ociosa; si no, Docker mata el proceso a los 10 s sin cerrar la base. Lo vigila
+`test/lti-recarga.test.js`, que lee el `upstream` de la plantilla de nginx.
+
+**Probar con un navegador antiguo de verdad.** Lo que más se usa por debajo de lo último:
+Chromium 109 (el último de Windows 7) y Firefox 115 ESR. Los dos corren en un Mac ARM sin
+instalar nada:
+
+- Chromium 109: `https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1070065/chrome-mac.zip`.
+  En macOS reciente revienta con `--headless=new`: usa `--headless` (el modo antiguo) con
+  `--remote-debugging-port=0` para que no se cierre solo. No trae H.264: sirve para PDF y
+  colecciones, no para el vídeo. `--enable-logging=stderr --v=0` saca también la consola del
+  worker de PDF.js, que es donde aparecen estos fallos.
+- Firefox 115 ESR: el DMG de `https://ftp.mozilla.org/pub/firefox/releases/115.20.0esr/mac/es-ES/`,
+  montado con `hdiutil attach -readonly`; `-headless -no-remote -profile <dir>` con un perfil
+  propio (`media.autoplay.default` a 0 para el vídeo). Reproduce H.264 con el decodificador del
+  sistema.
+
+Sírvelos con la CSP de producción y dentro de un iframe de otro origen, como los abre Moodle.
 
 ---
 

@@ -1,4 +1,4 @@
-import { abrirDialogo } from './dialog.js?v=viewer-chrome-1'
+import { abrirDialogo } from './dialog.js?v=compat-1'
 
 /**
  * Armazón común de los visores del alumno.

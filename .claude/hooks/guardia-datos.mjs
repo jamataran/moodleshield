@@ -32,15 +32,35 @@
  */
 
 import { existsSync } from 'node:fs'
+import path from 'node:path'
 
 const DIRECTORIOS_DE_DATOS = /(^|[\s'"=/])(data|media|uploads|pgdata|\.staging|originals)([/\s'"]|$)/i
 
 /** Rutas cuyo borrado es siempre pérdida de material, estén donde estén. */
-const RUTAS_VIVAS = [
+export const RUTAS_VIVAS = [
   /infra\/(local|test|prod)\/data/i,
   /docker-apps\/moodleshield/i,
   /\/(media|uploads|pgdata)(\/|$)/i
 ]
+
+/**
+ * Un fichero de código de `src/media/` no es material: es el programa que lo
+ * procesa, y se llama igual que el árbol de datos por casualidad. Sin esta
+ * excepción no se podía editar `src/media/transcode.js` (#108). Sólo el
+ * fichero de código directamente en esa carpeta, y sólo si el resto de la ruta
+ * no está a su vez dentro de un árbol de datos.
+ */
+const CODIGO_FUENTE = /(^|\/)src\/(media|uploads|pgdata)\/[^/]+\.m?js$/i
+
+function escribeEnDatosVivos (ruta) {
+  // Absoluta y normalizada antes de mirarla: ni `x/../`, ni `//`, ni una ruta
+  // relativa esquivan las expresiones.
+  const absoluta = path.posix.resolve(process.cwd().replaceAll('\\', '/'), String(ruta).replaceAll('\\', '/'))
+  // Sólo se descuenta el fichero de código; el resto pasa por TODAS las reglas,
+  // también por las que se añadan a RUTAS_VIVAS.
+  const sinCodigo = absoluta.replace(CODIGO_FUENTE, '')
+  return RUTAS_VIVAS.some((r) => r.test(sinCodigo))
+}
 
 const SQL_DESTRUCTIVO = [
   { patron: /\bdrop\s+(table|column|schema|database|type)\b/i, que: 'DROP de una tabla, columna, esquema o base' },
@@ -121,7 +141,7 @@ function motivoPorRuta (ruta) {
       alternativa: 'Di qué clave hay que añadir y con qué valor; la añade quien opera el entorno.'
     }
   }
-  if (RUTAS_VIVAS.some((r) => r.test(ruta))) {
+  if (escribeEnDatosVivos(ruta)) {
     return {
       nombre: 'datos-vivos',
       motivo: 'escribe dentro del árbol de datos de un entorno, donde vive el material y no el código',

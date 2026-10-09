@@ -48,7 +48,7 @@
     </aside>
 
     <section class="viewer-main collection-main" aria-label="Material actual">
-      <div id="content" class="viewer-content"></div>
+      <div id="content" class="viewer-content"><noscript><p class="notice warning">Este material necesita JavaScript. Actívalo en el navegador y vuelve a abrir la actividad desde Moodle.</p></noscript></div>
     </section>
   </main>
 
@@ -63,6 +63,7 @@
   </dialog>
 
   <script id="bootstrap" type="application/json">{{BOOTSTRAP}}</script>
+  <script src="/assets/compat.js?v={{ASSET_VERSION}}"></script>
   <script src="/vendor/hls.min.js?v={{ASSET_VERSION}}"></script>
   <script type="module" src="/assets/collection.js?v={{ASSET_VERSION}}"></script>
 </body>

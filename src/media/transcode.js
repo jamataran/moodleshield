@@ -128,9 +128,14 @@ export function chooseOutputFps (sourceFps, fallback = config.transcode.fps) {
  * fotograma —más que 1080p— para verse dentro de un iframe de Moodle. Recortar
  * el lado largo a 1080 deja 0,87 Mpx: el mismo vídeo cuesta un tercio.
  *
- * `-2` en el otro lado mantiene la proporción y garantiza par, que es lo que
- * exige yuv420p. El recorte va ANTES de la marca, así que A y B siguen
- * recibiendo exactamente la misma imagen y sus cortes siguen coincidiendo.
+ * El filtro encaja el fotograma en un cuadrado de `limite` de lado sin decidir
+ * aquí cuál es el lado largo: `info` trae las dimensiones CODIFICADAS y ffmpeg
+ * gira el fotograma antes del `-vf`, así que un vertical de móvil grabado como
+ * 1920×1080 con rotación salía escalado en el eje equivocado, por encima del
+ * tope y además ampliado (#108). `force_divisible_by=2` garantiza par, que es
+ * lo que exige yuv420p, y como sólo se aplica cuando el lado largo pasa del
+ * límite, nunca amplía. Va ANTES de la marca, así que A y B siguen recibiendo
+ * exactamente la misma imagen y sus cortes siguen coincidiendo.
  */
 export function outputScaleFilter (info, longSide = config.transcode.maxOutputLongSide) {
   const limite = Number(longSide)
@@ -139,7 +144,7 @@ export function outputScaleFilter (info, longSide = config.transcode.maxOutputLo
   const alto = Number(info?.height)
   if (!Number.isFinite(ancho) || !Number.isFinite(alto) || ancho <= 0 || alto <= 0) return []
   if (Math.max(ancho, alto) <= limite) return []
-  return [ancho >= alto ? `scale=${limite}:-2` : `scale=-2:${limite}`]
+  return [`scale=${limite}:${limite}:force_original_aspect_ratio=decrease:force_divisible_by=2`]
 }
 
 /** Cota conservadora para las dos variantes, audio y sobrecarga HLS. */

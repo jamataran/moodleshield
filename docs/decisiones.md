@@ -1539,3 +1539,159 @@ la carpeta y en su carpeta, un estado válido también con la regla anterior. Lo
 vigilan las pruebas «ADR-034» de `test/integration/catalog.integration.js` y «la
 colección nueva admite la carpeta de otro profesor; la edición, no» de
 `test/ui-catalogo.test.js`.
+
+## ADR-035 · El visor de PDF sirve la build legacy de PDF.js, la carga al abrir el documento y, si no puede, ofrece la copia sellada
+
+**Estado**: aceptada · **Fecha**: 2026-10 · Issue #110 · Complementa a ADR-014 y ADR-017
+
+**Contexto.** En octubre de 2026, en producción, en torno al 10 % de los alumnos
+no podía estudiar desde Windows 7, móviles y aparatos sin actualizar. La causa
+principal estaba en `/vendor/pdfjs`, que servía la build **moderna** de PDF.js
+6.2.108, escrita para el navegador del día:
+
+- Al importarse ejecuta `Iterator.prototype.join`: `ReferenceError` en Chrome <
+  122, Firefox < 131 (las ESR 115 y 128 incluidas) e iOS < 18.4. Como el visor
+  de colección la importaba de forma estática a través de `pdf-component.js`,
+  en esos navegadores salían en blanco el PDF **y la colección entera**,
+  vídeos incluidos.
+- Más arriba usa sin polyfill `Promise.try`, `URL.parse`, `Response.bytes`…
+- Y, en todos los navegadores, PDF.js 6 sólo decodifica CCITT, JBIG2 y
+  JPEG2000 si recibe `wasmUrl`, que no se le pasaba: un escaneado en blanco y
+  negro —Ghostscript lo guarda en CCITT al normalizar (ADR-014)— salía en blanco.
+
+Se midió con motores reales, no sólo con la tabla de compatibilidad: Chromium
+109 (el último de Windows 7) y Firefox 115 ESR, antes y después, con la CSP de
+producción y dentro de un iframe de otro origen.
+
+**Decisión.**
+
+1. `/vendor/pdfjs` sirve `pdfjs-dist/legacy/build`: la misma versión, con
+   core-js reponiendo lo que falta.
+2. El worker va envuelto (`src/ui/assets/pdfjs-worker.js`): primero
+   `pdfjs-polyfills.js`, después el de PDF.js. La build legacy no repone
+   `ArrayBuffer.prototype.transferToFixedLength` (Chrome 114, Firefox 122,
+   Safari 17.4), con el que PDF.js serializa **cada fuente**; sin él, en
+   Chromium 109 y Firefox 115 la página se dibujaba sin texto y PDF.js se
+   tragaba el error. El envoltorio reexporta `WorkerMessageHandler`: cuando un
+   worker no arranca —Firefox < 114 no los tiene de módulo, o falla la red—
+   PDF.js lo busca ahí para ejecutarlo en la página, y sin él ningún PDF de
+   esa página volvía a abrir. La página carga también los polyfills, que
+   reponen además el `for await` sobre `ReadableStream` (Chrome 124, Safari no
+   lo tiene) con el que `getTextContent` detecta los escaneados.
+3. Se sirven los CMaps, las fuentes estándar y, de `wasm/`, sólo los dos
+   decodificadores en JavaScript (lista blanca en `src/app.js`), y
+   `pdf-component.js` pasa sus URLs con `useWasm: false`.
+4. PDF.js se importa al abrir el documento, no al cargar el módulo. Si no carga,
+   o el documento no abre, el visor ofrece en su sitio la copia sellada de
+   ADR-017; con la sesión caducada, sólo dice que hay que volver a Moodle.
+5. Ningún lienzo de página pasa de 2²⁴ píxeles, el máximo que dibuja Safari en
+   iOS.
+
+**Razones.**
+
+- La build legacy es la misma API y los mismos parches de seguridad. Dibuja
+  exactamente igual: medido en Chrome 154 con la CSP de producción, mismos
+  píxeles con una build y con otra.
+- Servir la moderna a los navegadores capaces y la legacy al resto se descartó:
+  la lista de «capaces» cambiaría con cada subida de `pdfjs-dist` y un error en
+  ella reproduciría justo este fallo.
+- No se abre la CSP a `'wasm-unsafe-eval'`: los decodificadores JavaScript
+  bastan para un visor y la CSP sigue sin compilar código.
+- La copia sellada ya es la salida oficial para estudiar fuera del visor
+  (ADR-017): ofrecerla cuando el visor no puede no expone nada nuevo.
+
+**Consecuencias.**
+
+- Unos 58 KB más en el módulo y 50 KB en el worker, comprimidos en el borde y
+  revalidados con 304.
+- En un navegador antiguo, core-js sustituye alguna función nativa (envuelve
+  `JSON.stringify` donde falta `JSON.rawJSON`, por ejemplo). El resultado es el
+  mismo, y en uno al día no toca nada.
+- Cada subida de `pdfjs-dist` puede añadir otra API sin reponer. Lo vigila
+  `test/pdf-legacy.test.js`, que abre un PDF real en un proceso sin esas APIs, y
+  merece una pasada del arnés con Chromium 109 y Firefox 115 (`docs/desarrollo.md`).
+  Cuando PDF.js reponga `transferToFixedLength`, la prueba lo dirá y el
+  polyfill sobra.
+- Un navegador anterior al suelo de la build legacy (Chrome 94, Firefox 93,
+  Safari 16.4: usa bloques `static {}`) ya no deja la colección en blanco:
+  enseña los vídeos y ofrece la copia del PDF.
+- Los decodificadores JavaScript de JPEG2000 y JBIG2 son más lentos que el
+  WebAssembly. Para el tamaño de un apunte no se nota.
+
+**Cómo revertirlo.** Volver a montar `pdfjs-dist/build` en `src/app.js`, fijar
+`workerSrc` a `/vendor/pdfjs/pdf.worker.min.mjs` y recuperar el `import`
+estático de `pdf-component.js`. Revertirlo devuelve el fallo de #110 en
+Windows 7, en las ESR de Firefox y en los iPhone sin la última actualización.
+Lo vigilan `test/pdf-legacy.test.js` y `test/integration/vendor-pdfjs.integration.js`.
+
+## ADR-036 · El visor arranca en navegadores de 2020 y, por debajo, nunca deja la pantalla en blanco
+
+**Estado**: aceptada · **Fecha**: 2026-10 · Issue #110 · Complementa a ADR-035
+
+**Contexto.** El visor del alumno son módulos ES servidos tal cual, sin
+compilar. Hasta octubre de 2026 nadie fijaba qué navegadores tenían que
+entenderlos, y el código fue usando lo último a mano: `await` en el nivel
+superior de `pdf.js` y `collection.js` (Safari 15, Chrome 89),
+`replaceChildren` al arrancar (Safari 14), `<dialog>` sin respaldo (Safari
+15.4). Un navegador que no entendía una línea no ejecutaba **ninguna**: la
+pantalla quedaba en blanco, sin explicación, y el servidor no se enteraba. Del
+10 % que no podía estudiar sólo se sabía lo que contaban los alumnos.
+
+**Decisión.**
+
+1. **Suelo del visor: navegadores de 2020** (Chrome 80, Firefox 74, Safari/iOS
+   13.4). ES2021 sin `await` de nivel superior ni campos de clase, sin
+   asignación lógica (Safari 14) ni *lookbehind* en expresiones regulares (Safari
+   16.4: no compila el módulo entero), y sin lo que no entiende Firefox 74–79
+   (grupos con nombre, `\p{…}`, flag `s`, `export * as`) ni Safari 13 (BigInt).
+   La lista es `SUELO_DEL_VISOR` en `eslint.config.js`, que lo marca en el
+   editor; `test/ui-compat.test.js` la aplica a todo lo que piden las entradas
+   y comprueba que caza cada caso.
+2. **Guardia de arranque** (`src/ui/assets/compat.js`): ES5 y script clásico,
+   antes que `hls.min.js` y que el módulo. Pone `replaceChildren` si falta; anota
+   el primer fallo de un script; y en `load`, si el visor no dejó su marca
+   (`window.__visorArrancado`, que cada entrada pone al terminar su arranque
+   síncrono), explica qué hacer, ofrece la copia sellada de los PDF y lo cuenta
+   al servidor. Sin JavaScript, un `<noscript>` lo explica.
+3. **`POST /telemetry/compat`**: exige sesión, deja una línea `warn` en el log
+   con el user-agent, la página y el motivo (enumerado y recortado) y responde
+   204 siempre. No guarda nada propio ni el `sub` del alumno. Lo usan la
+   guardia —«Visor sin arrancar»—, y el visor de PDF cuando PDF.js no carga y el
+   vídeo cuando el navegador no puede reproducirlo —«Visor sin poder con el PDF
+   o el vídeo»—: eso también pasa en un navegador al día, por un corte de red o
+   un vídeo que no se descodifica, y no debe contar como quien se queda fuera.
+4. **`<dialog>` con respaldo** en `dialog.js`: sin `showModal`, se abre como
+   capa y su `form method="dialog"` se intercepta, porque si no se enviaría como
+   un GET a `/lti/launch`.
+
+**Razones.**
+
+- Transpilar con un empaquetador habría llegado más abajo, pero cambia lo que
+  recibe el 90 % que hoy funciona y añade una dependencia y un paso de build a la
+  imagen. Fijar el suelo y vigilarlo con pruebas es un cambio de unas líneas.
+- La marca y la guardia no dependen de temporizadores. Los módulos son
+  diferidos y su parte síncrona se ejecuta antes de `load`. Comprobado en
+  Chromium 109, Firefox 115 y Chrome 154: con el visor sano la marca está, y con
+  un módulo roto —la entrada o una dependencia— aparece el aviso y llega el
+  informe.
+- Medir antes de construir: un reproductor de respaldo para navegadores aún
+  más viejos (iOS 12, televisores anteriores a 2021) sólo se justifica si el log
+  demuestra que hay alumnos ahí.
+
+**Consecuencias.**
+
+- Un navegador por debajo del suelo ve qué hacer y, en los PDF, su copia
+  sellada; no ve el vídeo. Queda escrito en el log para decidir con datos.
+- Quien añada sintaxis nueva al visor lo sabrá en la CI, con el porqué en el
+  mensaje. Un módulo nuevo que entre en el visor tiene que figurar también en la
+  lista de `eslint.config.js`; la prueba lo exige.
+- El catálogo del profesor queda fuera de la guardia: tiene su propio `await`
+  de nivel superior y sus diálogos dependen de `close`. Si hace falta, será otra
+  tarea.
+
+**Cómo revertirlo.** Quitar `compat.js` de `player.html`, `pdf.html` y
+`collection.html` y la ruta `/compat` de `src/routes/telemetry.js`; volver a
+`dialog.showModal()` directo en `dialog.js`. Revertirlo vuelve a dejar en blanco,
+y sin rastro en el servidor, a quien no pueda arrancar el visor. Lo vigilan
+`test/ui-compat.test.js`, `test/telemetry-compat.test.js` y
+`test/dialogo-sin-soporte.test.js`.
