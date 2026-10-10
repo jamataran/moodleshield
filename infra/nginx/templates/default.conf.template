@@ -35,6 +35,23 @@ server {
     listen 8080;
     server_name _;
 
+    # IP del alumno (#109). Delante va el proxy de borde del operador (Plesk,
+    # Caddy…), que añade la del cliente a X-Forwarded-For; sin esto
+    # `$remote_addr` era la del borde y toda la plataforma compartía una IP: un
+    # solo cupo de aperturas y un registro forense sin la IP de nadie. Sólo se
+    # cree a un salto con dirección privada, que no es alcanzable desde
+    # Internet: el gateway publica en loopback o en la red interna. Con
+    # `real_ip_recursive`, lo que un cliente escriba a la izquierda de la cadena
+    # no cuenta: se toma la última IP que no es de confianza.
+    set_real_ip_from 127.0.0.0/8;
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    set_real_ip_from ::1/128;
+    set_real_ip_from fc00::/7;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
     # El TLS lo termina el túnel (Cloudflare / Tailscale) o el proxy externo.
     # Aquí sólo se habla HTTP dentro de la red de Docker.
 

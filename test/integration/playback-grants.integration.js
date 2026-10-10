@@ -86,3 +86,44 @@ test('T30: deshabilitar una plataforma revoca inmediatamente sus grants', async 
   const row = await one('SELECT revoked_reason FROM playback_grant WHERE jti=$1', [session.jti])
   assert.equal(row.revoked_reason, 'platform_disabled')
 })
+
+test('#109: una IP que dejó de usarse fuera de la ventana no cuenta', async () => {
+  // La prueba anterior deshabilita la plataforma.
+  await query('UPDATE lti_platform SET enabled=true WHERE id=$1', [PLATFORM_ID])
+  const previous = config.playback.revokeOnSuspicion
+  config.playback.revokeOnSuspicion = true
+  try {
+    const session = await newGrant('movil')
+    for (const ip of ['192.0.2.21', '192.0.2.22', '192.0.2.23']) {
+      await touchPlaybackGrant({ ...session, jti: session.jti, ip })
+    }
+    await query(
+      `UPDATE playback_grant_ip SET last_seen_at = now() - interval '1 hour'
+        WHERE grant_jti=$1 AND ip IN ('192.0.2.21','192.0.2.22')`,
+      [session.jti]
+    )
+    await touchPlaybackGrant({ ...session, jti: session.jti, ip: '192.0.2.24' })
+    const row = await one('SELECT revoked_at FROM playback_grant WHERE jti=$1', [session.jti])
+    assert.equal(row.revoked_at, null)
+  } finally {
+    config.playback.revokeOnSuspicion = previous
+  }
+})
+
+test('#109: las direcciones IPv6 de un mismo /64 son una sola IP', async () => {
+  const previous = config.playback.revokeOnSuspicion
+  config.playback.revokeOnSuspicion = true
+  try {
+    const session = await newGrant('ipv6')
+    for (let i = 1; i <= 6; i++) {
+      await touchPlaybackGrant({ ...session, jti: session.jti, ip: `2001:db8:5:7::${i}` })
+    }
+    const { count } = await one(
+      'SELECT count(*)::int AS count FROM playback_grant_ip WHERE grant_jti=$1',
+      [session.jti]
+    )
+    assert.equal(count, 1)
+  } finally {
+    config.playback.revokeOnSuspicion = previous
+  }
+})

@@ -11,10 +11,25 @@ export class PlaybackGrantError extends Error {
   }
 }
 
-function normalizedIp (value) {
+/**
+ * Clave con la que se cuenta una IP. IPv6 se agrupa por su /64: un móvil rota
+ * la parte baja de su dirección (privacidad) sin cambiar de red, y contarlas
+ * por separado revocaba al alumno a mitad de vídeo (#109).
+ */
+export function normalizedIp (value) {
   let ip = String(value ?? '').trim()
   if (ip.startsWith('::ffff:') && isIP(ip.slice(7)) === 4) ip = ip.slice(7)
-  return isIP(ip) ? ip : null
+  const version = isIP(ip)
+  if (version === 4) return ip
+  if (version !== 6) return null
+  const [cabeza, cola = ''] = ip.split('::')
+  const partes = cabeza ? cabeza.split(':') : []
+  const resto = cola ? cola.split(':') : []
+  const grupos = ip.includes('::')
+    ? [...partes, ...Array(8 - partes.length - resto.length).fill('0'), ...resto]
+    : partes
+  const prefijo = grupos.slice(0, 4).map((g) => Number.parseInt(g, 16).toString(16))
+  return `${prefijo.join(':')}::/64`
 }
 
 /** Registra el jti antes de entregar el token al navegador. */
@@ -92,8 +107,9 @@ export async function touchPlaybackGrant ({ jti, platformId, sub, ip }) {
         )
       }
       const countResult = await client.query(
-        'SELECT count(*)::int AS count FROM playback_grant_ip WHERE grant_jti=$1',
-        [jti]
+        `SELECT count(*)::int AS count FROM playback_grant_ip
+          WHERE grant_jti=$1 AND last_seen_at > now() - make_interval(secs => $2)`,
+        [jti, config.playback.distinctIpsWindowSeconds]
       )
       const distinctIps = countResult.rows[0].count
       if (distinctIps > config.playback.maxDistinctIps) {
