@@ -1695,3 +1695,33 @@ pantalla quedaba en blanco, sin explicación, y el servidor no se enteraba. Del
 y sin rastro en el servidor, a quien no pueda arrancar el visor. Lo vigilan
 `test/ui-compat.test.js`, `test/telemetry-compat.test.js` y
 `test/dialogo-sin-soporte.test.js`.
+
+## ADR-037 · La IP del alumno llega desde el proxy de borde, y la revocación por IPs mira sólo la última ventana
+
+**Contexto (#109).** En producción no hay CDN: delante va el nginx de Plesk, que
+añade la IP del cliente a `X-Forwarded-For`. El nginx del stack la reescribía con
+`$remote_addr` (la del borde) y la app, con `TRUST_PROXY='1'` como cadena, no se
+fiaba ni de ese salto: Express compila la cadena como la IP `0.0.0.1`. Toda la
+plataforma compartía una IP, y con ella un solo cupo de aperturas
+(`RATE_LIMIT_PUBLIC_AUTH_15M`) y un registro forense sin la IP de nadie.
+
+**Decisión.**
+1. El nginx del stack resuelve la IP con `real_ip`: se fía de un salto con
+   dirección privada o de loopback y, con `real_ip_recursive`, toma la última IP
+   de la cadena que no es de confianza. Lo que un cliente escriba a la izquierda
+   no cuenta (lo que V-13 quería evitar sigue evitado). Después sigue
+   reescribiendo `X-Forwarded-For` con `$remote_addr`, ya la del alumno.
+2. `TRUST_PROXY` entero se pasa a Express como número (`parseTrustProxy`).
+3. La revocación por «más de N IPs» sólo cuenta las vistas en los últimos
+   `PLAYBACK_DISTINCT_IPS_WINDOW_SECONDS` (900), y una IPv6 cuenta por su /64.
+   Con la IP real, un móvil que cambia de wifi a datos o rota su IPv6 ya no
+   pierde la sesión; un token compartido sí se usa desde varias redes a la vez.
+
+**Complementa a ADR-019**, que sigue valiendo detrás de Cloudflare.
+
+**Qué le pasa a lo desplegado.** Nada que rehacer. Las sesiones abiertas siguen;
+desde el despliegue, el log, el chip y el registro forense muestran la IP del
+alumno, y el límite de aperturas pasa a ser por alumno.
+
+**Cómo revertir.** Quitar el bloque `real_ip` de `default.conf.template`
+devuelve el comportamiento anterior; la ventana se puede alargar por variable.

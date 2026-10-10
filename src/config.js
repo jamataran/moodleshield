@@ -34,6 +34,19 @@ function integer (name, fallback) {
   return n
 }
 
+/**
+ * Express sólo trata un **número** como saltos de proxy: la cadena `'1'` la
+ * compila `proxy-addr` como la IP `0.0.0.1` y no confía en nadie (#109). Las
+ * demás formas (`loopback`, CIDR, `true`) pasan como texto o booleano.
+ */
+export function parseTrustProxy (raw) {
+  const value = String(raw ?? '').trim()
+  if (/^\d+$/.test(value)) return Number(value)
+  if (value === 'true') return true
+  if (value === 'false') return false
+  return value
+}
+
 function bool (name, fallback = false) {
   const raw = process.env[name]
   if (raw === undefined || raw === '') return fallback
@@ -162,7 +175,7 @@ export const config = {
     port: integer('PORT', 3000),
     host: optional('HOST', '0.0.0.0'),
     /** Confiar en X-Forwarded-* porque siempre hay un proxy delante. */
-    trustProxy: optional('TRUST_PROXY', '1'),
+    trustProxy: parseTrustProxy(optional('TRUST_PROXY', '1')),
     bodyLimit: optional('BODY_LIMIT', '256kb')
   },
 
@@ -223,6 +236,12 @@ export const config = {
   playback: {
     /** La cuarta IP distinta en una misma sesión se considera reutilización. */
     maxDistinctIps: integer('PLAYBACK_MAX_DISTINCT_IPS', 3),
+    /**
+     * Sólo cuentan las IPs vistas en esta ventana. Un móvil que pasa de wifi a
+     * datos a lo largo de una tarde no suma IPs para siempre; un token
+     * compartido sí se usa desde varias a la vez (#109).
+     */
+    distinctIpsWindowSeconds: integer('PLAYBACK_DISTINCT_IPS_WINDOW_SECONDS', 15 * 60),
     /** En producción corta automáticamente una sesión sospechosa. */
     revokeOnSuspicion: bool('PLAYBACK_REVOKE_ON_SUSPICION', isProduction),
     /** Conserva el rastro tras caducar para investigación y después lo purga. */
