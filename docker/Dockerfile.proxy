@@ -43,6 +43,14 @@ ARG APP_VERSION=dev
 # imágenes, y se acepta a propósito: es un proxy que termina TLS.
 RUN apk upgrade --no-cache
 
+# `worker_processes auto` cuenta las CPU del host, no las del contenedor: en
+# un host de 32 vCPU arrancaba 32 workers para un tráfico que cabe holgado en
+# uno. Cuatro dan paralelismo de sobra y acotan la memoria de núcleo (sockets,
+# epoll) que se carga al `mem_limit` del proxy. El `grep` hace fallar el build
+# si la imagen base cambia esa línea y el `sed` deja de encontrarla.
+RUN sed -i -E 's/^worker_processes[[:space:]]+auto;$/worker_processes 4;/' /etc/nginx/nginx.conf \
+ && grep -qx 'worker_processes 4;' /etc/nginx/nginx.conf
+
 COPY infra/nginx/templates/ /etc/nginx/templates/
 COPY infra/nginx/proxy_headers.conf /etc/nginx/proxy_headers.conf
 
