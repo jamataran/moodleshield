@@ -28,7 +28,7 @@ const generador = await readFile(path.join(root, 'scripts/generate-env.sh'), 'ut
 /** Las variables que `src/config.js` lee del entorno, por sus helpers. */
 function variablesLeidas (source) {
   const nombres = new Set()
-  const helpers = /(?:required|optional|integer|bool|list|secret)\(\s*'([A-Z0-9_]+)'/g
+  const helpers = /(?:required|optional|integer|threadCount|bool|list|secret)\(\s*'([A-Z0-9_]+)'/g
   for (const [, nombre] of source.matchAll(helpers)) nombres.add(nombre)
   return nombres
 }

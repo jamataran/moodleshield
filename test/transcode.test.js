@@ -8,6 +8,7 @@ import {
   colorFilters,
   estimateVideoArtifactBytes,
   outputScaleFilter,
+  threadArgs,
   validateProbeData
 } from '../src/media/transcode.js'
 
@@ -168,4 +169,15 @@ test('ffprobe sólo admite duración, resolución, fps y pistas acotadas', () =>
       { codec_type: 'audio', channels: 64 }
     ]
   }), probeLimits), /canales/)
+})
+
+test('los hilos de ffmpeg sólo se acotan si se pide, y en las dos mitades', () => {
+  // Sin tope no se pasa nada: es como ha transcodificado siempre.
+  assert.deepEqual(threadArgs(0), { input: [], output: [] })
+  // Con tope, el decodificador y los filtros (antes de -i) y x264 (después).
+  // Si faltara una mitad, esa parte seguiría abriendo un hilo por CPU del host.
+  assert.deepEqual(threadArgs(4), {
+    input: ['-threads', '4', '-filter_threads', '4'],
+    output: ['-threads', '4']
+  })
 })

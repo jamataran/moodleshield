@@ -327,6 +327,8 @@ No uses un `.env` de producción en test.
 | `multipart` legado responde 413 | Sube juntos `client_max_body_size`, `MAX_UPLOAD_SIZE` (nginx interno) y `MAX_UPLOAD_BYTES` (Node) |
 | URLs generadas como HTTP | `PUBLIC_URL` o `X-Forwarded-Proto https` incorrectos |
 | Worker falla con `EACCES` en un árbol antiguo | Ejecuta `bootstrap-host.sh` sobre `DATA_ROOT` |
+| El monitor avisa de que `proxy` usa el 90 % de su memoria | Casi siempre es la caché de disco de los segmentos que sirve con `sendfile`, que el kernel carga al contenedor y suelta al llegar al techo. Mira `anon` en el `memory.stat` de su cgroup: si son pocos MB y `oom_kill` está a 0, no es una fuga. Rondar el límite es lo normal; lo que importa es un OOM o un reinicio |
+| El worker muere por OOM transcodificando | ffmpeg abre hilos según las CPU del **host**, no según `WORKER_CPUS`. Comprueba que `FFMPEG_THREADS` está vacío o igual a `WORKER_CPUS` (no a `0`) y que `WORKER_MEMORY` cubre la resolución más grande que se suba |
 
 ## Versiones y promoción
 
