@@ -187,17 +187,37 @@ export function colorFilters ({ colorTransfer, colorSpace } = {}) {
   return []
 }
 
+/**
+ * Argumentos que acotan los hilos de ffmpeg, partidos en lo que va antes de
+ * `-i` (decodificador y filtros) y lo que va después (x264). Con `0` no se
+ * pasa nada y ffmpeg decide, que es como se ha comportado siempre.
+ *
+ * Por qué hace falta: ffmpeg cuenta las CPU del host, no la cuota de Docker, y
+ * cada hilo de x264 retiene sus fotogramas. Con 32 vCPU visibles y un
+ * `mem_limit` de 1,5 GiB, un 4K puede acabar en OOM a mitad de una variante.
+ * A y B salen del mismo trabajo y llevan los mismos argumentos, así que
+ * siguen siendo intercambiables: lo que las alinea es el GOP fijo, no esto.
+ */
+export function threadArgs (threads = config.transcode.threads) {
+  if (!threads) return { input: [], output: [] }
+  const n = String(threads)
+  return { input: ['-threads', n, '-filter_threads', n], output: ['-threads', n] }
+}
+
 function encodeArgs ({ input, variant, outDir, keyInfo, hasAudio, fps, preFilters = [] }) {
   const { segmentSeconds, crf, preset, maxOutputBitrateKbps } = config.transcode
   const gop = Math.round(segmentSeconds * fps)
+  const threads = threadArgs()
 
   const args = [
     '-hide_banner', '-nostdin', '-y',
     '-protocol_whitelist', 'file,pipe,crypto,data',
+    ...threads.input,
     '-i', input,
     '-map', '0:v:0',
     '-vf', [...preFilters, markFilter(variant)].join(','),
     '-c:v', 'libx264',
+    ...threads.output,
     '-preset', preset,
     '-crf', String(crf),
     '-maxrate', `${maxOutputBitrateKbps}k`,
@@ -364,6 +384,7 @@ async function generatePoster (input, outputPath, durationSeconds, signal, preFi
       '-hide_banner', '-nostdin', '-y',
       '-ss', at.toFixed(2),
       '-protocol_whitelist', 'file,pipe,crypto,data',
+      ...threadArgs().input,
       '-i', input,
       '-frames:v', '1',
       '-vf', [...preFilters, 'scale=640:-2'].join(','),

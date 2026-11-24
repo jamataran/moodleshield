@@ -153,6 +153,10 @@ x-worker-env: &worker-env
   TRANSCODE_LEASE_SECONDS: ${TRANSCODE_LEASE_SECONDS:-90}
   TRANSCODE_HEARTBEAT_MS: ${TRANSCODE_HEARTBEAT_MS:-20000}
   FFMPEG_NICE: ${FFMPEG_NICE:-10}
+  # Hilos de ffmpeg. Por defecto, los mismos que las CPU cedidas al worker:
+  # ffmpeg cuenta las del host, no la cuota de `cpus:`, y con 32 vCPU visibles
+  # sus hilos no caben en WORKER_MEMORY. 0 = que decida ffmpeg.
+  FFMPEG_THREADS: ${FFMPEG_THREADS:-${WORKER_CPUS:-4}}
   MAX_PDF_BYTES: ${MAX_PDF_BYTES:-104857600}
   MAX_PDF_PAGES: ${MAX_PDF_PAGES:-500}
   PDF_PROCESS_TIMEOUT_SECONDS: ${PDF_PROCESS_TIMEOUT_SECONDS:-180}
@@ -207,7 +211,7 @@ services:
 
   app:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/app:sha-88d86e3
+    image: ghcr.io/jamataran/moodleshield/app:sha-853423a
     restart: unless-stopped
     init: true
     depends_on:
@@ -232,7 +236,7 @@ services:
 
   worker:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/worker:sha-88d86e3
+    image: ghcr.io/jamataran/moodleshield/worker:sha-853423a
     restart: unless-stopped
     init: true
     stop_grace_period: 45s
@@ -260,7 +264,7 @@ services:
   # y se etiqueta a la vez que app y worker.
   proxy:
     <<: *runtime-hardening
-    image: ghcr.io/jamataran/moodleshield/proxy:sha-88d86e3
+    image: ghcr.io/jamataran/moodleshield/proxy:sha-853423a
     restart: unless-stopped
     depends_on:
       app:
@@ -274,7 +278,13 @@ services:
     ports:
       - "${HTTP_BIND_ADDRESS:-${BIND_ADDRESS:-127.0.0.1}}:${HTTP_PORT:-43128}:8080"
     # Healthcheck definido en la propia imagen `proxy`.
-    mem_limit: 128m
+    # nginx sirve los segmentos con sendfile y la caché de disco de esos
+    # ficheros se carga a ESTE contenedor: el uso sube siempre hasta el techo y
+    # el kernel la va soltando. Con 128m tocaba el límite cientos de miles de
+    # veces al día y frenaba los envíos de red (sock_throttled), sin OOM: la
+    # memoria propia de nginx no pasa de unos MB. 256m da margen a la caché;
+    # que el uso ronde el techo es normal y no es una fuga.
+    mem_limit: 256m
     pids_limit: 128
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m

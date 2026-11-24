@@ -136,3 +136,34 @@ test('MAX_FOLDERS_PER_OWNER=-1 arranca y 0 no: un cupo de cero bloquearía la bi
   assert.notEqual(cero.status, 0)
   assert.match(cero.stderr, /MAX_FOLDERS_PER_OWNER debe ser positivo o -1/)
 })
+
+test('FFMPEG_THREADS acepta lo mismo que el cpus: de Compose, redondeando hacia arriba', () => {
+  // Los compose lo rellenan con WORKER_CPUS, que admite decimales. «0.5» tiene
+  // que dar 1 hilo: redondear hacia abajo daría 0, que significa «sin tope».
+  const leer = (valor) => spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import config, { assertConfigValid } from './src/config.js'
+    assertConfigValid()
+    process.stdout.write(String(config.transcode.threads))
+  `], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH,
+      NODE_ENV: 'production',
+      SERVICE_ROLE: 'worker',
+      DB_WORKER_PASSWORD: 'worker-database-password',
+      WATERMARK_SECRET: 'w'.repeat(32),
+      ...(valor === undefined ? {} : { FFMPEG_THREADS: valor })
+    }
+  })
+  for (const [valor, esperado] of [[undefined, '0'], ['', '0'], ['4', '4'], ['1.5', '2'], ['0.5', '1']]) {
+    const result = leer(valor)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, esperado, `FFMPEG_THREADS=${valor}`)
+  }
+  for (const valor of ['-1', 'dos']) {
+    const result = leer(valor)
+    assert.notEqual(result.status, 0, `FFMPEG_THREADS=${valor} debería abortar el arranque`)
+    assert.match(result.stderr, /FFMPEG_THREADS/)
+  }
+})

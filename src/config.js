@@ -34,6 +34,20 @@ function integer (name, fallback) {
   return n
 }
 
+// Acepta lo mismo que el `cpus:` de Compose, del que suele venir: «1.5» son dos
+// hilos, no uno. Redondear hacia abajo convertiría «0.5» en 0, que es «sin
+// tope», justo lo contrario de lo que pide quien cede media CPU.
+function threadCount (name, fallback) {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) {
+    errors.push(`${name} debe ser un número de hilos ≥ 0 (valor recibido: "${raw}")`)
+    return fallback
+  }
+  return Math.ceil(n)
+}
+
 function bool (name, fallback = false) {
   const raw = process.env[name]
   if (raw === undefined || raw === '') return fallback
@@ -348,6 +362,14 @@ export const config = {
     markAlpha: optional('MARK_ALPHA', '0.06'),
     /** `nice` con el que se lanza ffmpeg para no competir con la app. */
     niceness: integer('FFMPEG_NICE', 10),
+    /**
+     * Hilos de ffmpeg (decodificador, filtros y x264). `0` = los decide ffmpeg.
+     * ffmpeg los cuenta sobre las CPU que VE, no sobre el `cpus:` de Docker:
+     * en un host de 32 vCPU abre del orden de 48 hilos de x264, cada uno con
+     * sus fotogramas en memoria, y eso es lo que acaba en OOM con el
+     * `mem_limit` del worker. Los compose lo atan a WORKER_CPUS.
+     */
+    threads: threadCount('FFMPEG_THREADS', 0),
     ffmpegPath: optional('FFMPEG_PATH', 'ffmpeg'),
     ffprobePath: optional('FFPROBE_PATH', 'ffprobe'),
     probeTimeoutSeconds: integer('TRANSCODE_PROBE_TIMEOUT_SECONDS', 30),
